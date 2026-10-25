@@ -5,6 +5,7 @@ use HTTP::Tiny;
 use JSON::PP;
 use Encode ();
 use Time::HiRes qw(time);
+use Time::Local qw(timegm);
 
 my $API_BASE    = 'https://discord.com/api/v10';
 my $MAX_CONTENT = 2000;
@@ -1127,6 +1128,10 @@ sub _request {
         $res = $self->{ua}->request($method, $url, \%args);
 
         if ($res->{status} == 429) {
+            # グローバル制限は他のルートにも影響するので、リトライするか
+            # どうかにかかわらず先に記録しておく。
+            $self->_note_429($res, $method, $url, 1);
+
             my $wait = $self->_retry_delay($res);
 
             # まだリトライできるなら、その場で待ってやり直す。
@@ -1193,15 +1198,37 @@ sub _finish {
     return undef;
 }
 
+my %MONTH = (
+    jan => 0, feb => 1, mar => 2, apr => 3, may => 4, jun => 5,
+    jul => 6, aug => 7, sep => 8, oct => 9, nov => 10, dec => 11,
+);
+
 # 429 の待ち時間（秒）。JSON ボディの retry_after を優先し、無ければヘッダ。
+# ヘッダは秒数だけでなく HTTP-date 形式（RFC 7231）も受け付ける。
 sub _retry_after_seconds {
     my ($self, $res) = @_;
 
     my $body = $self->_decode($res->{content});
     my $wait = ref $body eq 'HASH' ? $body->{retry_after} : undef;
     $wait = ($res->{headers} || {})->{'retry-after'} unless defined $wait;
+    return undef unless defined $wait;
 
-    return $wait if defined $wait && $wait =~ /^\d+(?:\.\d+)?$/;
+    return $wait + 0 if $wait =~ /^\d+(?:\.\d+)?\z/;
+
+    # 例: Wed, 21 Oct 2026 07:28:00 GMT
+    if ($wait =~ /^(?:[A-Za-z]{3},\s*)?(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s+
+                   (\d{2}):(\d{2}):(\d{2})\s+GMT\z/x) {
+        my ($day, $mon, $year, $hour, $min, $sec) = ($1, lc $2, $3, $4, $5, $6);
+        my $month = $MONTH{$mon};
+        return undef unless defined $month;
+
+        my $epoch = eval { timegm($sec, $min, $hour, $day, $month, $year) };
+        return undef unless defined $epoch;
+
+        my $delta = $epoch - time;
+        return $delta > 0 ? $delta : 0;
+    }
+
     return undef;
 }
 
@@ -1263,8 +1290,9 @@ sub _note_rate_limit {
 }
 
 # 429 でリトライを打ち切ったとき、次のリクエストのために制限を記録する。
+# $global_only が真ならグローバル制限だけを記録する（リトライする場合用）。
 sub _note_429 {
-    my ($self, $res, $method, $url) = @_;
+    my ($self, $res, $method, $url, $global_only) = @_;
 
     my $wait = $self->_retry_after_seconds($res) // 1;
     my $h    = $res->{headers} || {};
@@ -1281,6 +1309,10 @@ sub _note_429 {
             if $until > ($self->{global_until} // 0);
         return;
     }
+
+    # リトライする場合はこのリクエスト自身がその場で待つので、
+    # ルート / バケットは閉じない（他のルートには影響しない）。
+    return if $global_only;
 
     my $bucket = $h->{'x-ratelimit-bucket'};
 

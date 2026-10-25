@@ -325,7 +325,8 @@ Discord の制限は「バケット（`X-RateLimit-Bucket`）」＋「major para
 - 同じバケットでも、GET と POST などルートが違えば別扱い
 - `X-RateLimit-Remaining: 0` のとき、次のリクエストを `X-RateLimit-Reset-After` 秒待つ
 - 429 は `retry_after` 秒待ってリトライ。上限に達したらバケットを閉じ、次のリクエストで待つ
-- `X-RateLimit-Global` の 429 は全ルートに影響する
+  （`Retry-After` は秒数と HTTP-date 形式の両方に対応）
+- `X-RateLimit-Global` の 429 は全ルートに影響する（リトライする場合も記録する）
 - `X-RateLimit-Bucket` が無い応答では、従来どおりクライアント全体で待つ
 
 ### エラー処理
@@ -451,7 +452,8 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `on_ready` | — | `READY` のときだけ呼ばれる |
 | `on_error` | 未指定なら `warn` | 接続エラー・再接続の通知 |
 | `reconnect` | `1` | 自動再接続するか |
-| `max_reconnects` | `5` | 連続エラーの上限 |
+| `max_reconnects` | `5` | 連続エラーの上限（READY でリセット） |
+| `reconnect_delay` | `5` | 4008（レート制限）で再接続するまでの待ち秒 |
 | `timeout` | `60` | 受信のタイムアウト秒 |
 | `url` | `wss://gateway.discord.gg/?v=10&encoding=json` | 接続先 |
 | `ws_class` | `Disperl::WebSocket` | 差し替え可能（テスト用） |
@@ -467,6 +469,8 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 - `stop()` でループを止められます
 - Heartbeat の ACK が返らない場合はゾンビ接続とみなして再接続します
 - 4004 / 4010〜4014（認証・Intent 系）は再接続しません
+- 4006 / 4007 / 4009（セッション無効）は Resume せず Identify からやり直します
+- 4008（レート制限）は `reconnect_delay` 秒待ってから再接続します
 - `$gw->application_id` で READY で受け取ったアプリケーション ID を参照できます
 
 ### ステータス（プレゼンス）

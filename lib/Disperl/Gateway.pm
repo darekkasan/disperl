@@ -77,6 +77,10 @@ sub new {
         on_error       => $args{on_error},
         reconnect      => exists $args{reconnect} ? $args{reconnect} : 1,
         max_reconnects => $args{max_reconnects} // 5,
+        # 連続で失敗した回数。READY / RESUMED を受けたら 0 に戻す
+        failures       => 0,
+        # 4008（レート制限）で再接続するまでの待ち時間（秒）
+        reconnect_delay => $args{reconnect_delay} // 5,
         timeout        => $args{timeout} // 60,
         ws_class       => $args{ws_class} // 'Disperl::WebSocket',
         sleep          => $args{sleep} // sub { sleep $_[0] },
@@ -275,7 +279,6 @@ sub run {
     my ($self) = @_;
 
     $self->{running} = 1;
-    my $failures = 0;
 
     while ($self->{running}) {
         my $reason = eval { $self->_run_once };
@@ -288,14 +291,18 @@ sub run {
         last unless $self->{running};
         last if defined $reason && $reason eq 'stop';
 
-        $failures++ if defined $reason && $reason eq 'error';
+        # 連続失敗回数。READY / RESUMED で 0 に戻るので、
+        # 一度正常につながれば max_reconnects はリセットされる。
+        $self->{failures}++ if defined $reason && $reason eq 'error';
         last unless $self->{reconnect};
-        last if $failures > $self->{max_reconnects};
+        last if $self->{failures} > $self->{max_reconnects};
 
-        $self->{resume_next} = 0
-            if defined $reason && $reason eq 'invalid_session';
-
-        my $wait = (defined $reason && $reason eq 'error') ? 1 : 0;
+        my $wait = 0;
+        if (defined $reason && $reason eq 'error') {
+            $wait = 1;
+        } elsif (defined $reason && $reason eq 'rate_limited') {
+            $wait = $self->{reconnect_delay};
+        }
         $self->{sleep}->($wait) if $wait;
     }
 
@@ -373,10 +380,26 @@ sub _run_once {
 
         if ($frame->{opcode} == 8) {
             my $code = $frame->{code};
+
+            # トークン不正・intents 不正などは再接続しても直らない
             if (defined $code && ($code == 4004 || ($code >= 4010 && $code <= 4014))) {
                 $self->{fatal} = 1;
                 die "Fatal gateway close code $code\n";
             }
+
+            # セッションが無効になった場合は Resume せず Identify からやり直す
+            if (defined $code && ($code == 4006 || $code == 4007 || $code == 4009)) {
+                $self->_forget_session;
+                $reason = 'resume';
+                last;
+            }
+
+            # 4008 はレート制限。すぐには再接続せず、少し待つ
+            if (defined $code && $code == 4008) {
+                $reason = 'rate_limited';
+                last;
+            }
+
             $reason = 'resume';
             last;
         }
@@ -415,11 +438,13 @@ sub _handle {
                 if ref $data->{application} eq 'HASH';
             $self->{resume_next} = 1;
             $self->{ready}       = 1;
+            $self->{failures}    = 0;
             # Identify 後に set_presence されていれば、ここで反映する
             $self->_flush_presence;
             $self->{on_ready}->($data) if $self->{on_ready};
         } elsif ($type eq 'RESUMED') {
-            $self->{ready} = 1;
+            $self->{ready}    = 1;
+            $self->{failures} = 0;
             $self->{presence_pending} = 1 if $self->{presence};
             $self->_apply_presence;
         } elsif ($type eq 'MESSAGE_CREATE') {
@@ -451,7 +476,13 @@ sub _handle {
     }
 
     return 'resume' if $op == 7;            # Reconnect
-    return 'invalid_session' if $op == 9;   # Invalid Session
+
+    if ($op == 9) {                         # Invalid Session
+        # d が false なら Resume できない。セッションを捨てて Identify からやり直す。
+        # d が true の場合は少し待てば Resume できるので、そのまま再開する。
+        $self->_forget_session unless $msg->{d};
+        return 'invalid_session';
+    }
 
     if ($op == 11) {                        # Heartbeat ACK
         $self->{awaiting_ack} = 0;
@@ -459,6 +490,16 @@ sub _handle {
     }
 
     return undef;
+}
+
+# セッションを破棄し、次の接続で必ず Identify からやり直す。
+sub _forget_session {
+    my ($self) = @_;
+
+    $self->{session_id}  = undef;
+    $self->{seq}         = undef;
+    $self->{resume_url}  = undef;
+    $self->{resume_next} = 0;
 }
 
 sub _connect {

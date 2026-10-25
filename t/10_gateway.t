@@ -18,6 +18,7 @@ package FakeWS;
 
 our $INSTANCE;
 our $LAST_URL;
+our @CONNECTIONS;
 
 sub new {
     my ($class, %args) = @_;
@@ -31,6 +32,7 @@ sub new {
 sub connect {
     my ($class, %args) = @_;
     $LAST_URL = $args{url};
+    return shift @CONNECTIONS if @CONNECTIONS;
     return $INSTANCE;
 }
 
@@ -276,6 +278,140 @@ subtest 'zombie connection triggers a resume' => sub {
 
     my $reason = $gw->_run_once;
     is $reason, 'resume', 'no ACK leads to a resume';
+};
+
+subtest 'invalid session payload controls resume' => sub {
+    my $gw = Disperl::Gateway->new(token => 't');
+    $gw->{session_id}  = 'sess-1';
+    $gw->{seq}         = 4;
+    $gw->{resume_url}  = 'wss://resume.example';
+    $gw->{resume_next} = 1;
+
+    is $gw->_handle({ op => 9, d => JSON::PP::true }), 'invalid_session', 'op 9';
+    is $gw->{session_id}, 'sess-1', 'resumable session is kept';
+    is $gw->{resume_next}, 1, 'still resumes';
+
+    $gw->_handle({ op => 9, d => JSON::PP::false });
+    ok !defined $gw->{session_id}, 'session discarded when d is false';
+    ok !defined $gw->{seq}, 'sequence discarded';
+    ok !defined $gw->{resume_url}, 'resume url discarded';
+    is $gw->{resume_next}, 0, 'identify next time';
+};
+
+subtest 'READY and RESUMED reset the failure counter' => sub {
+    my $gw = Disperl::Gateway->new(token => 't');
+
+    $gw->{failures} = 3;
+    $gw->_handle({
+        op => 0, t => 'READY', s => 1,
+        d  => { session_id => 'sess-1' },
+    });
+    is $gw->{failures}, 0, 'READY resets failures';
+
+    $gw->{failures} = 2;
+    $gw->_handle({ op => 0, t => 'RESUMED', s => 2, d => {} });
+    is $gw->{failures}, 0, 'RESUMED resets failures';
+};
+
+subtest 'close 4006 discards the session and identifies again' => sub {
+    my $first = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 60000 } }),
+        frame({
+            op => 0, t => 'READY', s => 1,
+            d  => { session_id => 'sess-1', resume_gateway_url => 'wss://resume.example' },
+        }),
+        { opcode => 8, code => 4006, reason => 'Session no longer valid.' },
+    ]);
+    my $second = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 60000 } }),
+        { opcode => 8, code => 1000 },
+    ]);
+    $FakeWS::INSTANCE = undef;
+    @FakeWS::CONNECTIONS = ($first, $second);
+
+    my $gw = Disperl::Gateway->new(
+        token     => 'secret',
+        ws_class  => 'FakeWS',
+        reconnect => 0,
+    );
+
+    is $gw->_run_once, 'resume', 'asks for a reconnect';
+    ok !defined $gw->{session_id}, 'session discarded';
+    ok !defined $gw->{seq}, 'sequence discarded';
+    is $gw->{resume_next}, 0, 'identify on the next connection';
+
+    $gw->_run_once;
+
+    my $msg = $json->decode($second->sent->[0]);
+    is $msg->{op}, 2, 'identify instead of resume';
+
+    @FakeWS::CONNECTIONS = ();
+};
+
+subtest 'close 4008 waits before reconnecting' => sub {
+    my $first = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 60000 } }),
+        { opcode => 8, code => 4008, reason => 'Rate limited.' },
+    ]);
+    my $second = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 60000 } }),
+        { opcode => 8, code => 4004 },
+    ]);
+    $FakeWS::INSTANCE = undef;
+    @FakeWS::CONNECTIONS = ($first, $second);
+
+    my (@waits, @errors);
+    my $gw = Disperl::Gateway->new(
+        token           => 'secret',
+        ws_class        => 'FakeWS',
+        reconnect       => 1,
+        reconnect_delay => 7,
+        sleep           => sub { push @waits, $_[0] },
+        on_error        => sub { push @errors, $_[0] },
+    );
+
+    $gw->run;
+
+    is_deeply \@waits, [7], 'waited reconnect_delay seconds';
+    is scalar @errors, 1, 'fatal close reported';
+    is scalar @{ $second->sent }, 1, 'reconnected once';
+
+    @FakeWS::CONNECTIONS = ();
+};
+
+subtest 'a successful READY allows further reconnects' => sub {
+    # 1回目は Hello が来ずエラー、2回目は READY で復帰、3回目はまたエラー。
+    # max_reconnects = 1 でも、READY で failures が戻るので停止しない。
+    my $first = FakeWS->new(queue => []);
+    my $second = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 60000 } }),
+        frame({ op => 0, t => 'READY', s => 1, d => { session_id => 'sess-1' } }),
+        { opcode => 8, code => 1000 },
+    ]);
+    my $third = FakeWS->new(queue => []);
+    my $fourth = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 60000 } }),
+        { opcode => 8, code => 4004 },
+    ]);
+    $FakeWS::INSTANCE = undef;
+    @FakeWS::CONNECTIONS = ($first, $second, $third, $fourth);
+
+    my @errors;
+    my $gw = Disperl::Gateway->new(
+        token          => 'secret',
+        ws_class       => 'FakeWS',
+        reconnect      => 1,
+        max_reconnects => 1,
+        sleep          => sub { },
+        on_error       => sub { push @errors, $_[0] },
+    );
+
+    $gw->run;
+
+    is scalar @{ $fourth->sent }, 1, 'kept reconnecting after a READY';
+    is scalar @errors, 3, 'reported the two errors and the fatal close';
+
+    @FakeWS::CONNECTIONS = ();
 };
 
 done_testing;

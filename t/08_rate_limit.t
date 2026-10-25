@@ -139,4 +139,56 @@ subtest 'throttle is per client and clears after waiting' => sub {
     is scalar @waits, 1, 'the wait is consumed once';
 };
 
+subtest 'Retry-After accepts an HTTP-date' => sub {
+    my @waits;
+
+    my @t   = gmtime(time + 3);
+    my @MON = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
+    my @DAY = qw(Sun Mon Tue Wed Thu Fri Sat);
+    my $date = sprintf '%s, %02d %s %04d %02d:%02d:%02d GMT',
+        $DAY[ $t[6] ], $t[3], $MON[ $t[4] ], $t[5] + 1900,
+        $t[2], $t[1], $t[0];
+
+    my $fake = FakeUA->new(
+        FakeUA->err_response(429, $json->encode({ message => 'rate limited' }),
+            headers => { 'retry-after' => $date }),
+        $ok->(),
+    );
+    my $client = Disperl::Client->new(
+        token => 'dummy', ua => $fake, sleep => sub { push @waits, $_[0] },
+    );
+
+    local $SIG{__WARN__} = sub { };
+    is $client->send_message('999', 'x')->{id}, '1', 'recovers';
+
+    is scalar @waits, 1, 'waited once';
+    cmp_ok $waits[0], '>=', 1, 'positive delay';
+    cmp_ok $waits[0], '<=', 3, 'not longer than the date';
+};
+
+subtest 'global 429 delays requests on other routes' => sub {
+    my @waits;
+    my $fake = FakeUA->new(
+        FakeUA->err_response(
+            429,
+            $json->encode({ message => 'global rate limit', retry_after => 2, global => 1 }),
+            headers => { 'x-ratelimit-global' => 'true' },
+        ),
+        $ok->(),
+        $ok->(),
+    );
+    my $client = Disperl::Client->new(
+        token => 'dummy', ua => $fake, sleep => sub { push @waits, $_[0] },
+    );
+
+    local $SIG{__WARN__} = sub { };
+    $client->send_message('999', 'first');
+
+    my $before = scalar @waits;
+    $client->send_message('888', 'second');
+
+    cmp_ok scalar @waits, '>', $before, 'the other channel waited too';
+    cmp_ok $waits[-1], '>', 0, 'positive delay';
+};
+
 done_testing;
