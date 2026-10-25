@@ -38,7 +38,15 @@ sub new {
             ? $args{allowed_mentions}
             : { parse => [] },
         last_error     => undef,
+        # レート制限の状態
+        #   buckets     => "バケット:major" => { limit, remaining, reset_at }
+        #   routes      => "GET /channels/:id/messages" => バケットキー
+        #   route_until => バケット不明の 429 をルート単位で覚えておく
         throttle_until => 0,
+        global_until   => 0,
+        buckets        => {},
+        routes         => {},
+        route_until    => {},
     };
     return bless $self, $class;
 }
@@ -139,6 +147,175 @@ sub remove_reaction {
     return $self->_finish($res, 'none');
 }
 
+# リアクションしたユーザーの一覧（最大 100 件）。
+#   get_reactions($channel_id, $message_id, $emoji, limit => 50, after => $user_id)
+sub get_reactions {
+    my ($self, $channel_id, $message_id, $emoji, %opts) = @_;
+
+    die "emoji is required\n" unless defined $emoji && length $emoji;
+
+    my @query;
+    push @query, 'limit=' . _uri_escape($opts{limit}) if defined $opts{limit};
+    push @query, 'after=' . _uri_escape($opts{after}) if defined $opts{after};
+
+    my $url = "$API_BASE/channels/$channel_id/messages/$message_id/reactions/"
+        . _uri_escape($emoji);
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'array');
+}
+
+# メッセージに付いたリアクションを全部消す。成功時は 1。
+sub delete_all_reactions {
+    my ($self, $channel_id, $message_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/channels/$channel_id/messages/$message_id/reactions",
+    );
+    return $self->_finish($res, 'none');
+}
+
+# ---------------------------------------------------------------- pins / bulk
+
+# ピン留めする。成功時は 1（権限 MANAGE_MESSAGES が必要）。
+sub pin_message {
+    my ($self, $channel_id, $message_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT',
+        "$API_BASE/channels/$channel_id/pins/$message_id",
+    );
+    return $self->_finish($res, 'none');
+}
+
+# ピン留めを外す。成功時は 1。
+sub unpin_message {
+    my ($self, $channel_id, $message_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/channels/$channel_id/pins/$message_id",
+    );
+    return $self->_finish($res, 'none');
+}
+
+# ピン留めされたメッセージの一覧。
+sub get_pinned_messages {
+    my ($self, $channel_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/channels/$channel_id/pins");
+    return $self->_finish($res, 'array');
+}
+
+# 2〜100 件をまとめて削除する（14 日以内のメッセージのみ）。
+sub bulk_delete_messages {
+    my ($self, $channel_id, $ids) = @_;
+
+    die "messages must be an array reference\n" unless ref $ids eq 'ARRAY';
+    die "messages must contain 2 to 100 ids\n"
+        unless @$ids >= 2 && @$ids <= 100;
+    for my $id (@$ids) {
+        die "invalid message id: " . ($id // 'undef') . "\n"
+            unless defined $id && $id =~ /^\d+\z/;
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/channels/$channel_id/messages/bulk-delete",
+        { messages => [@$ids] },
+    );
+    return $self->_finish($res, 'none');
+}
+
+# ---------------------------------------------------------------- threads
+
+my %THREAD_TYPE = (public => 11, private => 12);
+
+# スレッドを作る（既存チャンネルから）。
+#   create_thread($channel_id, name => '議題', type => 'public', auto_archive_duration => 1440)
+sub create_thread {
+    my ($self, $channel_id, %opts) = @_;
+
+    my $payload = $self->_thread_payload(%opts, with_type => 1);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/channels/$channel_id/threads",
+        $payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# メッセージからスレッドを作る。成功時はスレッドのチャンネル。
+sub create_thread_from_message {
+    my ($self, $channel_id, $message_id, %opts) = @_;
+
+    my $payload = $self->_thread_payload(%opts);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/channels/$channel_id/messages/$message_id/threads",
+        $payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub _thread_payload {
+    my ($self, %opts) = @_;
+
+    my $name = $opts{name};
+    die "thread name is required\n" unless defined $name && length $name;
+
+    my %payload = (name => $name);
+
+    if ($opts{with_type}) {
+        my $type = $opts{type} // 'public';
+        $type = $THREAD_TYPE{lc $type} if defined $type && !ref $type && $type =~ /\D/;
+        die "Unknown thread type: " . ($opts{type} // 'undef')
+            . " (expected public or private)\n"
+            unless defined $type && $type =~ /^\d+$/ && ($type == 11 || $type == 12);
+        $payload{type} = $type + 0;
+    }
+
+    if (defined $opts{auto_archive_duration}) {
+        my $d = $opts{auto_archive_duration};
+        die "auto_archive_duration must be 60, 1440, 4320 or 10080\n"
+            unless $d =~ /^\d+$/ && ($d == 60 || $d == 1440 || $d == 4320 || $d == 10080);
+        $payload{auto_archive_duration} = $d + 0;
+    }
+
+    $payload{rate_limit_per_user} = $opts{rate_limit_per_user} + 0
+        if defined $opts{rate_limit_per_user};
+
+    return \%payload;
+}
+
+# ---------------------------------------------------------------- direct messages
+
+# ユーザーとの DM チャンネルを開く（既にあればそれを返す）。
+# 返り値の id をそのまま send_message に渡せる。
+sub create_dm {
+    my ($self, $user_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/users/\@me/channels",
+        { recipient_id => $user_id },
+    );
+    return $self->_finish($res, 'hash');
+}
+
 # ---------------------------------------------------------------- users / channels
 
 sub get_current_user {
@@ -155,6 +332,163 @@ sub get_channel {
     $self->{last_error} = undef;
     my $res = $self->_request('GET', "$API_BASE/channels/$channel_id");
     return $self->_finish($res, 'hash');
+}
+
+# ユーザーを 1 人取得する。
+sub get_user {
+    my ($self, $user_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/users/$user_id");
+    return $self->_finish($res, 'hash');
+}
+
+# ---------------------------------------------------------------- guilds
+
+sub get_guild {
+    my ($self, $guild_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id");
+    return $self->_finish($res, 'hash');
+}
+
+sub get_guild_channels {
+    my ($self, $guild_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/channels");
+    return $self->_finish($res, 'array');
+}
+
+sub get_guild_roles {
+    my ($self, $guild_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/roles");
+    return $self->_finish($res, 'array');
+}
+
+# メンバー一覧。GUILD_MEMBERS（Privileged Intent）が有効な Bot だけ使える。
+#   get_guild_members($guild_id, limit => 100, after => $user_id)
+sub get_guild_members {
+    my ($self, $guild_id, %opts) = @_;
+
+    my @query;
+    push @query, 'limit=' . _uri_escape($opts{limit}) if defined $opts{limit};
+    push @query, 'after=' . _uri_escape($opts{after}) if defined $opts{after};
+
+    my $url = "$API_BASE/guilds/$guild_id/members";
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'array');
+}
+
+sub get_guild_member {
+    my ($self, $guild_id, $user_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/members/$user_id");
+    return $self->_finish($res, 'hash');
+}
+
+# ---------------------------------------------------------------- invites
+
+# 招待を作る。成功時は招待オブジェクト（code を含む）。
+#   create_invite($channel_id, max_age => 3600, max_uses => 10, temporary => 1, unique => 1)
+sub create_invite {
+    my ($self, $channel_id, %opts) = @_;
+
+    my %payload;
+    $payload{max_age}   = $opts{max_age}   + 0 if defined $opts{max_age};
+    $payload{max_uses}  = $opts{max_uses}  + 0 if defined $opts{max_uses};
+    $payload{unique}    = $opts{unique}    ? JSON::PP::true : JSON::PP::false
+        if exists $opts{unique};
+    $payload{temporary} = $opts{temporary} ? JSON::PP::true : JSON::PP::false
+        if exists $opts{temporary};
+
+    for my $key (qw(target_type target_user_id target_application_id)) {
+        $payload{$key} = $opts{$key} if defined $opts{$key};
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/channels/$channel_id/invites",
+        \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 招待コードから情報を取得する（認証不要で使える）。
+#   get_invite('abc123', with_counts => 1, with_expiration => 1)
+sub get_invite {
+    my ($self, $code, %opts) = @_;
+
+    die "invite code is required\n" unless defined $code && length $code;
+
+    my @query;
+    for my $key (qw(with_counts with_expiration guild_scheduled_event_id)) {
+        push @query, "$key=" . _uri_escape($opts{$key}) if defined $opts{$key};
+    }
+
+    my $url = "$API_BASE/invites/" . _uri_escape($code);
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url, undef, { auth => 0 });
+    return $self->_finish($res, 'hash');
+}
+
+sub get_invites {
+    my ($self, $guild_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/invites");
+    return $self->_finish($res, 'array');
+}
+
+sub delete_invite {
+    my ($self, $code) = @_;
+
+    die "invite code is required\n" unless defined $code && length $code;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('DELETE', "$API_BASE/invites/" . _uri_escape($code));
+    return $self->_finish($res, 'none');
+}
+
+# ---------------------------------------------------------------- webhooks
+
+# Webhook を実行する（トークンだけで送れるので認証不要）。
+#   execute_webhook($id, $token, '本文', username => '通知', embeds => [...])
+#   wait => 0 を指定すると 204 が返るので 1 を返す。
+sub execute_webhook {
+    my ($self, $webhook_id, $token, $content, %opts) = @_;
+
+    die "webhook id is required\n"    unless defined $webhook_id && length $webhook_id;
+    die "webhook token is required\n" unless defined $token && length $token;
+
+    my $wait = exists $opts{wait} ? $opts{wait} : 1;
+
+    my @query = ('wait=1') if $wait;
+    push @query, 'thread_id=' . _uri_escape($opts{thread_id})
+        if defined $opts{thread_id};
+
+    my $payload = $self->_message_payload($content, \%opts);
+    for my $key (qw(username avatar_url thread_name)) {
+        $payload->{$key} = $opts{$key} if defined $opts{$key};
+    }
+
+    my $url = "$API_BASE/webhooks/$webhook_id/" . _uri_escape($token);
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('POST', $url, $payload, { auth => 0 });
+
+    return $self->_finish($res, $wait ? 'hash' : 'none');
 }
 
 # ---------------------------------------------------------------- internals
@@ -211,14 +545,14 @@ sub _reaction_url {
 }
 
 # 429 / 5xx をリトライしつつ 1 回分のリクエストを送る。
+# $opts: { auth => 0 } で Authorization を付けない（Webhook 用）
 sub _request {
-    my ($self, $method, $url, $payload) = @_;
+    my ($self, $method, $url, $payload, $opts) = @_;
+    $opts ||= {};
 
-    my %args = (
-        headers => {
-            'Authorization' => "Bot $self->{token}",
-        },
-    );
+    my %args = (headers => {});
+    $args{headers}{'Authorization'} = "Bot $self->{token}"
+        unless exists $opts->{auth} && !$opts->{auth};
     if (defined $payload) {
         $args{headers}{'Content-Type'} = 'application/json';
         $args{content} = $JSON->encode($payload);
@@ -227,12 +561,27 @@ sub _request {
     my $res;
     my $attempt = 0;
     while (1) {
-        $self->_wait_for_throttle;
+        $self->_wait_for_throttle($method, $url);
 
         $res = $self->{ua}->request($method, $url, \%args);
 
+        if ($res->{status} == 429) {
+            my $wait = $self->_retry_delay($res);
+
+            # まだリトライできるなら、その場で待ってやり直す。
+            # 打ち切る場合だけバケットを閉じて、次のリクエストに引き継ぐ。
+            if (defined $wait && $attempt < $self->{max_retries}) {
+                $attempt++;
+                $self->{sleep}->($wait);
+                next;
+            }
+
+            $self->_note_429($res, $method, $url);
+            last;
+        }
+
         # レート制限の残りが 0 なら、次のリクエスト前に待つ
-        $self->_note_rate_limit($res) if $res->{success};
+        $self->_note_rate_limit($res, $method, $url);
 
         last if $res->{success};
 
@@ -305,28 +654,174 @@ sub _retry_delay {
     return undef;
 }
 
-# X-RateLimit-Remaining: 0 のとき、Reset-After 秒だけ次のリクエストを遅らせる。
+# レート制限のヘッダを読んで状態を更新する。
+# Discord は「バケット（X-RateLimit-Bucket）」＋「major parameter」単位で制限する。
+# major parameter はチャンネル / ギルド / Webhook の ID で、別チャンネルなら別枠。
 sub _note_rate_limit {
-    my ($self, $res) = @_;
-    my $h = $res->{headers} || {};
+    my ($self, $res, $method, $url) = @_;
 
+    my $h   = $res->{headers} || {};
+    my $now = time;
+    my $sig = _route_signature($method, $url);
+
+    my $bucket = $h->{'x-ratelimit-bucket'};
+
+    # バケットが分からない応答（テストの偽 UA など）は従来どおり全体で待つ
+    if (!defined $bucket || !length $bucket) {
+        my $remaining = $h->{'x-ratelimit-remaining'};
+        my $reset     = $h->{'x-ratelimit-reset-after'};
+        return unless defined $remaining && $remaining =~ /^\d+$/ && $remaining == 0;
+        return unless defined $reset && $reset =~ /^\d+(?:\.\d+)?$/;
+
+        $self->{throttle_until} = $now + $reset;
+        return;
+    }
+
+    my $key   = $bucket . ':' . _major_param($url);
+    my $state = $self->{buckets}{$key} ||= { remaining => 1, reset_at => 0 };
+
+    $self->{routes}{$sig} = $bucket;
+
+    my $limit     = $h->{'x-ratelimit-limit'};
     my $remaining = $h->{'x-ratelimit-remaining'};
     my $reset     = $h->{'x-ratelimit-reset-after'};
-    return unless defined $remaining && $remaining =~ /^\d+$/ && $remaining == 0;
-    return unless defined $reset && $reset =~ /^\d+(?:\.\d+)?$/;
+    my $reset_at  = $h->{'x-ratelimit-reset'};
 
-    $self->{throttle_until} = time + $reset;
+    $state->{limit} = $limit + 0
+        if defined $limit && $limit =~ /^\d+$/;
+    $state->{remaining} = $remaining + 0
+        if defined $remaining && $remaining =~ /^\d+$/;
+
+    if (defined $reset && $reset =~ /^\d+(?:\.\d+)?$/) {
+        $state->{reset_at} = $now + $reset;
+    } elsif (defined $reset_at && $reset_at =~ /^\d+(?:\.\d+)?$/) {
+        $state->{reset_at} = $reset_at + 0;    # エポック秒
+    }
+
+    return;
 }
 
-sub _wait_for_throttle {
-    my ($self) = @_;
+# 429 でリトライを打ち切ったとき、次のリクエストのために制限を記録する。
+sub _note_429 {
+    my ($self, $res, $method, $url) = @_;
 
-    my $until = $self->{throttle_until} or return;
-    my $wait  = $until - time;
+    my $wait = $self->_retry_after_seconds($res) // 1;
+    my $h    = $res->{headers} || {};
+    my $now  = time;
+    my $sig  = _route_signature($method, $url);
+
+    my $body = $self->_decode($res->{content});
+    my $global = $h->{'x-ratelimit-global'}
+        || (ref $body eq 'HASH' && $body->{global});
+
+    if ($global) {
+        my $until = $now + $wait;
+        $self->{global_until} = $until
+            if $until > ($self->{global_until} // 0);
+        return;
+    }
+
+    my $bucket = $h->{'x-ratelimit-bucket'};
+
+    # バケットが分からなければ、そのルートだけを閉じる
+    if (!defined $bucket || !length $bucket) {
+        $self->{route_until}{$sig} = $now + $wait;
+        return;
+    }
+
+    my $key   = $bucket . ':' . _major_param($url);
+    my $state = $self->{buckets}{$key} ||= { remaining => 1, reset_at => 0 };
+
+    $self->{routes}{$sig} = $bucket;
+
+    $state->{remaining} = 0;
+    $state->{reset_at}  = $now + $wait
+        if $now + $wait > ($state->{reset_at} // 0);
+
+    return;
+}
+
+# 制限に当たるなら待つ。グローバル → ルート → バケットの順に長い方を採用する。
+sub _wait_for_throttle {
+    my ($self, $method, $url) = @_;
+
+    my $now  = time;
+    my $wait = 0;
+    my $sig  = _route_signature($method, $url);
+
+    for my $until ($self->{global_until} // 0, $self->{route_until}{$sig} // 0) {
+        $wait = $until - $now if $until - $now > $wait;
+    }
+
+    if (my $bucket = $self->{routes}{$sig}) {
+        my $state = $self->{buckets}{ $bucket . ':' . _major_param($url) };
+        if ($state && ($state->{remaining} // 1) <= 0) {
+            my $until = $state->{reset_at} // 0;
+            $wait = $until - $now if $until - $now > $wait;
+        }
+    }
+
+    # バケット情報が無いときの従来の全体制限（1 回待ったら消す）
+    my $legacy = $self->{throttle_until} // 0;
+    if ($legacy - $now > 0) {
+        $wait = $legacy - $now if $legacy - $now > $wait;
+        $self->{throttle_until} = 0;
+    }
+
+    # 期限切れの状態を掃除する
+    $self->{global_until} = 0
+        if ($self->{global_until} // 0) && $self->{global_until} <= $now;
+    delete $self->{route_until}{$sig}
+        if ($self->{route_until}{$sig} // 0) && $self->{route_until}{$sig} <= $now;
+
     return if $wait <= 0;
 
-    $self->{throttle_until} = 0;
     $self->{sleep}->($wait);
+    return;
+}
+
+# レート制限のルート識別子。ID を :id に潰して「同じ種類の API」をまとめる。
+sub _route_signature {
+    my ($method, $url) = @_;
+
+    my @seg = split m{/}, _api_path($url), -1;
+    for my $i (0 .. $#seg) {
+        next if $seg[$i] eq '';
+        if ($seg[$i] =~ /^\d+\z/) {
+            $seg[$i] = ':id';
+        } elsif ($i == 3 && ($seg[1] // '') eq 'webhooks') {
+            $seg[$i] = ':token';
+        }
+    }
+
+    return uc($method) . ' ' . join('/', @seg);
+}
+
+# バケットを分ける単位（major parameter）。無ければ global。
+sub _major_param {
+    my ($url) = @_;
+
+    my @seg = split m{/}, _api_path($url);
+    my ($kind, $id) = ('', undef);
+
+    if    (($seg[1] // '') eq 'channels') { ($kind, $id) = ('channel', $seg[2]) }
+    elsif (($seg[1] // '') eq 'guilds')   { ($kind, $id) = ('guild',   $seg[2]) }
+    elsif (($seg[1] // '') eq 'webhooks') { ($kind, $id) = ('webhook', $seg[2]) }
+
+    return 'global' unless defined $id && length $id;
+    return "$kind:$id";
+}
+
+# URL から API のパス部分だけを取り出す（/api/v10 は落とす）。
+sub _api_path {
+    my ($url) = @_;
+
+    my $path = $url;
+    $path =~ s{^[a-z]+://[^/]+}{}i;
+    $path =~ s{\?.*\z}{};
+    $path =~ s{^/api/v\d+}{};
+
+    return $path;
 }
 
 sub _report_error {

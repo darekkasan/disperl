@@ -195,6 +195,17 @@ disperl 動作確認 CLI
   perl test.pl react <ID> <絵文字>     リアクションを付ける（check / thumbsup などの名前も可）
   perl test.pl edit <ID> <本文>       メッセージを編集する
   perl test.pl delete <ID>           メッセージを削除する
+  perl test.pl pin <ID>               メッセージをピン留めする
+  perl test.pl unpin <ID>             ピン留めを外す
+  perl test.pl pins                   ピン留めされたメッセージの一覧
+  perl test.pl purge <ID> <ID> ...    2〜100 件をまとめて削除する
+  perl test.pl reactions <ID> <絵文字> リアクションしたユーザー一覧
+  perl test.pl dm <ユーザーID> <本文>   DM を送る
+  perl test.pl thread [--private] <名前> スレッドを作る
+  perl test.pl channels [ギルドID]     チャンネル一覧（省略時は現在のギルド）
+  perl test.pl invite                 招待リンクを作る（24 時間有効）
+  perl test.pl user <ユーザーID>       ユーザー情報を表示する
+  perl test.pl webhook <ID> <トークン> <本文>  Webhook で送信する
   perl test.pl watch [オプション]      Gateway に接続し !ping / !echo / !status / !activity / !help に応答する
       --status <状態>                  online / idle / dnd / invisible（オフライン表示）
       --activity <名前>                アクティビティ
@@ -206,6 +217,9 @@ disperl 動作確認 CLI
   Get-Content memo.txt -Raw | perl test.pl send
   perl test.pl history 20
   perl test.pl react 123456789012345678 check
+  perl test.pl pins
+  perl test.pl channels
+  perl test.pl thread --private "相談"
   perl test.pl watch --status idle --activity "待機中"
   perl test.pl watch --status invisible
 
@@ -349,6 +363,217 @@ sub cmd_delete {
 
     client()->delete_message(channel_id(), $id) or _api_fail('削除');
     out "削除しました: id=$id\n";
+    return 0;
+}
+
+# ---------------------------------------------------------------- ピン / 一括削除
+
+sub cmd_pin {
+    my ($id) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl pin <メッセージID>')
+        unless defined $id && length $id;
+
+    client()->pin_message(channel_id(), $id) or _api_fail('ピン留め');
+    out "ピン留めしました: id=$id\n";
+    return 0;
+}
+
+sub cmd_unpin {
+    my ($id) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl unpin <メッセージID>')
+        unless defined $id && length $id;
+
+    client()->unpin_message(channel_id(), $id) or _api_fail('ピン解除');
+    out "ピン留めを外しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_pins {
+    my $pins = client()->get_pinned_messages(channel_id());
+    _api_fail('ピン一覧の取得') unless defined $pins;
+
+    if (!@$pins) {
+        out "ピン留めされたメッセージはありません\n";
+        return 0;
+    }
+
+    for my $m (reverse @$pins) {
+        out sprintf "%s  %s: %s\n",
+            _format_time(_snowflake_time($m->{id})),
+            _author_name($m->{author}),
+            _clip($m->{content}, 100);
+    }
+    out sprintf "(%d 件)\n", scalar @$pins;
+    return 0;
+}
+
+sub cmd_purge {
+    my (@ids) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl purge <ID> <ID> [...]（2〜100 件）')
+        unless @ids >= 2;
+
+    my $ok = eval { client()->bulk_delete_messages(channel_id(), \@ids) };
+    if ($@) {
+        my $error = $@;
+        $error =~ s/\s+\z//;
+        _fatal($error);
+    }
+    _api_fail('一括削除') unless $ok;
+
+    out sprintf "%d 件を削除しました\n", scalar @ids;
+    return 0;
+}
+
+# ---------------------------------------------------------------- リアクション / DM / スレッド
+
+sub cmd_reactions {
+    my ($id, $emoji) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl reactions <メッセージID> <絵文字>')
+        unless defined $id && defined $emoji && length $emoji;
+
+    my $users = client()->get_reactions(
+        channel_id(), $id, _resolve_emoji($emoji), limit => 100,
+    );
+    _api_fail('リアクション一覧の取得') unless defined $users;
+
+    if (!@$users) {
+        out "リアクションはありません\n";
+        return 0;
+    }
+
+    for my $user (@$users) {
+        out sprintf "%s (id: %s)\n",
+            $user->{global_name} // $user->{username} // 'unknown',
+            $user->{id} // '?';
+    }
+    out sprintf "(%d 人)\n", scalar @$users;
+    return 0;
+}
+
+sub cmd_dm {
+    my ($user_id, @words) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl dm <ユーザーID> <本文>')
+        unless defined $user_id && length $user_id && @words;
+
+    my $dm = client()->create_dm($user_id) or _api_fail('DM チャンネルの作成');
+
+    my $message = client()->send_message($dm->{id}, join(' ', @words))
+        or _api_fail('DM 送信');
+
+    out "DM を送信しました: channel=$dm->{id} id=$message->{id}\n";
+    return 0;
+}
+
+sub cmd_thread {
+    my (@args) = map { _decode_arg($_) } @_;
+
+    my $private = 0;
+    my @rest;
+    for my $arg (@args) {
+        if ($arg eq '--private') {
+            $private = 1;
+            next;
+        }
+        push @rest, $arg;
+    }
+
+    my $name = join ' ', @rest;
+    _fatal('使い方: perl test.pl thread [--private] <名前>') unless length $name;
+
+    my $thread = client()->create_thread(
+        channel_id(),
+        name => $name,
+        type => $private ? 'private' : 'public',
+    ) or _api_fail('スレッド作成');
+
+    out "スレッドを作成しました: #" . ($thread->{name} // $name)
+        . " (id: $thread->{id})\n";
+    out "  このスレッドに送るには DISCORD_CHANNEL_ID=$thread->{id} を指定してください\n";
+    return 0;
+}
+
+# ---------------------------------------------------------------- ギルド / 招待 / ユーザー
+
+my %CHANNEL_TYPE = (
+    0  => 'text',
+    2  => 'voice',
+    4  => 'category',
+    5  => 'announcement',
+    10 => 'announcement_thread',
+    11 => 'public_thread',
+    12 => 'private_thread',
+    13 => 'stage',
+    15 => 'forum',
+    16 => 'media',
+);
+
+sub _channel_type_name {
+    my ($type) = @_;
+    return 'unknown' unless defined $type;
+    return $CHANNEL_TYPE{$type} // "type$type";
+}
+
+sub cmd_channels {
+    my ($guild_id) = map { _decode_arg($_) } @_;
+
+    if (!defined $guild_id || !length $guild_id) {
+        my $ch = client()->get_channel(channel_id()) or _api_fail('チャンネル確認');
+        $guild_id = $ch->{guild_id};
+        _fatal('このチャンネルはギルドに属していません（ID を指定してください）')
+            unless defined $guild_id && length $guild_id;
+    }
+
+    my $channels = client()->get_guild_channels($guild_id);
+    _api_fail('チャンネル一覧の取得') unless defined $channels;
+
+    for my $ch (@$channels) {
+        out sprintf "%-18s %-20s %s\n",
+            $ch->{id},
+            _channel_type_name($ch->{type}),
+            $ch->{name} // '';
+    }
+    out sprintf "(%d 件)\n", scalar @$channels;
+    return 0;
+}
+
+sub cmd_invite {
+    my $invite = client()->create_invite(channel_id(), max_age => 86400)
+        or _api_fail('招待の作成');
+
+    out "招待を作成しました: https://discord.gg/$invite->{code}\n";
+    return 0;
+}
+
+sub cmd_user {
+    my ($id) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl user <ユーザーID>')
+        unless defined $id && length $id;
+
+    my $user = client()->get_user($id) or _api_fail('ユーザー取得');
+
+    out sprintf "%s (id: %s, bot: %s)\n",
+        $user->{global_name} // $user->{username} // 'unknown',
+        $user->{id} // '?',
+        $user->{bot} ? 'yes' : 'no';
+    return 0;
+}
+
+sub cmd_webhook {
+    my ($id, $token, @words) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl webhook <Webhook ID> <トークン> <本文>')
+        unless defined $id && defined $token && @words;
+
+    my $message = client()->execute_webhook($id, $token, join(' ', @words))
+        or _api_fail('Webhook 実行');
+
+    out "Webhook で送信しました: id=" . ($message->{id} // '?') . "\n";
     return 0;
 }
 
@@ -580,16 +805,27 @@ sub _help_embed {
 # ---------------------------------------------------------------- ディスパッチ
 
 my %COMMANDS = (
-    check   => \&cmd_check,
-    send    => \&cmd_send,
-    embed   => \&cmd_embed,
-    history => \&cmd_history,
-    typing  => \&cmd_typing,
-    react   => \&cmd_react,
-    edit    => \&cmd_edit,
-    delete  => \&cmd_delete,
-    watch   => \&cmd_watch,
-    help    => \&cmd_help,
+    check     => \&cmd_check,
+    send      => \&cmd_send,
+    embed     => \&cmd_embed,
+    history   => \&cmd_history,
+    typing    => \&cmd_typing,
+    react     => \&cmd_react,
+    edit      => \&cmd_edit,
+    delete    => \&cmd_delete,
+    pin       => \&cmd_pin,
+    unpin     => \&cmd_unpin,
+    pins      => \&cmd_pins,
+    purge     => \&cmd_purge,
+    reactions => \&cmd_reactions,
+    dm        => \&cmd_dm,
+    thread    => \&cmd_thread,
+    channels  => \&cmd_channels,
+    invite    => \&cmd_invite,
+    user      => \&cmd_user,
+    webhook   => \&cmd_webhook,
+    watch     => \&cmd_watch,
+    help      => \&cmd_help,
 );
 
 my $command = shift @ARGV // 'help';

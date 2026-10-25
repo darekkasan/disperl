@@ -4,7 +4,8 @@ Perl 製の Discord Bot 用クライアント。
 
 - メッセージの送信・編集・削除・取得
 - embeds / 返信 / リアクション / 入力中表示
-- レート制限（429）のリトライと事前スロットリング
+- ピン留め / 一括削除 / スレッド / DM / 招待 / Webhook
+- レート制限（バケット単位・429）対応と事前スロットリング
 - Gateway（WebSocket）でイベントを受信
 - ステータス（online / idle / dnd / invisible）とアクティビティの変更
 
@@ -115,20 +116,88 @@ $client->edit_message($channel_id, $message_id, $content, \%opts);
 | メソッド | 成功時 | 説明 |
 |---|---|---|
 | `get_current_user()` | ユーザーのハッシュ | `GET /users/@me`。トークン検証に使える |
+| `get_user($user_id)` | ユーザーのハッシュ | `GET /users/{id}` |
 | `get_channel($channel_id)` | チャンネルのハッシュ | `GET /channels/{id}` |
 | `get_message($channel_id, $message_id)` | メッセージのハッシュ | 1 件取得 |
 | `get_messages($channel_id, %opts)` | メッセージの配列 | `limit` (1..100) / `before` / `after` / `around` |
 | `send_typing($channel_id)` | `1` | 「入力中...」を表示 |
 | `add_reaction($channel_id, $message_id, $emoji)` | `1` | 絵文字は UTF-8 で自動エンコード |
 | `remove_reaction($channel_id, $message_id, $emoji)` | `1` | 自分のリアクションを外す |
+| `get_reactions($channel_id, $message_id, $emoji, %opts)` | ユーザーの配列 | `limit` (1..100) / `after` |
+| `delete_all_reactions($channel_id, $message_id)` | `1` | メッセージのリアクションを全部消す |
 | `delete_message($channel_id, $message_id)` | `1` | 204 No Content |
+| `pin_message($channel_id, $message_id)` | `1` | ピン留め（`MANAGE_MESSAGES` が必要） |
+| `unpin_message($channel_id, $message_id)` | `1` | ピン留めを外す |
+| `get_pinned_messages($channel_id)` | メッセージの配列 | ピン留めの一覧 |
+| `bulk_delete_messages($channel_id, \@ids)` | `1` | 2〜100 件。14 日以内のメッセージのみ |
 
 ```perl
 my $msgs = $client->get_messages($channel, limit => 20);
 $client->add_reaction($channel, $msgs->[0]{id}, "\x{2705}");    # ✅
+
+$client->pin_message($channel, $msgs->[0]{id});
+$client->bulk_delete_messages($channel, [ map { $_->{id} } @$msgs[0 .. 2] ]);
 ```
 
 存在しないメッセージを削除すると 404 / code `10008` になります。
+
+### スレッド・DM
+
+```perl
+my $thread = $client->create_thread($channel, name => '議題', type => 'public');
+$client->send_message($thread->{id}, 'スレッドの最初の書き込み');
+
+$client->create_thread_from_message($channel, $message_id, name => 'この件について');
+
+my $dm = $client->create_dm($user_id);          # DM チャンネルを開く
+$client->send_message($dm->{id}, 'こんにちは');
+```
+
+`create_thread` のオプション:
+
+| キー | 既定値 | 説明 |
+|---|---|---|
+| `name` | （必須） | スレッド名 |
+| `type` | `public` | `public` (11) / `private` (12) |
+| `auto_archive_duration` | — | 60 / 1440 / 4320 / 10080（分） |
+| `rate_limit_per_user` | — | 1 人あたりの投稿間隔（秒） |
+
+スレッドはチャンネル扱いなので、以降は `send_message($thread->{id}, ...)` で送れます。
+
+### ギルド・招待・Webhook
+
+```perl
+my $guild    = $client->get_guild($guild_id);
+my $channels = $client->get_guild_channels($guild_id);
+my $roles    = $client->get_guild_roles($guild_id);
+my $members  = $client->get_guild_members($guild_id, limit => 100);
+my $member   = $client->get_guild_member($guild_id, $user_id);
+
+my $invite = $client->create_invite($channel, max_age => 86400, max_uses => 10);
+print "https://discord.gg/$invite->{code}\n";
+my $info = $client->get_invite($invite->{code}, with_counts => 1);   # 認証不要
+
+$client->execute_webhook($webhook_id, $webhook_token, '通知です',
+    username => 'disperl');
+```
+
+- `get_guild_members` / `get_guild_member` は **`GUILD_MEMBERS`（Privileged Intent）** が
+  有効な Bot だけ使えます
+- `get_invite` と `execute_webhook` は認証ヘッダを付けません（招待コード／Webhook トークンだけで動く）
+- `execute_webhook` は既定で `wait=1` を付けるので、送信したメッセージが返ります
+  （`wait => 0` で `1`）
+
+### レート制限
+
+Discord の制限は「バケット（`X-RateLimit-Bucket`）」＋「major parameter」単位です。
+`Disperl::Client` はこれを次のように扱います。
+
+- major parameter はチャンネル ID / ギルド ID / Webhook ID。**別チャンネルなら別枠**として待つ
+- 同じバケットでも、GET と POST などルートが違えば別扱い
+- `X-RateLimit-Remaining: 0` のとき、次のリクエストを `X-RateLimit-Reset-After` 秒待つ
+- 429 は `retry_after` 秒待ってリトライ。上限に達したらバケットを閉じ、次のリクエストで待つ
+- `X-RateLimit-Global` の 429 は全ルートに影響する
+- `X-RateLimit-Bucket` が無い応答では、従来どおりクライアント全体で待つ
 
 ### `last_error`
 
@@ -236,6 +305,17 @@ perl test.pl typing               # 「入力中...」を表示
 perl test.pl react <ID> check     # リアクション（check / thumbsup / wave / heart / tada / fire / eyes）
 perl test.pl edit <ID> "新しい本文"
 perl test.pl delete <ID>
+perl test.pl pin <ID>              # ピン留め
+perl test.pl unpin <ID>            # ピン解除
+perl test.pl pins                  # ピン一覧
+perl test.pl purge <ID> <ID> ...   # 2〜100 件をまとめて削除
+perl test.pl reactions <ID> check  # リアクションしたユーザー
+perl test.pl dm <ユーザーID> "本文" # DM を送る
+perl test.pl thread --private "相談" # スレッドを作る
+perl test.pl channels              # チャンネル一覧（現在のギルド）
+perl test.pl invite                # 招待リンク（24 時間）
+perl test.pl user <ユーザーID>      # ユーザー情報
+perl test.pl webhook <ID> <トークン> "本文"
 perl test.pl watch                # Gateway で受信し !ping / !echo / !status / !activity / !help に応答
 perl test.pl watch --status idle --activity "待機中"
 perl test.pl watch --status invisible   # オフライン表示
@@ -281,6 +361,8 @@ prove -l t
 | `t/09_websocket.t` | WebSocket のフレーミング（マスク / 分割 / ping / close） |
 | `t/10_gateway.t` | Identify / Resume / Heartbeat / イベント配送 / 再接続判断 |
 | `t/11_presence.t` | ステータス / アクティビティ / Identify への反映 / 更新間隔 |
+| `t/12_rest_extras.t` | ピン / 一括削除 / リアクション一覧 / スレッド / DM / ギルド / 招待 / Webhook |
+| `t/13_rate_bucket.t` | バケット単位のレート制限 / major parameter / グローバル 429 |
 
 Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパスを解決）。
 
