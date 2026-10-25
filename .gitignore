@@ -1,0 +1,10 @@
+# 機密情報
+config.pl
+*.token
+.env
+
+# Perl関連
+blib/
+Makefile
+pm_to_blib
+*.bak
