@@ -295,4 +295,54 @@ subtest 'send_files validation' => sub {
     like $@, qr/file data is required/, 'data is required';
 };
 
+subtest 'execute_webhook with files' => sub {
+    my ($client, $fake) = client_with(ok_json({ id => '9' }));
+
+    my $msg = $client->execute_webhook(
+        '123', 'tok', 'ログです',
+        files => [
+            { filename => 'a.txt', data => "alpha\n" },
+            { filename => 'b.png', data => "\x89PNG", content_type => 'image/png' },
+        ],
+    );
+
+    is $msg->{id}, '9', 'returns the message';
+    is $fake->last_call->{method}, 'POST', 'POST';
+    is $fake->last_call->{url}, "$API/webhooks/123/tok?wait=1", 'endpoint';
+    ok !exists $fake->last_call->{args}{headers}{Authorization},
+        'webhook needs no auth';
+    like $fake->last_call->{args}{headers}{'Content-Type'},
+        qr{^multipart/form-data; boundary=}, 'multipart content type';
+
+    my @parts = file_parts($fake);
+    is scalar @parts, 2, 'two file parts';
+    is $parts[0]{filename}, 'a.txt', 'first filename';
+    is $parts[0]{bytes}, "alpha\n", 'first bytes';
+    is $parts[1]{filename}, 'b.png', 'second filename';
+    is $parts[1]{type}, 'image/png', 'second content type';
+
+    is payload_of($fake)->{content}, 'ログです', 'payload_json carries the content';
+};
+
+subtest 'execute_webhook with files only' => sub {
+    my ($client, $fake) = client_with(ok_json({ id => '10' }));
+
+    $client->execute_webhook(
+        '123', 'tok', undef,
+        files => [ { filename => 'data.bin', data => "\x00\x01" } ],
+    );
+
+    ok !exists payload_of($fake)->{content}, 'content is omitted';
+    like body_of($fake), qr/Content-Type: application\/octet-stream/,
+        'octet-stream fallback';
+};
+
+subtest 'execute_webhook file limit' => sub {
+    my ($client) = client_with();
+
+    my @files = map { { filename => "f$_.txt", data => 'x' } } 1 .. 11;
+    eval { $client->execute_webhook('123', 'tok', 'x', files => \@files) };
+    like $@, qr/at most 10 files are allowed/, '11 files die';
+};
+
 done_testing;

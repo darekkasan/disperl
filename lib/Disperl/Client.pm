@@ -681,6 +681,7 @@ sub delete_invite {
 
 # Webhook を実行する（トークンだけで送れるので認証不要）。
 #   execute_webhook($id, $token, '本文', username => '通知', embeds => [...])
+#   execute_webhook($id, $token, undef, files => [ { filename => 'a.txt', data => '...' } ])
 #   wait => 0 を指定すると 204 が返るので 1 を返す。
 sub execute_webhook {
     my ($self, $webhook_id, $token, $content, %opts) = @_;
@@ -694,7 +695,11 @@ sub execute_webhook {
     push @query, 'thread_id=' . _uri_escape($opts{thread_id})
         if defined $opts{thread_id};
 
-    my $payload = $self->_message_payload($content, \%opts);
+    my $files = defined $opts{files} ? _normalize_files($opts{files}) : undef;
+
+    # ファイルだけを送れるように、添付があるときは本文なしを許可する
+    my %payload_opts = (%opts, ($files ? (allow_empty => 1) : ()));
+    my $payload = $self->_message_payload($content, \%payload_opts);
     for my $key (qw(username avatar_url thread_name)) {
         $payload->{$key} = $opts{$key} if defined $opts{$key};
     }
@@ -703,7 +708,23 @@ sub execute_webhook {
     $url .= '?' . join('&', @query) if @query;
 
     $self->{last_error} = undef;
-    my $res = $self->_request('POST', $url, $payload, { auth => 0 });
+
+    my $res;
+    if ($files) {
+        my ($body, $boundary) = _multipart_body($payload, $files);
+        $res = $self->_request(
+            'POST',
+            $url,
+            undef,
+            {
+                raw          => $body,
+                content_type => "multipart/form-data; boundary=$boundary",
+                auth         => 0,
+            },
+        );
+    } else {
+        $res = $self->_request('POST', $url, $payload, { auth => 0 });
+    }
 
     return $self->_finish($res, $wait ? 'hash' : 'none');
 }
@@ -830,6 +851,13 @@ sub send_files {
 sub send_files_data {
     my ($self, $channel_id, $files, %opts) = @_;
 
+    return $self->_upload($channel_id, _normalize_files($files), \%opts);
+}
+
+# { filename, data, content_type? } の配列を内部形式（bytes 持ち）に変換する。
+sub _normalize_files {
+    my ($files) = @_;
+
     die "files must be an array reference\n"
         unless ref $files eq 'ARRAY';
     die "at least one file is required\n" unless @$files;
@@ -850,17 +878,37 @@ sub send_files_data {
         };
     }
 
-    return $self->_upload($channel_id, \@specs, \%opts);
+    return \@specs;
 }
 
 sub _upload {
     my ($self, $channel_id, $files, $opts) = @_;
 
-    my $boundary = '----disperl'
-        . join('', map { sprintf '%02x', int rand 256 } 1 .. 16);
-
     my %payload_opts = (%$opts, allow_empty => 1);
     my $json = $self->_message_payload($opts->{content}, \%payload_opts);
+
+    my ($body, $boundary) = _multipart_body($json, $files);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        $self->_messages_url($channel_id),
+        undef,
+        {
+            raw          => $body,
+            content_type => "multipart/form-data; boundary=$boundary",
+        },
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# payload_json とファイルから multipart/form-data の本文を組み立てる。
+# 戻り値は ($body, $boundary)。
+sub _multipart_body {
+    my ($json, $files) = @_;
+
+    my $boundary = '----disperl'
+        . join('', map { sprintf '%02x', int rand 256 } 1 .. 16);
 
     my $body = "--$boundary\r\n"
         . "Content-Disposition: form-data; name=\"payload_json\"\r\n"
@@ -882,17 +930,7 @@ sub _upload {
 
     $body .= "--$boundary--\r\n";
 
-    $self->{last_error} = undef;
-    my $res = $self->_request(
-        'POST',
-        $self->_messages_url($channel_id),
-        undef,
-        {
-            raw          => $body,
-            content_type => "multipart/form-data; boundary=$boundary",
-        },
-    );
-    return $self->_finish($res, 'hash');
+    return ($body, $boundary);
 }
 
 sub _read_file {
@@ -1073,6 +1111,105 @@ sub edit_interaction_response {
     return $self->_finish($res, 'hash');
 }
 
+# インタラクションのフォローアップを送る（トークンが有効な間は何度でも送れる）。
+#   create_followup_message($app_id, $token, '追加です', ephemeral => 1)
+#   create_followup_message($app_id, $token, undef, embeds => [...], files => [...])
+sub create_followup_message {
+    my ($self, $application_id, $token, $content, %opts) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "interaction token is required\n"
+        unless defined $token && length $token;
+
+    my $files = defined $opts{files} ? _normalize_files($opts{files}) : undef;
+
+    # ファイルだけを送れるように、添付があるときは本文なしを許可する
+    my %payload_opts = (%opts, ($files ? (allow_empty => 1) : ()));
+    my $payload = $self->_message_payload($content, \%payload_opts);
+    $payload->{flags} = $opts{ephemeral} ? 64 : 0
+        if exists $opts{ephemeral};
+
+    my @query = ('wait=1');
+    push @query, 'thread_id=' . _uri_escape($opts{thread_id})
+        if defined $opts{thread_id};
+
+    my $url = "$API_BASE/webhooks/$application_id/"
+        . _uri_escape($token) . '?' . join('&', @query);
+
+    $self->{last_error} = undef;
+
+    my $res;
+    if ($files) {
+        my ($body, $boundary) = _multipart_body($payload, $files);
+        $res = $self->_request(
+            'POST',
+            $url,
+            undef,
+            {
+                raw          => $body,
+                content_type => "multipart/form-data; boundary=$boundary",
+                auth         => 0,
+            },
+        );
+    } else {
+        $res = $self->_request('POST', $url, $payload, { auth => 0 });
+    }
+
+    return $self->_finish($res, 'hash');
+}
+
+# フォローアップ（または最初の応答）を編集する。
+#   edit_followup_message($app_id, $token, '@original', '直しました')
+#   edit_followup_message($app_id, $token, $message_id, undef, embeds => [...])
+sub edit_followup_message {
+    my ($self, $application_id, $token, $message_id, $content, %opts) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "interaction token is required\n"
+        unless defined $token && length $token;
+    die "message id is required\n"
+        unless defined $message_id && length $message_id;
+
+    my $payload = $self->_message_payload($content, \%opts);
+
+    # '@original' はそのままの形で送る（%40 にしても動くが意図を明確にする）
+    my $id = $message_id eq '@original'
+        ? '@original'
+        : _uri_escape($message_id);
+
+    my $url = "$API_BASE/webhooks/$application_id/"
+        . _uri_escape($token) . "/messages/$id";
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('PATCH', $url, $payload, { auth => 0 });
+    return $self->_finish($res, 'hash');
+}
+
+# フォローアップを削除する。成功時は 1（204 No Content）。
+sub delete_followup_message {
+    my ($self, $application_id, $token, $message_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "interaction token is required\n"
+        unless defined $token && length $token;
+    die "message id is required\n"
+        unless defined $message_id && length $message_id;
+
+    my $id = $message_id eq '@original'
+        ? '@original'
+        : _uri_escape($message_id);
+
+    my $url = "$API_BASE/webhooks/$application_id/"
+        . _uri_escape($token) . "/messages/$id";
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('DELETE', $url, undef, { auth => 0 });
+    return $self->_finish($res, 'none');
+}
+
 # ---------------------------------------------------------------- application commands
 
 # グローバル（全サーバー）コマンドを登録する。反映に最大 1 時間かかる。
@@ -1175,6 +1312,13 @@ sub _message_payload {
     $self->_validate_embeds($payload{embeds}) if $payload{embeds};
 
     $payload{components} = $opts->{components} if $opts->{components};
+
+    # 編集時に既存の添付を保持するためのパススルー（[] で削除）
+    if (exists $opts->{attachments}) {
+        die "attachments must be an array reference\n"
+            unless ref $opts->{attachments} eq 'ARRAY';
+        $payload{attachments} = $opts->{attachments};
+    }
 
     if (exists $opts->{tts}) {
         $payload{tts} = $opts->{tts} ? JSON::PP::true : JSON::PP::false;

@@ -6,6 +6,7 @@ Perl 製の Discord Bot 用クライアント。REST API と Gateway（WebSocket
 
 - メッセージの送信・編集・削除・取得、embeds、返信、リアクション、入力中表示
 - ファイル添付（最大 10 個。multipart を自前で送信。追加依存なし）
+- インタラクションのフォローアップ送信（添付・ephemeral 対応）
 - ピン留め、一括削除、スレッド、DM、招待、Webhook
 - スレッドの一覧・参加・退出・メンバー管理・アーカイブ
 - レート制限（バケット単位・429）対応と事前スロットリング
@@ -331,6 +332,13 @@ my $info = $client->get_invite($invite->{code}, with_counts => 1);   # 認証不
 
 $client->execute_webhook($webhook_id, $webhook_token, '通知です',
     username => 'disperl');
+
+# ファイルを添付して送る（最大 10 個）
+$client->execute_webhook($webhook_id, $webhook_token, 'ログです',
+    files => [
+        { filename => 'a.txt', data => "alpha\n" },
+        { filename => 'b.png', data => $bytes, content_type => 'image/png' },
+    ]);
 ```
 
 | メソッド | 説明 |
@@ -348,11 +356,12 @@ $client->execute_webhook($webhook_id, $webhook_token, '通知です',
 | `get_invite($code, %opts)` | 招待情報（認証不要） |
 | `get_invites($guild_id)` | ギルドの招待一覧 |
 | `delete_invite($code)` | 招待を削除 |
-| `execute_webhook($id, $token, $content, %opts)` | Webhook を実行（認証不要） |
+| `execute_webhook($id, $token, $content, %opts)` | Webhook を実行（認証不要）。`files` / `username` / `avatar_url` / `thread_name` / `thread_id` |
 
 - `get_invite` と `execute_webhook` は認証ヘッダを付けません
 - `execute_webhook` は既定で `wait=1` を付けるので、送信したメッセージが返ります
   （`wait => 0` で `1`）
+- `files` は `{ filename, data, content_type? }` の配列です（`send_files_data` と同じ形）
 
 ### レート制限
 
@@ -586,11 +595,45 @@ $gw->run;
 | `autocomplete_interaction($id, $token, \@choices)` | 8 | オートコンプリートの候補を返す（最大 25 件） |
 | `reply_modal($id, $token, $modal_or_opts)` | 9 | モーダルを表示する（`modal()` を渡す） |
 | `edit_interaction_response($app_id, $token, $content, %opts)` | — | defer した応答を後から編集する |
+| `create_followup_message($app_id, $token, $content, %opts)` | — | 追加のメッセージを送る（何度でも可） |
+| `edit_followup_message($app_id, $token, $message_id, $content, %opts)` | — | フォローアップを編集（`@original` も可） |
+| `delete_followup_message($app_id, $token, $message_id)` | — | フォローアップを削除 |
 | `interaction_callback($id, $token, $type, $data)` | — | 低レベル。`$type` は数値か `reply` / `deferred` / `deferred_update` / `update` / `autocomplete` / `modal` |
 
 - インタラクションの応答 API は認証ヘッダを付けません（ID + トークンで認証）
-- `%opts` は `send_message` と同じ（`embeds` / `components` / `allowed_mentions`）
+- `%opts` は `send_message` と同じ（`embeds` / `components` / `allowed_mentions` / `attachments`）
+- `create_followup_message` は `ephemeral` / `files` / `thread_id` も使えます
 - `defer_interaction` のあとは `edit_interaction_response($gw->application_id, $token, ...)`
+
+#### フォローアップ
+
+`defer_interaction` のあと 1 回だけでなく、トークンが有効な間は何度でも追加送信できます。
+
+```perl
+on_command => sub {
+    my $i = shift;
+    my $client = Disperl::Client->new(token => $ENV{DISCORD_TOKEN});
+
+    $client->defer_interaction($i->{id}, $i->{token});
+
+    # 最初の応答（@original）を編集
+    $client->edit_interaction_response(
+        $i->{application_id}, $i->{token}, '1 件目です',
+    );
+
+    # 2 件目以降はフォローアップとして送る
+    $client->create_followup_message(
+        $i->{application_id}, $i->{token}, '2 件目です',
+        ephemeral => 1,
+    );
+
+    # ファイル付きのフォローアップ
+    $client->create_followup_message(
+        $i->{application_id}, $i->{token}, undef,
+        files => [ { filename => 'result.csv', data => $csv } ],
+    );
+};
+```
 
 #### モーダル
 
@@ -820,6 +863,7 @@ prove -l t
 | `t/17_modals_autocomplete.t` | モーダル（type 9）/ オートコンプリート（type 8）/ type 4・5 配送 |
 | `t/18_threads.t` | スレッド一覧 / 参加・退出 / メンバー / アーカイブ / 更新 / 削除 |
 | `t/19_embed_validation.t` | embed の個数・文字数・構造の検証 |
+| `t/20_followups.t` | フォローアップの作成・編集・削除 / 添付 / 添付メタデータ |
 
 Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパスを解決）。
 
@@ -851,9 +895,9 @@ Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパ�
 - リアクション・入力中・ピン留め・一括削除
 - ファイル添付（最大 10 個をまとめて送信）
 - スレッド: 作成・一覧・参加・退出・メンバー・アーカイブ・削除
-- DM・ギルド情報の取得・招待・Webhook 実行
+- DM・ギルド情報の取得・招待・Webhook 実行（ファイル添付可）
 - Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス
-- インタラクション: ボタン・セレクト・モーダル・オートコンプリート
+- インタラクション: ボタン・セレクト・モーダル・オートコンプリート・フォローアップ
 - スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）
 - レート制限: バケット単位・major parameter・429 / 5xx リトライ
 
