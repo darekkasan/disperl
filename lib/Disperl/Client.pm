@@ -15,6 +15,9 @@ my $MAX_EMBEDS       = 10;
 my $MAX_EMBED_CHARS  = 6000;   # 全 embed の文字数の合計
 my $MAX_EMBED_FIELDS = 25;
 
+# 1 メッセージに添付できるファイル数の上限（Discord API）
+my $MAX_FILES = 10;
+
 # JSON::PP は encode/decode で状態を持たないので使い回せる
 my $JSON = JSON::PP->new->utf8(1);
 
@@ -738,15 +741,21 @@ sub send_file {
     die "file path is required\n" unless defined $path && length $path;
     die "file not found: $path\n"  unless -f $path;
 
-    open my $fh, '<:raw', $path or die "cannot read $path: $!\n";
-    local $/;
-    my $bytes = <$fh>;
-    close $fh;
-    $bytes = '' unless defined $bytes;
-
     my $filename = $opts{filename} // _basename($path);
+    my $bytes    = _read_file($path);
 
-    return $self->_upload($channel_id, $filename, $bytes, \%opts);
+    my %message_opts = %opts;
+    delete @message_opts{qw(filename content_type)};
+
+    return $self->_upload(
+        $channel_id,
+        [ {
+            filename     => $filename,
+            bytes        => $bytes,
+            content_type => $opts{content_type},
+        } ],
+        \%message_opts,
+    );
 }
 
 # メモリ上のデータを添付して送る。
@@ -758,11 +767,94 @@ sub send_file_data {
         unless defined $filename && length $filename;
     die "file data is required\n" unless defined $bytes;
 
-    return $self->_upload($channel_id, $filename, $bytes, \%opts);
+    return $self->_upload(
+        $channel_id,
+        [ {
+            filename     => $filename,
+            bytes        => $bytes,
+            content_type => $opts{content_type},
+        } ],
+        \%opts,
+    );
+}
+
+# 複数ファイルを添付して送る（最大 10 個）。
+#   send_files($channel_id, ['a.txt', 'b.png'], content => '本文')
+#   send_files($channel_id, [
+#       'a.txt',
+#       { path => 'b.png', filename => 'c.png', content_type => 'image/png' },
+#   ], content => '本文')
+sub send_files {
+    my ($self, $channel_id, $paths, %opts) = @_;
+
+    die "file paths must be an array reference\n"
+        unless ref $paths eq 'ARRAY';
+    die "at least one file is required\n" unless @$paths;
+    die "at most $MAX_FILES files are allowed\n" if @$paths > $MAX_FILES;
+
+    my @files;
+    for my $entry (@$paths) {
+        my ($path, $filename, $content_type);
+
+        if (ref $entry eq 'HASH') {
+            $path         = $entry->{path};
+            $filename     = $entry->{filename};
+            $content_type = $entry->{content_type};
+        } elsif (!ref $entry) {
+            $path = $entry;
+        } else {
+            die "each file must be a path or a hash reference\n";
+        }
+
+        die "file path is required\n" unless defined $path && length $path;
+        die "file not found: $path\n"  unless -f $path;
+
+        push @files, {
+            filename     => $filename // _basename($path),
+            bytes        => _read_file($path),
+            content_type => $content_type,
+        };
+    }
+
+    my %message_opts = %opts;
+    delete @message_opts{qw(filename content_type)};
+
+    return $self->_upload($channel_id, \@files, \%message_opts);
+}
+
+# メモリ上の複数データを添付して送る（最大 10 個）。
+#   send_files_data($channel_id, [
+#       { filename => 'a.txt', data => '...' },
+#       { filename => 'b.png', data => $bytes, content_type => 'image/png' },
+#   ], content => '本文')
+sub send_files_data {
+    my ($self, $channel_id, $files, %opts) = @_;
+
+    die "files must be an array reference\n"
+        unless ref $files eq 'ARRAY';
+    die "at least one file is required\n" unless @$files;
+    die "at most $MAX_FILES files are allowed\n" if @$files > $MAX_FILES;
+
+    my @specs;
+    for my $file (@$files) {
+        die "each file must be a hash reference\n"
+            unless ref $file eq 'HASH';
+        die "filename is required\n"
+            unless defined $file->{filename} && length $file->{filename};
+        die "file data is required\n" unless defined $file->{data};
+
+        push @specs, {
+            filename     => $file->{filename},
+            bytes        => $file->{data},
+            content_type => $file->{content_type},
+        };
+    }
+
+    return $self->_upload($channel_id, \@specs, \%opts);
 }
 
 sub _upload {
-    my ($self, $channel_id, $filename, $bytes, $opts) = @_;
+    my ($self, $channel_id, $files, $opts) = @_;
 
     my $boundary = '----disperl'
         . join('', map { sprintf '%02x', int rand 256 } 1 .. 16);
@@ -770,20 +862,25 @@ sub _upload {
     my %payload_opts = (%$opts, allow_empty => 1);
     my $json = $self->_message_payload($opts->{content}, \%payload_opts);
 
-    my $type = $opts->{content_type} // _content_type($filename);
-
-    # ヘッダを壊す文字だけ落とす
-    (my $safe = $filename) =~ s/["\r\n]/_/g;
-
     my $body = "--$boundary\r\n"
         . "Content-Disposition: form-data; name=\"payload_json\"\r\n"
         . "Content-Type: application/json\r\n\r\n"
-        . $JSON->encode($json) . "\r\n"
-        . "--$boundary\r\n"
-        . "Content-Disposition: form-data; name=\"files[0]\"; filename=\"$safe\"\r\n"
-        . "Content-Type: $type\r\n\r\n"
-        . $bytes . "\r\n"
-        . "--$boundary--\r\n";
+        . $JSON->encode($json) . "\r\n";
+
+    for my $i (0 .. $#$files) {
+        my $file = $files->[$i];
+        my $type = $file->{content_type} // _content_type($file->{filename});
+
+        # ヘッダを壊す文字だけ落とす
+        (my $safe = $file->{filename}) =~ s/["\r\n]/_/g;
+
+        $body .= "--$boundary\r\n"
+            . "Content-Disposition: form-data; name=\"files[$i]\"; filename=\"$safe\"\r\n"
+            . "Content-Type: $type\r\n\r\n"
+            . $file->{bytes} . "\r\n";
+    }
+
+    $body .= "--$boundary--\r\n";
 
     $self->{last_error} = undef;
     my $res = $self->_request(
@@ -796,6 +893,17 @@ sub _upload {
         },
     );
     return $self->_finish($res, 'hash');
+}
+
+sub _read_file {
+    my ($path) = @_;
+
+    open my $fh, '<:raw', $path or die "cannot read $path: $!\n";
+    local $/;
+    my $bytes = <$fh>;
+    close $fh;
+
+    return defined $bytes ? $bytes : '';
 }
 
 sub _basename {

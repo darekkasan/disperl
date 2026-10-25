@@ -216,7 +216,8 @@ disperl 動作確認 CLI
   perl test.pl invite                 招待リンクを作る（24 時間有効）
   perl test.pl user <ユーザーID>       ユーザー情報を表示する
   perl test.pl webhook <ID> <トークン> <本文>  Webhook で送信する
-  perl test.pl upload <ファイル> [本文]  ファイルを添付して送る
+  perl test.pl upload <ファイル> [<ファイル> ...] [--] [本文]
+                                       ファイルを添付して送る（最大 10 個）
   perl test.pl poll <質問>            ボタン付きの投票を作る
   perl test.pl commands [--list] [--global] [--guild ID]
                                       /ping /echo /poll /form を登録する（既定は現在のギルド）
@@ -234,6 +235,7 @@ disperl 動作確認 CLI
   perl test.pl pins
   perl test.pl channels
   perl test.pl upload memo.txt "ログです"
+  perl test.pl upload a.txt b.png "2 ファイル"
   perl test.pl commands
   perl test.pl thread --private "相談"
   perl test.pl threads
@@ -739,20 +741,32 @@ sub cmd_webhook {
 # ---------------------------------------------------------------- 添付 / コマンド登録
 
 sub cmd_upload {
-    my ($path, @words) = map { _decode_arg($_) } @_;
+    my @args = map { _decode_arg($_) } @_;
 
-    _fatal('使い方: perl test.pl upload <ファイル> [本文]')
-        unless defined $path && length $path;
+    _fatal('使い方: perl test.pl upload <ファイル> [<ファイル> ...] [--] [本文]')
+        unless @args;
 
-    my $text = join ' ', @words;
+    my $first = shift @args;
+    _fatal('使い方: perl test.pl upload <ファイル> [<ファイル> ...] [--] [本文]')
+        unless defined $first && length $first;
 
-    my $message = client()->send_file(
-        channel_id(),
-        $path,
-        (length $text ? (content => $text) : ()),
-    ) or _api_fail('ファイル送信');
+    # 先頭から続く「実在するファイル」を添付対象にする。-- 以降は本文扱い。
+    my @files = ($first);
+    while (@args && $args[0] ne '--' && -f $args[0]) {
+        push @files, shift @args;
+    }
+    shift @args if @args && $args[0] eq '--';
 
-    out "ファイルを送信しました: id=$message->{id}\n";
+    my $text = join ' ', @args;
+    my %opts = length $text ? (content => $text) : ();
+
+    my $message = @files == 1
+        ? client()->send_file(channel_id(), $files[0], %opts)
+        : client()->send_files(channel_id(), \@files, %opts)
+        or _api_fail('ファイル送信');
+
+    out 'ファイルを送信しました: id=' . $message->{id}
+        . ' (' . scalar(@files) . " 件)\n";
     return 0;
 }
 

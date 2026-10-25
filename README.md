@@ -5,7 +5,7 @@ Perl 製の Discord Bot 用クライアント。REST API と Gateway（WebSocket
 ## 特徴
 
 - メッセージの送信・編集・削除・取得、embeds、返信、リアクション、入力中表示
-- ファイル添付（multipart を自前で送信。追加依存なし）
+- ファイル添付（最大 10 個。multipart を自前で送信。追加依存なし）
 - ピン留め、一括削除、スレッド、DM、招待、Webhook
 - スレッドの一覧・参加・退出・メンバー管理・アーカイブ
 - レート制限（バケット単位・429）対応と事前スロットリング
@@ -218,17 +218,34 @@ $client->send_file($channel, 'image.png', filename => 'renamed.png');
 
 # メモリ上のデータを添付する
 $client->send_file_data($channel, 'log.csv', "a,b\n1,2\n", content => 'CSV');
+
+# 複数ファイルをまとめて添付する（最大 10 個）
+$client->send_files($channel, ['a.txt', 'b.png'], content => '2 ファイル');
+
+# ファイルごとに名前や MIME タイプを上書きする
+$client->send_files($channel, [
+    'a.txt',
+    { path => 'b.png', filename => 'c.png', content_type => 'image/png' },
+], content => '2 ファイル');
+
+# メモリ上の複数データを添付する
+$client->send_files_data($channel, [
+    { filename => 'a.txt',  data => "hello\n" },
+    { filename => 'b.json', data => '{"ok":true}', content_type => 'application/json' },
+], content => '2 ファイル');
 ```
 
 | メソッド | 説明 |
 |---|---|
 | `send_file($channel_id, $path, %opts)` | ファイルを読んで添付。`content` / `embeds` / `reply_to` / `tts` / `components` / `allowed_mentions` が使える |
 | `send_file_data($channel_id, $filename, $bytes, %opts)` | バイト列をそのまま添付 |
+| `send_files($channel_id, \@paths, %opts)` | 複数ファイルを添付。要素はパスか `{ path, filename?, content_type? }` |
+| `send_files_data($channel_id, \@files, %opts)` | `{ filename, data, content_type? }` の配列を添付 |
 
+- 1 メッセージにつき最大 10 ファイルです（超えると送信前に `die`）
 - `filename` で送信時のファイル名を上書きできます
 - `content_type` で MIME タイプを明示できます（省略時は拡張子から推定）
 - 本文（`content`）は省略できます（添付だけ送れます）
-- 1 リクエスト 1 ファイルです
 
 ### スレッド
 
@@ -692,6 +709,7 @@ perl test.pl unpin <ID>
 perl test.pl pins
 perl test.pl purge <ID> <ID> ...   # 2〜100 件をまとめて削除
 perl test.pl upload <ファイル> "本文"
+perl test.pl upload a.txt b.png "2 ファイル"   # 複数添付（最大 10 個）
 perl test.pl dm <ユーザーID> "本文"
 ```
 
@@ -796,7 +814,7 @@ prove -l t
 | `t/11_presence.t` | ステータス / アクティビティ / Identify への反映 / 更新間隔 |
 | `t/12_rest_extras.t` | ピン / 一括削除 / リアクション一覧 / スレッド / DM / ギルド / 招待 / Webhook |
 | `t/13_rate_bucket.t` | バケット単位のレート制限 / major parameter / グローバル 429 |
-| `t/14_files.t` | ファイル添付（multipart / MIME / ファイル名 / 入力検証） |
+| `t/14_files.t` | ファイル添付（multipart / MIME / ファイル名 / 複数添付 / 入力検証） |
 | `t/15_components.t` | ボタン / セレクトメニュー / action_row / モーダル部品 |
 | `t/16_interactions.t` | インタラクション応答 / コマンド登録 / Gateway の type 2・3 配送 |
 | `t/17_modals_autocomplete.t` | モーダル（type 9）/ オートコンプリート（type 8）/ type 4・5 配送 |
@@ -831,7 +849,7 @@ Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパ�
 
 - メッセージ: 送信・編集・削除・取得・履歴・返信・embeds（上限を送信前に検証）・TTS
 - リアクション・入力中・ピン留め・一括削除
-- ファイル添付（1 リクエスト 1 ファイル）
+- ファイル添付（最大 10 個をまとめて送信）
 - スレッド: 作成・一覧・参加・退出・メンバー・アーカイブ・削除
 - DM・ギルド情報の取得・招待・Webhook 実行
 - Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス
@@ -846,7 +864,6 @@ Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパ�
 - AutoMod・監査ログ・スケジュールイベント
 - チャンネル / ギルドの作成・編集・権限管理
 - Webhook の管理（作成・一覧・編集・削除）
-- 複数ファイルの同時添付
 - ネイティブ投票（Poll）・フォーラム / メディアチャンネル
 - 課金・Entitlements・SKU
 - ユーザーアプリ / 埋め込みアプリ

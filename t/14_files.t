@@ -149,4 +149,150 @@ subtest 'validation' => sub {
     like $@, qr/file data is required/, 'data is required';
 };
 
+sub file_parts {
+    my ($fake) = @_;
+    my $body     = body_of($fake);
+    my $boundary = boundary_of($fake);
+    return () unless defined $body && defined $boundary;
+
+    my @parts;
+    while ($body =~ /--\Q$boundary\E\r\n
+        Content-Disposition:\ form-data;\ name="files\[(\d+)\]";\ filename="([^"]*)"\r\n
+        Content-Type:\ ([^\r\n]+)\r\n\r\n
+        (.*?)\r\n(?=--\Q$boundary\E)/xsg) {
+        push @parts, {
+            index    => $1,
+            filename => $2,
+            type     => $3,
+            bytes    => $4,
+        };
+    }
+
+    return @parts;
+}
+
+subtest 'send_files attaches several files' => sub {
+    my ($client, $fake) = client_with(ok_json({ id => '5' }));
+
+    my $a = write_file('a.txt', "alpha\n");
+    my $b = write_file('b.png', "\x89PNG\r\n\x1a\n" . 'x' x 8);
+
+    my $message = $client->send_files('111', [ $a, $b ], content => '2 件');
+
+    is $message->{id}, '5', 'returns the message';
+    is $fake->last_call->{method}, 'POST', 'POST';
+    is $fake->last_call->{url}, "$API/channels/111/messages", 'endpoint';
+    like $fake->last_call->{args}{headers}{'Content-Type'},
+        qr{^multipart/form-data; boundary=}, 'multipart content type';
+
+    my @parts = file_parts($fake);
+    is scalar @parts, 2, 'two file parts';
+    is $parts[0]{index}, 0, 'first index';
+    is $parts[0]{filename}, 'a.txt', 'first filename';
+    is $parts[0]{type}, 'text/plain', 'first content type';
+    is $parts[0]{bytes}, "alpha\n", 'first bytes';
+    is $parts[1]{index}, 1, 'second index';
+    is $parts[1]{filename}, 'b.png', 'second filename';
+    is $parts[1]{type}, 'image/png', 'second content type';
+    is $parts[1]{bytes}, "\x89PNG\r\n\x1a\n" . 'x' x 8, 'second bytes';
+
+    my $payload = payload_of($fake);
+    is $payload->{content}, '2 件', 'payload_json carries the content';
+
+    my $body     = body_of($fake);
+    my $boundary = boundary_of($fake);
+    like $body, qr/\r\n--\Q$boundary\E--\r\n\z/, 'closes the body once';
+};
+
+subtest 'send_files accepts per-file overrides' => sub {
+    my ($client, $fake) = client_with(ok_json({ id => '6' }));
+
+    my $a = write_file('plain.dat', 'raw');
+    my $b = write_file('photo.bin', 'img');
+
+    $client->send_files('111', [
+        $a,
+        { path => $b, filename => 'renamed.jpg', content_type => 'image/jpeg' },
+    ]);
+
+    my @parts = file_parts($fake);
+    is scalar @parts, 2, 'two file parts';
+    is $parts[0]{filename}, 'plain.dat', 'extension is used as-is';
+    is $parts[0]{type}, 'application/octet-stream', 'unknown extension';
+    is $parts[1]{filename}, 'renamed.jpg', 'filename override';
+    is $parts[1]{type}, 'image/jpeg', 'content type override';
+    is $parts[1]{bytes}, 'img', 'bytes';
+};
+
+subtest 'send_files_data attaches several in-memory files' => sub {
+    my ($client, $fake) = client_with(ok_json({ id => '7' }));
+
+    $client->send_files_data('111', [
+        { filename => 'one.csv', data => "a,b\n1,2\n" },
+        { filename => 'two.json', data => '{"ok":true}', content_type => 'application/json' },
+    ], content => 'CSV と JSON');
+
+    my @parts = file_parts($fake);
+    is scalar @parts, 2, 'two file parts';
+    is $parts[0]{filename}, 'one.csv', 'first filename';
+    is $parts[0]{type}, 'text/csv', 'first content type from extension';
+    is $parts[0]{bytes}, "a,b\n1,2\n", 'first bytes';
+    is $parts[1]{filename}, 'two.json', 'second filename';
+    is $parts[1]{type}, 'application/json', 'second content type';
+    is $parts[1]{bytes}, '{"ok":true}', 'second bytes';
+
+    is payload_of($fake)->{content}, 'CSV と JSON', 'content';
+};
+
+subtest 'send_files can attach the maximum of 10 files' => sub {
+    my ($client, $fake) = client_with(ok_json({ id => '8' }));
+
+    my @paths = map { write_file("part$_.txt", "n$_") } 1 .. 10;
+    $client->send_files('111', \@paths);
+
+    my @parts = file_parts($fake);
+    is scalar @parts, 10, 'ten file parts';
+    my $count = () = body_of($fake) =~ /name="files\[/g;
+    is $count, 10, 'no extra parts';
+};
+
+subtest 'send_files validation' => sub {
+    my ($client) = client_with();
+    my $path = write_file('valid.txt', 'x');
+
+    eval { $client->send_files('111', 'not-an-array') };
+    like $@, qr/file paths must be an array reference/, 'paths must be an array';
+
+    eval { $client->send_files('111', []) };
+    like $@, qr/at least one file is required/, 'empty array dies';
+
+    my @eleven = ($path) x 11;
+    eval { $client->send_files('111', \@eleven) };
+    like $@, qr/at most 10 files are allowed/, '11 files die';
+
+    eval { $client->send_files('111', [ [] ]) };
+    like $@, qr/each file must be a path or a hash reference/, 'bad entry dies';
+
+    eval { $client->send_files('111', [ "$dir/missing.txt" ]) };
+    like $@, qr/file not found/, 'missing file dies';
+
+    eval { $client->send_files('111', [ { filename => 'x.txt' } ]) };
+    like $@, qr/file path is required/, 'hash without path dies';
+
+    eval { $client->send_files_data('111', 'not-an-array') };
+    like $@, qr/files must be an array reference/, 'files must be an array';
+
+    eval { $client->send_files_data('111', []) };
+    like $@, qr/at least one file is required/, 'empty files die';
+
+    eval { $client->send_files_data('111', [ 'x' ]) };
+    like $@, qr/each file must be a hash reference/, 'entries must be hashes';
+
+    eval { $client->send_files_data('111', [ { data => 'x' } ]) };
+    like $@, qr/filename is required/, 'filename is required';
+
+    eval { $client->send_files_data('111', [ { filename => 'a.txt' } ]) };
+    like $@, qr/file data is required/, 'data is required';
+};
+
 done_testing;
