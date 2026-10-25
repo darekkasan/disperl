@@ -179,11 +179,33 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 - Heartbeat の ACK が返らない場合はゾンビ接続とみなして再接続します
 - 4004 / 4010〜4014（認証・Intent 系）は再接続しません
 
-## 動作確認
+## 動作確認（CLI）
+
+`test.pl` はそのまま使える小さな CLI です（`.env` を読みます）。
 
 ```sh
-perl test.pl     # トークンとチャンネルを確認して 1 通送信する（要 .env）
-prove -l t       # ネットワーク不要の単体テスト
+perl test.pl help                 # コマンド一覧
+perl test.pl check                # トークンとチャンネルの確認
+perl test.pl send "こんにちは"      # 送信（引数が無ければ標準入力から）
+perl test.pl embed                # embed を送信
+perl test.pl history 20           # 履歴を表示（既定 10 / 最大 100）
+perl test.pl typing               # 「入力中...」を表示
+perl test.pl react <ID> check     # リアクション（check / thumbsup / wave / heart / tada / fire / eyes）
+perl test.pl edit <ID> "新しい本文"
+perl test.pl delete <ID>
+perl test.pl watch                # Gateway で受信し !ping / !echo / !help に応答
+```
+
+- `send` は引数が無いとき標準入力（UTF-8）を読みます
+- 送信結果の ID をそのまま `edit` / `react` / `delete` に渡せます
+- `watch` は `MESSAGE_CONTENT`（Privileged Intent）が必要です
+- Windows のコンソールは cp932 のことが多いため、出力は実際のコードページに合わせます。
+  `DISPERL_CONSOLE_ENCODING=UTF-8` で上書きできます（引数は `DISPERL_ARG_ENCODING`、既定 cp932）
+
+単体テストはネットワーク不要です。
+
+```sh
+prove -l t
 ```
 
 テストは `t/` にあり、`ua` や WebSocket を偽オブジェクトに差し替えるので通信しません。
