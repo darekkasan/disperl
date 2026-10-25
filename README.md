@@ -6,6 +6,7 @@ Perl 製の Discord Bot 用クライアント。
 - embeds / 返信 / リアクション / 入力中表示
 - レート制限（429）のリトライと事前スロットリング
 - Gateway（WebSocket）でイベントを受信
+- ステータス（online / idle / dnd / invisible）とアクティビティの変更
 
 ## 必要なもの
 
@@ -170,6 +171,12 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `url` | `wss://gateway.discord.gg/?v=10&encoding=json` | 接続先 |
 | `ws_class` | `Disperl::WebSocket` | 差し替え可能（テスト用） |
 | `sleep` | `sub { sleep $_[0] }` | 再接続待ちのフック（テスト用） |
+| `status` | 未指定なら Discord の既定 | `online` / `idle` / `dnd` / `invisible` / `offline` |
+| `activity` | — | 文字列、または `{ type => ..., name => ... }` |
+| `activities` | — | アクティビティの配列（複数指定用） |
+| `afk` | `0` | AFK 状態にするか |
+| `since` | `null` | アイドルになった時刻（Unix ミリ秒）。`0` で null |
+| `presence_interval` | `4` | プレゼンス更新の最小間隔（秒） |
 
 - `intents` は `Disperl::Gateway->intent_bits(qw(GUILDS MESSAGE_CONTENT))` でも作れます
 - `MESSAGE_CONTENT`（1 << 15）は **Privileged Intent** です。Developer Portal の
@@ -178,6 +185,42 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 - `stop()` でループを止められます
 - Heartbeat の ACK が返らない場合はゾンビ接続とみなして再接続します
 - 4004 / 4010〜4014（認証・Intent 系）は再接続しません
+
+### ステータス（プレゼンス）
+
+```perl
+# 接続時の初期ステータス
+my $gw = Disperl::Gateway->new(
+    token    => $ENV{DISCORD_TOKEN},
+    status   => 'idle',
+    activity => '待機中',
+);
+
+# 接続中に変更する
+$gw->set_presence(status => 'online');
+$gw->set_presence(status => 'dnd', activity => '作業中');
+$gw->set_presence(status => 'invisible');          # オフライン表示
+$gw->set_presence(activity => { type => 'watching', name => '配信' });
+$gw->set_presence(activity => []);                 # アクティビティを消す
+
+my $current = $gw->presence;                       # 現在値（未設定なら undef）
+```
+
+`activity` の `type` は `playing` / `streaming` / `listening` / `watching` / `competing` / `custom`
+（数値 0〜5 でも可）。`custom` は `state` に表示テキストを入れます。
+
+```perl
+$gw->set_presence(activity => { type => 'custom', state => '作業中', emoji => { name => '💻' } });
+```
+
+- `set_presence` は指定しなかった項目（status だけ、activity だけ等）を現在値から引き継ぎます
+- 接続前なら次の Identify で、接続中なら READY 後に反映されます
+  （READY 前に変更しても取りこぼしません）
+- 変更は Gateway に接続している間だけ有効です。切断すると通常のオフラインに戻ります
+- Discord の制限（20 秒に 5 回）を超えないよう、既定で 4 秒間隔に間引きます
+  （最後の指定が送られるので、連続で呼んでも最終状態になります）
+- `invisible` は他のユーザーからオフラインに見えます（Bot 自体は動作を続けます）
+- REST API では変更できません（Gateway の op 3 を使っています）
 
 ## 動作確認（CLI）
 
@@ -193,8 +236,21 @@ perl test.pl typing               # 「入力中...」を表示
 perl test.pl react <ID> check     # リアクション（check / thumbsup / wave / heart / tada / fire / eyes）
 perl test.pl edit <ID> "新しい本文"
 perl test.pl delete <ID>
-perl test.pl watch                # Gateway で受信し !ping / !echo / !help に応答
+perl test.pl watch                # Gateway で受信し !ping / !echo / !status / !activity / !help に応答
+perl test.pl watch --status idle --activity "待機中"
+perl test.pl watch --status invisible   # オフライン表示
 ```
+
+`watch` のオプション:
+
+| オプション | 説明 |
+|---|---|
+| `--status <状態>` | `online` / `idle` / `dnd` / `invisible` / `offline` |
+| `--activity <名前>` | アクティビティの表示名 |
+| `--type <種類>` | `playing` / `streaming` / `listening` / `watching` / `competing` / `custom` |
+
+`watch` 中は Discord から `!status idle` や `!activity "作業中"` で変更できます。
+ステータスは接続している間だけ有効です（終了すると通常のオフラインに戻ります）。
 
 - `send` は引数が無いとき標準入力（UTF-8）を読みます
 - 送信結果の ID をそのまま `edit` / `react` / `delete` に渡せます
@@ -224,6 +280,7 @@ prove -l t
 | `t/08_rate_limit.t` | 429 の `retry_after` / グローバル制限 / 事前スロットリング |
 | `t/09_websocket.t` | WebSocket のフレーミング（マスク / 分割 / ping / close） |
 | `t/10_gateway.t` | Identify / Resume / Heartbeat / イベント配送 / 再接続判断 |
+| `t/11_presence.t` | ステータス / アクティビティ / Identify への反映 / 更新間隔 |
 
 Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパスを解決）。
 

@@ -27,6 +27,18 @@ my %INTENTS = (
     GUILD_SCHEDULED_EVENTS    => 1 << 16,
 );
 
+my %STATUS = map { $_ => 1 } qw(online idle dnd invisible offline);
+
+# アクティビティの種類（Discord の activity type）
+my %ACTIVITY_TYPE = (
+    playing   => 0,
+    streaming => 1,
+    listening => 2,
+    watching  => 3,
+    custom    => 4,
+    competing => 5,
+);
+
 # 既定は GUILDS | GUILD_MESSAGES。本文まで読むには MESSAGE_CONTENT を足す
 # （Discord の Developer Portal で Privileged Intent を有効にする必要がある）。
 my $DEFAULT_INTENTS = $INTENTS{GUILDS} | $INTENTS{GUILD_MESSAGES};
@@ -44,6 +56,12 @@ sub new {
         $intents = $class->intent_bits(@$intents);
     }
 
+    # status / activity / activities / afk / since が指定されたら初期プレゼンスを作る
+    my $presence;
+    if (grep { exists $args{$_} } qw(status activity activities afk since)) {
+        $presence = _make_presence(%args);
+    }
+
     return bless {
         token          => $args{token},
         intents        => $intents,
@@ -58,12 +76,20 @@ sub new {
         ws_class       => $args{ws_class} // 'Disperl::WebSocket',
         sleep          => $args{sleep} // sub { sleep $_[0] },
 
+        # プレゼンス（ステータス・アクティビティ）
+        presence          => $presence,
+        presence_pending  => 0,
+        presence_next_at  => 0,
+        # Discord はプレゼンス更新を 20 秒に 5 回までに制限している
+        presence_interval => $args{presence_interval} // 4,
+
         seq             => undef,
         session_id      => undef,
         resume_url      => undef,
         resume_next     => 1,
         awaiting_ack    => 0,
         heartbeat_interval => undef,
+        ready           => 0,
         running         => 0,
         ws              => undef,
         fatal           => 0,
@@ -74,6 +100,24 @@ sub intents { $_[0]->{intents} }
 sub session_id { $_[0]->{session_id} }
 sub user { $_[0]->{user} }
 sub is_running { $_[0]->{running} }
+
+# 現在のプレゼンス（正規化済みのハッシュ）。未設定なら undef。
+sub presence { $_[0]->{presence} }
+
+# 接続中にステータスやアクティビティを変える。接続前なら次の接続で反映される。
+#   $gw->set_presence(status => 'idle');
+#   $gw->set_presence(status => 'dnd', activity => '作業中');
+#   $gw->set_presence(status => 'invisible');           # オフライン表示
+#   $gw->set_presence(activity => { type => 'watching', name => '配信' });
+#   $gw->set_presence(activity => []);                  # アクティビティを消す
+sub set_presence {
+    my ($self, %args) = @_;
+
+    $self->{presence} = _make_presence(%args, base => $self->{presence});
+    $self->{presence_pending} = 1;
+    $self->_flush_presence;
+    return 1;
+}
 
 # 名前のリストから intents のビットマスクを作る。
 #   Disperl::Gateway->intent_bits(qw(GUILDS GUILD_MESSAGES MESSAGE_CONTENT))
@@ -86,6 +130,137 @@ sub intent_bits {
         $bits |= $INTENTS{$name};
     }
     return $bits;
+}
+
+# ---------------------------------------------------------------- presence
+
+# プレゼンスのハッシュを作る。指定が無い項目は base（現在値）を引き継ぐ。
+sub _make_presence {
+    my (%args) = @_;
+
+    my $base = $args{base} || {
+        status     => 'online',
+        activities => [],
+        afk        => JSON::PP::false,
+        since      => JSON::PP::null,
+    };
+
+    my $status = exists $args{status}
+        ? _normalize_status($args{status})
+        : $base->{status};
+
+    my $activities;
+    if (exists $args{activities}) {
+        die "activities must be an array reference\n"
+            unless ref $args{activities} eq 'ARRAY';
+        $activities = [map { _normalize_activity($_) } @{ $args{activities} }];
+    } elsif (exists $args{activity}) {
+        my $value = $args{activity};
+        $activities = defined $value
+            ? [map { _normalize_activity($_) } (ref $value eq 'ARRAY' ? @$value : ($value))]
+            : [];
+    } else {
+        $activities = $base->{activities};
+    }
+
+    return {
+        status     => $status,
+        activities => $activities,
+        afk        => exists $args{afk}
+            ? ($args{afk} ? JSON::PP::true : JSON::PP::false)
+            : $base->{afk},
+        since      => exists $args{since}
+            ? _normalize_since($args{since})
+            : $base->{since},
+    };
+}
+
+sub _normalize_status {
+    my ($status) = @_;
+    $status = lc $status if defined $status;
+
+    die "Unknown status: " . ($status // 'undef')
+        . " (expected online, idle, dnd, invisible or offline)\n"
+        unless defined $status && $STATUS{$status};
+
+    return $status;
+}
+
+sub _normalize_since {
+    my ($since) = @_;
+    return JSON::PP::null unless defined $since && $since;
+    return int($since);
+}
+
+sub _normalize_activity {
+    my ($activity) = @_;
+
+    $activity = { name => $activity } unless ref $activity;
+    die "activity must be a string or hash reference\n"
+        unless ref $activity eq 'HASH';
+
+    my $type;
+    if (defined $activity->{type} && $activity->{type} =~ /^\d+$/) {
+        $type = $activity->{type} + 0;
+        die "Unknown activity type: $type\n" unless $type >= 0 && $type <= 5;
+    } else {
+        my $name = defined $activity->{type} ? lc $activity->{type} : 'playing';
+        die "Unknown activity type: $name\n" unless exists $ACTIVITY_TYPE{$name};
+        $type = $ACTIVITY_TYPE{$name};
+    }
+
+    my %out = (type => $type);
+
+    if ($type == 4) {    # カスタムステータス
+        $out{name}  = $activity->{name} // 'Custom Status';
+        $out{state} = $activity->{state} // '';
+    } else {
+        $out{name} = $activity->{name} // '';
+        die "activity name is required\n" unless length $out{name};
+
+        $out{url}     = $activity->{url}     if defined $activity->{url};
+        $out{state}   = $activity->{state}   if defined $activity->{state};
+        $out{details} = $activity->{details} if defined $activity->{details};
+
+        die "streaming activity requires url\n"
+            if $type == 1 && !defined $out{url};
+    }
+
+    if (ref $activity->{emoji} eq 'HASH') {
+        my %emoji;
+        $emoji{name} = $activity->{emoji}{name} if defined $activity->{emoji}{name};
+        $emoji{id}   = $activity->{emoji}{id}   if defined $activity->{emoji}{id};
+        $emoji{animated} = $activity->{emoji}{animated}
+            ? JSON::PP::true : JSON::PP::false
+            if exists $activity->{emoji}{animated};
+        $out{emoji} = \%emoji;
+    }
+
+    return \%out;
+}
+
+# 現在のプレゼンスを送る（op 3）。
+sub _apply_presence {
+    my ($self) = @_;
+
+    return unless $self->{presence};
+    return unless $self->{ws};
+
+    $self->{ws}->send_text($JSON->encode({ op => 3, d => $self->{presence} }));
+    $self->{presence_pending} = 0;
+    $self->{presence_next_at} = time + $self->{presence_interval};
+    return 1;
+}
+
+# 予約されたプレゼンス更新を、制限間隔を空けて送る。
+sub _flush_presence {
+    my ($self) = @_;
+
+    return unless $self->{presence_pending};
+    return unless $self->{ready} && $self->{ws};
+    return if time < $self->{presence_next_at};
+
+    return $self->_apply_presence;
 }
 
 # 接続してイベントを処理し続ける。stop() が呼ばれるか、リトライ上限に達するまで戻らない。
@@ -140,6 +315,7 @@ sub _run_once {
     my $ws = $self->_connect;
     $self->{ws} = $ws;
     $self->{awaiting_ack} = 0;
+    $self->{ready} = 0;
 
     my $hello = $self->_recv_json($ws, $self->{timeout});
     die "Expected Hello (op 10) from the gateway\n"
@@ -159,6 +335,9 @@ sub _run_once {
     while ($self->{running}) {
         my $now = time;
 
+        # 予約されたプレゼンス更新（レート制限の間隔待ち）を送る
+        $self->_flush_presence;
+
         if ($now >= $next_heartbeat) {
             if ($self->{awaiting_ack}) {
                 # 前回の ACK が返ってこない = ゾンビ接続
@@ -172,6 +351,14 @@ sub _run_once {
         }
 
         my $wait = $next_heartbeat - time;
+
+        # プレゼンス更新の待ち時間の方が短ければそちらに合わせる
+        if ($self->{presence_pending} && $self->{ready}) {
+            my $presence_wait = $self->{presence_next_at} - time;
+            $presence_wait = 0 if $presence_wait < 0;
+            $wait = $presence_wait if $presence_wait < $wait;
+        }
+
         $wait = 0.05 if $wait < 0.05;
 
         my $frame = $ws->recv_frame(timeout => $wait);
@@ -218,7 +405,14 @@ sub _handle {
             $self->{resume_url}  = $data->{resume_gateway_url};
             $self->{user}        = $data->{user};
             $self->{resume_next} = 1;
+            $self->{ready}       = 1;
+            # Identify 後に set_presence されていれば、ここで反映する
+            $self->_flush_presence;
             $self->{on_ready}->($data) if $self->{on_ready};
+        } elsif ($type eq 'RESUMED') {
+            $self->{ready} = 1;
+            $self->{presence_pending} = 1 if $self->{presence};
+            $self->_apply_presence;
         } elsif ($type eq 'MESSAGE_CREATE') {
             $self->{on_message}->($data) if $self->{on_message};
         }
@@ -262,18 +456,24 @@ sub _connect {
 sub _identify {
     my ($self, $ws) = @_;
 
-    $ws->send_text($JSON->encode({
-        op => 2,
-        d  => {
-            token   => $self->{token},
-            intents => $self->{intents},
-            properties => {
-                os      => $^O,
-                browser => 'disperl',
-                device  => 'disperl',
-            },
+    my $d = {
+        token   => $self->{token},
+        intents => $self->{intents},
+        properties => {
+            os      => $^O,
+            browser => 'disperl',
+            device  => 'disperl',
         },
-    }));
+    };
+    $d->{presence} = $self->{presence} if $self->{presence};
+
+    $ws->send_text($JSON->encode({ op => 2, d => $d }));
+
+    # Identify に含めた分は送信済みとして扱い、READY での二重送信を避ける
+    if ($self->{presence}) {
+        $self->{presence_pending} = 0;
+        $self->{presence_next_at} = time + $self->{presence_interval};
+    }
 }
 
 sub _resume {

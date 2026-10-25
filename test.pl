@@ -195,7 +195,10 @@ disperl 動作確認 CLI
   perl test.pl react <ID> <絵文字>     リアクションを付ける（check / thumbsup などの名前も可）
   perl test.pl edit <ID> <本文>       メッセージを編集する
   perl test.pl delete <ID>           メッセージを削除する
-  perl test.pl watch                 Gateway に接続し !ping / !echo / !help に応答する
+  perl test.pl watch [オプション]      Gateway に接続し !ping / !echo / !status / !activity / !help に応答する
+      --status <状態>                  online / idle / dnd / invisible（オフライン表示）
+      --activity <名前>                アクティビティ
+      --type <種類>                    playing / streaming / listening / watching / competing / custom
   perl test.pl help                  このヘルプ
 
 例:
@@ -203,6 +206,11 @@ disperl 動作確認 CLI
   Get-Content memo.txt -Raw | perl test.pl send
   perl test.pl history 20
   perl test.pl react 123456789012345678 check
+  perl test.pl watch --status idle --activity "待機中"
+  perl test.pl watch --status invisible
+
+ステータスは Gateway に接続している間だけ有効（切断すると通常のオフラインに戻る）。
+watch 中は Discord から !status idle / !activity "作業中" でも変更できる。
 
 環境変数:
   DISCORD_TOKEN             Bot トークン（必須）
@@ -347,9 +355,13 @@ sub cmd_delete {
 # ---------------------------------------------------------------- Gateway
 
 sub cmd_watch {
-    my $api = client();
+    my (@args) = map { _decode_arg($_) } @_;
+    my %opt = _parse_watch_options(@args);
 
-    my $gateway = Disperl::Gateway->new(
+    my $api = client();
+    my $gateway;
+
+    my %gateway_args = (
         token   => token(),
         intents => [qw(GUILDS GUILD_MESSAGES MESSAGE_CONTENT)],
         on_ready => sub {
@@ -359,6 +371,8 @@ sub cmd_watch {
             out sprintf "ログインしました: %s (id: %s)\n",
                 $user->{username} // '?', $user->{id} // '?';
             out sprintf "参加サーバー数: %d\n", scalar @{ $data->{guilds} || [] };
+            out sprintf "ステータス: %s\n",
+                $gateway->presence ? $gateway->presence->{status} : 'online（未設定）';
             out "受信待ちです（Ctrl-C で終了）\n";
         },
         on_message => sub {
@@ -373,7 +387,7 @@ sub cmd_watch {
                 _clip($content, 120);
 
             # コマンドの失敗で Gateway を落とさない
-            eval { _handle_command($api, $message, $content); 1 }
+            eval { _handle_command($api, $gateway, $message, $content); 1 }
                 or do {
                     my $error = $@;
                     $error =~ s/\s+\z//;
@@ -391,6 +405,22 @@ sub cmd_watch {
         },
     );
 
+    $gateway_args{status} = $opt{status} if defined $opt{status};
+
+    if (defined $opt{activity}) {
+        my $type = lc($opt{type} // 'playing');
+        $gateway_args{activity} = $type eq 'custom'
+            ? { type => 'custom', state => $opt{activity} }
+            : { type => $type, name => $opt{activity} };
+    }
+
+    $gateway = eval { Disperl::Gateway->new(%gateway_args) };
+    if (!$gateway) {
+        my $error = $@ || 'Gateway の初期化に失敗しました';
+        $error =~ s/\s+\z//;
+        _fatal($error);
+    }
+
     local $SIG{INT} = sub {
         out "\n終了します...\n";
         $gateway->stop;
@@ -400,8 +430,35 @@ sub cmd_watch {
     return 0;
 }
 
+sub _parse_watch_options {
+    my (@args) = @_;
+    my %opt;
+
+    while (@args) {
+        my $arg = shift @args;
+
+        if ($arg =~ /^--(status|activity|type)=(.*)\z/s) {
+            $opt{$1} = $2;
+        } elsif ($arg =~ /^--(status|activity|type)\z/) {
+            _fatal("--$1 には値が必要です") unless @args;
+            $opt{$1} = shift @args;
+        } else {
+            _fatal("不明なオプション: $arg（perl test.pl help を参照）");
+        }
+    }
+
+    _fatal('--type は --activity と一緒に指定してください')
+        if defined $opt{type} && !defined $opt{activity};
+
+    for my $key (sort keys %opt) {
+        _fatal("--$key の値が空です") unless length $opt{$key};
+    }
+
+    return %opt;
+}
+
 sub _handle_command {
-    my ($api, $message, $content) = @_;
+    my ($api, $gateway, $message, $content) = @_;
 
     my $channel = $message->{channel_id};
     my $reply   = $message->{id};
@@ -409,7 +466,7 @@ sub _handle_command {
     if ($content =~ /^!ping\b/i) {
         my $start = time;
         $api->send_typing($channel);
-        my $sent = $api->send_message($channel, 'pong', { reply_to => $reply });
+        my $sent = _reply($api, $channel, $reply, 'pong');
         my $ms = int((time - $start) * 1000);
 
         out $sent
@@ -422,19 +479,85 @@ sub _handle_command {
         my $body = $1;
         $body =~ s/\s+\z//;
 
-        my $sent = $api->send_message($channel, $body, { reply_to => $reply });
-        out $sent ? "  -> echo を返信しました\n" : "  -> echo に失敗しました\n";
+        out _reply($api, $channel, $reply, $body)
+            ? "  -> echo を返信しました\n"
+            : "  -> echo に失敗しました\n";
+        return;
+    }
+
+    if ($content =~ /^!status(?:\s+(\S+))?\s*\z/i) {
+        my $status = $1;
+
+        if (!defined $status) {
+            my $presence = $gateway->presence || { status => 'online' };
+            my $activity = $presence->{activities}[0];
+            my $name     = $activity ? ($activity->{name} // '') : '';
+
+            my $text = "現在のステータス: $presence->{status}";
+            $text .= " / $name" if length $name;
+
+            _reply($api, $channel, $reply, $text);
+            return;
+        }
+
+        my $ok = eval { $gateway->set_presence(status => $status); 1 };
+        if (!$ok) {
+            my $error = $@;
+            $error =~ s/\s+\z//;
+            _reply($api, $channel, $reply, "変更できません: $error");
+            return;
+        }
+
+        _reply($api, $channel, $reply, "ステータスを $status に変更しました");
+        out "  -> status=$status\n";
+        return;
+    }
+
+    if ($content =~ /^!activity(?:\s+(.+))?\s*\z/is) {
+        my $text = $1;
+        $text =~ s/\s+\z// if defined $text;
+
+        my $ok = eval {
+            $gateway->set_presence(activity => (defined $text && length $text) ? $text : []);
+            1;
+        };
+        if (!$ok) {
+            my $error = $@;
+            $error =~ s/\s+\z//;
+            _reply($api, $channel, $reply, "変更できません: $error");
+            return;
+        }
+
+        if (defined $text && length $text) {
+            _reply($api, $channel, $reply, "アクティビティを「$text」に変更しました");
+            out "  -> activity=$text\n";
+        } else {
+            _reply($api, $channel, $reply, 'アクティビティを消しました');
+            out "  -> activity cleared\n";
+        }
         return;
     }
 
     if ($content =~ /^!help\b/i) {
-        my $sent = $api->send_message($channel, undef, {
-            reply_to => $reply,
-            embeds   => [_help_embed()],
-        });
+        my $sent = _reply($api, $channel, $reply, undef, { embeds => [_help_embed()] });
         out $sent ? "  -> ヘルプを返信しました\n" : "  -> ヘルプの送信に失敗しました\n";
         return;
     }
+}
+
+sub _reply {
+    my ($api, $channel, $reply_to, $content, $opts) = @_;
+
+    $opts ||= {};
+    $opts->{reply_to} = $reply_to;
+
+    my $sent = $api->send_message($channel, $content, $opts);
+    return 1 if $sent;
+
+    my $error = $api->last_error || {};
+    out sprintf "  -> 返信に失敗しました: %s %s\n",
+        $error->{status} // '?', $error->{message} // '不明なエラー';
+    return undef;
 }
 
 sub _help_embed {
@@ -443,9 +566,11 @@ sub _help_embed {
         description => 'このメッセージは Disperl::Gateway で受信したコマンドへの返信です。',
         color       => 0x57F287,
         fields      => [
-            { name => '!ping',       value => 'pong を返します',              inline => JSON::PP::true },
-            { name => '!echo <本文>', value => '本文をそのまま返します',        inline => JSON::PP::true },
-            { name => '!help',       value => 'このヘルプを表示します',        inline => JSON::PP::true },
+            { name => '!ping',            value => 'pong を返します',                     inline => JSON::PP::true },
+            { name => '!echo <本文>',      value => '本文をそのまま返します',               inline => JSON::PP::true },
+            { name => '!help',            value => 'このヘルプを表示します',               inline => JSON::PP::true },
+            { name => '!status [状態]',    value => 'online / idle / dnd / invisible（オフライン表示）', inline => JSON::PP::false },
+            { name => '!activity <本文>',  value => 'アクティビティを変更します（引数なしで解除）', inline => JSON::PP::false },
         ],
         footer    => { text => 'disperl' },
         timestamp => _iso8601(time),
