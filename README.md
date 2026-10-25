@@ -1,18 +1,33 @@
 # disperl
 
-Perl 製の Discord Bot 用クライアント。
+Perl 製の Discord Bot 用クライアント。REST API と Gateway（WebSocket）の両方を扱えます。
 
-- メッセージの送信・編集・削除・取得
-- embeds / 返信 / リアクション / 入力中表示
+## 特徴
+
+- メッセージの送信・編集・削除・取得、embeds、返信、リアクション、入力中表示
 - ファイル添付（multipart を自前で送信。追加依存なし）
-- ピン留め / 一括削除 / スレッド / DM / 招待 / Webhook
+- ピン留め、一括削除、スレッド、DM、招待、Webhook
 - スレッドの一覧・参加・退出・メンバー管理・アーカイブ
 - レート制限（バケット単位・429）対応と事前スロットリング
-- Gateway（WebSocket）でイベントを受信
+- Gateway（WebSocket）でイベントを受信。Identify / Resume / Heartbeat / 自動再接続
 - ステータス（online / idle / dnd / invisible）とアクティビティの変更
-- ボタン / セレクトメニュー（`Disperl::Components`）とインタラクション応答
+- ボタン／セレクトメニュー（`Disperl::Components`）とインタラクション応答
 - モーダル（入力フォーム）とオートコンプリート
 - スラッシュコマンドの登録と受信
+
+## 目次
+
+- [必要なもの](#必要なもの)
+- [セットアップ](#セットアップ)
+- [クイックスタート](#クイックスタート)
+- [モジュール構成](#モジュール構成)
+- [Disperl::Client](#disperlclient)
+- [Disperl::Components](#disperlcomponents)
+- [Disperl::Gateway](#disperlgateway)
+- [動作確認（CLI）](#動作確認cli)
+- [テスト](#テスト)
+- [注意事項](#注意事項)
+- [実装範囲](#実装範囲)
 
 ## 必要なもの
 
@@ -23,7 +38,7 @@ Perl 製の Discord Bot 用クライアント。
   （Strawberry Perl に同梱。HTTPS を使う時点で実質必須）
 - テストは `Test::More`（core）のみ。追加インストール不要
 
-## 設定
+## セットアップ
 
 `.env` を作る（`.gitignore` 済み）。テンプレートは `.env.example`。
 
@@ -47,7 +62,10 @@ DISCORD_CHANNEL_ID=送信先チャンネル ID
 
 `.env` は UTF-8（BOM 付きでも可）・CRLF でも読めます。
 
-## 使い方（送信）
+> `.env` やトークンは絶対にコミットしないでください。漏えいした場合は
+> Discord Developer Portal でトークンを再生成してください。
+
+## クイックスタート
 
 ```perl
 use FindBin;
@@ -79,6 +97,18 @@ if ($message) {
 }
 ```
 
+## モジュール構成
+
+| モジュール | 役割 |
+|---|---|
+| `Disperl::Client` | REST API。送信・取得・スレッド・添付・インタラクション応答・コマンド登録 |
+| `Disperl::Gateway` | Gateway（WebSocket）。イベント受信・プレゼンス・インタラクション配送 |
+| `Disperl::Components` | ボタン／セレクト／モーダルのビルダー |
+| `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が使用） |
+| `Disperl::Config` | `.env` ローダー |
+
+## Disperl::Client
+
 ### `Disperl::Client->new(%args)`
 
 | 引数 | 既定値 | 説明 |
@@ -91,7 +121,7 @@ if ($message) {
 | `on_error` | 未指定なら `warn` | `sub { my ($err) = @_; ... }`。`sub {}` で無音にできる |
 | `allowed_mentions` | `{ parse => [] }` | 既定でメンションを解決しない。`undef` で Discord の既定に戻す |
 
-### 送信・編集
+### メッセージの送信・編集
 
 ```perl
 $client->send_message($channel_id, $content);
@@ -104,7 +134,7 @@ $client->edit_message($channel_id, $message_id, $content, \%opts);
 | キー | 例 | 説明 |
 |---|---|---|
 | `embeds` | `[{ title => '...', description => '...' }]` | 埋め込み。`content` は省略可 |
-| `components` | `[ action_row(button(...)) ]` | ボタン / セレクトメニュー（下記） |
+| `components` | `[ action_row(button(...)) ]` | ボタン / セレクトメニュー |
 | `reply_to` | `'123456789012345678'` | 返信先メッセージ ID |
 | `tts` | `1` | 読み上げメッセージ |
 | `allowed_mentions` | `{ parse => ['users'] }` | この呼び出しだけメンション設定を変える |
@@ -112,52 +142,80 @@ $client->edit_message($channel_id, $message_id, $content, \%opts);
 - 成功時: メッセージのハッシュリファレンス
 - 失敗時: `undef`。詳細は `last_error`
 - 本文が 2000 文字を超えると送信前に `die` する
-- 429 は `retry_after`（JSON ボディ優先、無ければ `Retry-After` ヘッダ）秒待ってリトライ
-- 5xx は 1 秒待ってリトライ
-- それ以外の 4xx はリトライしない
-- レスポンスに `X-RateLimit-Remaining: 0` が付いていたら、次のリクエストを `X-RateLimit-Reset-After` 秒待つ
 - 本文は UTF-8 バイト列で送信する（日本語メッセージ可）
+- 429 は `retry_after`（JSON ボディ優先、無ければ `Retry-After` ヘッダ）秒待ってリトライ
+- 5xx は 1 秒待ってリトライ。それ以外の 4xx はリトライしない
 
-### 取得・削除・その他
+### メッセージの取得・削除
 
 | メソッド | 成功時 | 説明 |
 |---|---|---|
-| `get_current_user()` | ユーザーのハッシュ | `GET /users/@me`。トークン検証に使える |
-| `get_user($user_id)` | ユーザーのハッシュ | `GET /users/{id}` |
-| `get_channel($channel_id)` | チャンネルのハッシュ | `GET /channels/{id}` |
 | `get_message($channel_id, $message_id)` | メッセージのハッシュ | 1 件取得 |
 | `get_messages($channel_id, %opts)` | メッセージの配列 | `limit` (1..100) / `before` / `after` / `around` |
-| `send_typing($channel_id)` | `1` | 「入力中...」を表示 |
-| `add_reaction($channel_id, $message_id, $emoji)` | `1` | 絵文字は UTF-8 で自動エンコード |
-| `remove_reaction($channel_id, $message_id, $emoji)` | `1` | 自分のリアクションを外す |
-| `get_reactions($channel_id, $message_id, $emoji, %opts)` | ユーザーの配列 | `limit` (1..100) / `after` |
-| `delete_all_reactions($channel_id, $message_id)` | `1` | メッセージのリアクションを全部消す |
 | `delete_message($channel_id, $message_id)` | `1` | 204 No Content |
-| `pin_message($channel_id, $message_id)` | `1` | ピン留め（`MANAGE_MESSAGES` が必要） |
-| `unpin_message($channel_id, $message_id)` | `1` | ピン留めを外す |
-| `get_pinned_messages($channel_id)` | メッセージの配列 | ピン留めの一覧 |
 | `bulk_delete_messages($channel_id, \@ids)` | `1` | 2〜100 件。14 日以内のメッセージのみ |
 
 ```perl
 my $msgs = $client->get_messages($channel, limit => 20);
-$client->add_reaction($channel, $msgs->[0]{id}, "\x{2705}");    # ✅
-
-$client->pin_message($channel, $msgs->[0]{id});
 $client->bulk_delete_messages($channel, [ map { $_->{id} } @$msgs[0 .. 2] ]);
 ```
 
 存在しないメッセージを削除すると 404 / code `10008` になります。
 
-### スレッド・DM
+### リアクション・入力中
+
+| メソッド | 成功時 | 説明 |
+|---|---|---|
+| `send_typing($channel_id)` | `1` | 「入力中...」を表示 |
+| `add_reaction($channel_id, $message_id, $emoji)` | `1` | 絵文字は UTF-8 で自動エンコード |
+| `remove_reaction($channel_id, $message_id, $emoji)` | `1` | 自分のリアクションを外す |
+| `get_reactions($channel_id, $message_id, $emoji, %opts)` | ユーザーの配列 | `limit` (1..100) / `after` |
+| `delete_all_reactions($channel_id, $message_id)` | `1` | メッセージのリアクションを全部消す |
+
+```perl
+$client->add_reaction($channel, $message_id, "\x{2705}");    # ✅
+```
+
+### ピン留め
+
+| メソッド | 成功時 | 説明 |
+|---|---|---|
+| `pin_message($channel_id, $message_id)` | `1` | ピン留め（`MANAGE_MESSAGES` が必要） |
+| `unpin_message($channel_id, $message_id)` | `1` | ピン留めを外す |
+| `get_pinned_messages($channel_id)` | メッセージの配列 | ピン留めの一覧 |
+
+### ファイル添付
+
+multipart/form-data を自前で組み立てるので、追加モジュールは要りません。
+
+```perl
+# ファイルを添付して送る
+my $message = $client->send_file($channel, 'memo.txt', content => 'ログです');
+
+# ファイル名を変える / 本文なしで添付だけ送る
+$client->send_file($channel, 'image.png', filename => 'renamed.png');
+
+# メモリ上のデータを添付する
+$client->send_file_data($channel, 'log.csv', "a,b\n1,2\n", content => 'CSV');
+```
+
+| メソッド | 説明 |
+|---|---|
+| `send_file($channel_id, $path, %opts)` | ファイルを読んで添付。`content` / `embeds` / `reply_to` / `tts` / `components` / `allowed_mentions` が使える |
+| `send_file_data($channel_id, $filename, $bytes, %opts)` | バイト列をそのまま添付 |
+
+- `filename` で送信時のファイル名を上書きできます
+- `content_type` で MIME タイプを明示できます（省略時は拡張子から推定）
+- 本文（`content`）は省略できます（添付だけ送れます）
+- 1 リクエスト 1 ファイルです
+
+### スレッド
 
 ```perl
 my $thread = $client->create_thread($channel, name => '議題', type => 'public');
 $client->send_message($thread->{id}, 'スレッドの最初の書き込み');
 
 $client->create_thread_from_message($channel, $message_id, name => 'この件について');
-
-my $dm = $client->create_dm($user_id);          # DM チャンネルを開く
-$client->send_message($dm->{id}, 'こんにちは');
 ```
 
 `create_thread` のオプション:
@@ -171,7 +229,7 @@ $client->send_message($dm->{id}, 'こんにちは');
 
 スレッドはチャンネル扱いなので、以降は `send_message($thread->{id}, ...)` で送れます。
 
-#### スレッドの一覧・参加・アーカイブ
+#### 一覧・参加・アーカイブ
 
 ```perl
 # ギルドのアクティブスレッド（{ threads => [...], members => [...] }）
@@ -217,9 +275,12 @@ $client->update_thread($thread_id, locked => 1, auto_archive_duration => 1440);
 
 `get_thread_members` は `GUILD_MEMBERS`（Privileged Intent）が有効な Bot でないと制限されます。
 
-### ギルド・招待・Webhook
+### DM・ギルド・招待・Webhook
 
 ```perl
+my $dm = $client->create_dm($user_id);          # DM チャンネルを開く
+$client->send_message($dm->{id}, 'こんにちは');
+
 my $guild    = $client->get_guild($guild_id);
 my $channels = $client->get_guild_channels($guild_id);
 my $roles    = $client->get_guild_roles($guild_id);
@@ -234,40 +295,55 @@ $client->execute_webhook($webhook_id, $webhook_token, '通知です',
     username => 'disperl');
 ```
 
-- `get_guild_members` / `get_guild_member` は **`GUILD_MEMBERS`（Privileged Intent）** が
-  有効な Bot だけ使えます
-- `get_invite` と `execute_webhook` は認証ヘッダを付けません（招待コード／Webhook トークンだけで動く）
+| メソッド | 説明 |
+|---|---|
+| `create_dm($user_id)` | DM チャンネルを開く（既にあればそれを返す） |
+| `get_current_user()` | `GET /users/@me`。トークン検証に使える |
+| `get_user($user_id)` | ユーザー情報 |
+| `get_channel($channel_id)` | チャンネル情報 |
+| `get_guild($guild_id)` | ギルド情報 |
+| `get_guild_channels($guild_id)` | チャンネル一覧 |
+| `get_guild_roles($guild_id)` | ロール一覧 |
+| `get_guild_members($guild_id, %opts)` | メンバー一覧（`GUILD_MEMBERS` が必要） |
+| `get_guild_member($guild_id, $user_id)` | メンバー 1 人（`GUILD_MEMBERS` が必要） |
+| `create_invite($channel_id, %opts)` | `max_age` / `max_uses` / `temporary` / `unique` / `target_*` |
+| `get_invite($code, %opts)` | 招待情報（認証不要） |
+| `get_invites($guild_id)` | ギルドの招待一覧 |
+| `delete_invite($code)` | 招待を削除 |
+| `execute_webhook($id, $token, $content, %opts)` | Webhook を実行（認証不要） |
+
+- `get_invite` と `execute_webhook` は認証ヘッダを付けません
 - `execute_webhook` は既定で `wait=1` を付けるので、送信したメッセージが返ります
   （`wait => 0` で `1`）
 
-### ファイル添付
+### レート制限
 
-multipart/form-data を自前で組み立てるので、追加モジュールは要りません。
+Discord の制限は「バケット（`X-RateLimit-Bucket`）」＋「major parameter」単位です。
+`Disperl::Client` はこれを次のように扱います。
+
+- major parameter はチャンネル ID / ギルド ID / Webhook ID。**別チャンネルなら別枠**として待つ
+- 同じバケットでも、GET と POST などルートが違えば別扱い
+- `X-RateLimit-Remaining: 0` のとき、次のリクエストを `X-RateLimit-Reset-After` 秒待つ
+- 429 は `retry_after` 秒待ってリトライ。上限に達したらバケットを閉じ、次のリクエストで待つ
+- `X-RateLimit-Global` の 429 は全ルートに影響する
+- `X-RateLimit-Bucket` が無い応答では、従来どおりクライアント全体で待つ
+
+### エラー処理
+
+失敗時の `last_error` は `{ status, code, message }` です。
+429 のときは `retry_after` と `global` も入ります。成功すると `undef` に戻ります。
 
 ```perl
-# ファイルを添付して送る
-my $message = $client->send_file($channel, 'memo.txt', content => 'ログです');
-
-# ファイル名を変える / 本文なしで添付だけ送る
-$client->send_file($channel, 'image.png', filename => 'renamed.png');
-
-# メモリ上のデータを添付する
-$client->send_file_data($channel, 'log.csv', "a,b\n1,2\n", content => 'CSV');
+my $message = $client->send_message($channel, '...');
+if (!$message) {
+    my $err = $client->last_error;
+    warn "$err->{status} $err->{code} $err->{message}\n";
+}
 ```
 
-| メソッド | 説明 |
-|---|---|
-| `send_file($channel_id, $path, %opts)` | ファイルを読んで添付。`content` / `embeds` / `reply_to` / `tts` / `components` / `allowed_mentions` が使える |
-| `send_file_data($channel_id, $filename, $bytes, %opts)` | バイト列をそのまま添付 |
-
-- `filename` で送信時のファイル名を上書きできます
-- `content_type` で MIME タイプを明示できます（省略時は拡張子から推定）
-- 本文（`content`）は省略できます（添付だけ送れます）
-- 1 リクエスト 1 ファイルです
+## Disperl::Components
 
 ### ボタン・セレクトメニュー
-
-`Disperl::Components` でコンポーネントを組み立てます。
 
 ```perl
 use Disperl::Components qw(action_row button string_select);
@@ -305,7 +381,7 @@ $client->send_message($channel, '投票してください', {
 `style` は `primary` (1) / `secondary` (2) / `success` (3) / `danger` (4) / `link` (5) / `premium` (6)。
 数値でも指定できます。リンクボタンには `custom_id` ではなく `url` が必要です。
 
-#### モーダル
+### モーダル
 
 モーダルは `label`（type 18）で入力欄を包みます。テキスト入力は `label` の中に置いてください
 （Action Row 内の Text Input は非推奨です）。
@@ -330,58 +406,15 @@ my $form = modal(
         ),
     ],
 );
-
-$client->reply_modal($interaction_id, $interaction_token, $form);
 ```
 
 送信結果は `INTERACTION_CREATE` の type 5（`MODAL_SUBMIT`）で届きます。
 `data.components` は Label → Text Input の入れ子になっているので、`component.custom_id` と
 `component.value` を取り出してください。
 
-#### オートコンプリート
+## Disperl::Gateway
 
-コマンドのオプションに `autocomplete => true` を付けると、入力中に type 4 の
-`INTERACTION_CREATE` が届きます。`data.options` の `focused` が真の項目が入力中の値です。
-
-```perl
-# コマンド登録側
-options => [{
-    type         => 3,
-    name         => 'question',
-    description  => '質問',
-    required     => JSON::PP::true,
-    autocomplete => JSON::PP::true,
-}],
-
-# 受信側（on_autocomplete）
-my ($focused) = grep { $_->{focused} } @{ $i->{data}{options} || [] };
-my $typed = $focused ? ($focused->{value} // '') : '';
-
-$client->autocomplete_interaction($i->{id}, $i->{token}, [
-    { name => 'はい/いいえ', value => 'はい/いいえ' },
-    { name => '賛成/反対',   value => '賛成/反対' },
-]);
-```
-
-候補は最大 25 件です。空配列を返すと「候補なし」になります。
-
-### レート制限
-
-Discord の制限は「バケット（`X-RateLimit-Bucket`）」＋「major parameter」単位です。
-`Disperl::Client` はこれを次のように扱います。
-
-- major parameter はチャンネル ID / ギルド ID / Webhook ID。**別チャンネルなら別枠**として待つ
-- 同じバケットでも、GET と POST などルートが違えば別扱い
-- `X-RateLimit-Remaining: 0` のとき、次のリクエストを `X-RateLimit-Reset-After` 秒待つ
-- 429 は `retry_after` 秒待ってリトライ。上限に達したらバケットを閉じ、次のリクエストで待つ
-- `X-RateLimit-Global` の 429 は全ルートに影響する
-- `X-RateLimit-Bucket` が無い応答では、従来どおりクライアント全体で待つ
-
-### `last_error`
-
-失敗時の `{ status, code, message }`。429 のときは `retry_after` と `global` も入ります。成功すると `undef` に戻ります。
-
-## 使い方（受信 / Gateway）
+### 基本的な受信
 
 ```perl
 use Disperl::Client;
@@ -411,10 +444,10 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `on_event` | — | `sub { my ($type, $data, $raw) = @_ }` 全イベント |
 | `on_message` | — | `MESSAGE_CREATE` のときだけ呼ばれる |
 | `on_interaction` | — | `INTERACTION_CREATE` のときだけ呼ばれる（全 type） |
-| `on_command` | — | `INTERACTION_CREATE` の type 2（スラッシュコマンド）だけ |
-| `on_component` | — | `INTERACTION_CREATE` の type 3（ボタン / セレクト）だけ |
-| `on_autocomplete` | — | `INTERACTION_CREATE` の type 4（オートコンプリート）だけ |
-| `on_modal` | — | `INTERACTION_CREATE` の type 5（モーダル送信）だけ |
+| `on_command` | — | type 2（スラッシュコマンド）だけ |
+| `on_component` | — | type 3（ボタン / セレクト）だけ |
+| `on_autocomplete` | — | type 4（オートコンプリート）だけ |
+| `on_modal` | — | type 5（モーダル送信）だけ |
 | `on_ready` | — | `READY` のときだけ呼ばれる |
 | `on_error` | 未指定なら `warn` | 接続エラー・再接続の通知 |
 | `reconnect` | `1` | 自動再接続するか |
@@ -431,14 +464,10 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `presence_interval` | `4` | プレゼンス更新の最小間隔（秒） |
 
 - `intents` は `Disperl::Gateway->intent_bits(qw(GUILDS MESSAGE_CONTENT))` でも作れます
-- `MESSAGE_CONTENT`（1 << 15）は **Privileged Intent** です。Developer Portal の
-  Bot 設定で有効にしないと `msg->{content}` が空になります
-- `GUILD_MEMBERS` / `GUILD_PRESENCES` も Privileged Intent です
 - `stop()` でループを止められます
 - Heartbeat の ACK が返らない場合はゾンビ接続とみなして再接続します
 - 4004 / 4010〜4014（認証・Intent 系）は再接続しません
 - `$gw->application_id` で READY で受け取ったアプリケーション ID を参照できます
-  （インタラクション応答の編集に使います）
 
 ### ステータス（プレゼンス）
 
@@ -467,25 +496,23 @@ my $current = $gw->presence;                       # 現在値（未設定なら
 $gw->set_presence(activity => { type => 'custom', state => '作業中', emoji => { name => '💻' } });
 ```
 
-- `set_presence` は指定しなかった項目（status だけ、activity だけ等）を現在値から引き継ぎます
+- `set_presence` は指定しなかった項目を現在値から引き継ぎます
 - 接続前なら次の Identify で、接続中なら READY 後に反映されます
-  （READY 前に変更しても取りこぼしません）
 - 変更は Gateway に接続している間だけ有効です。切断すると通常のオフラインに戻ります
 - Discord の制限（20 秒に 5 回）を超えないよう、既定で 4 秒間隔に間引きます
-  （最後の指定が送られるので、連続で呼んでも最終状態になります）
 - `invisible` は他のユーザーからオフラインに見えます（Bot 自体は動作を続けます）
 - REST API では変更できません（Gateway の op 3 を使っています）
 
-### インタラクション（ボタン・スラッシュコマンド）
+### インタラクション
 
 インタラクションへの応答は Gateway 経由で完結します（公開 HTTP サーバーは不要）。
 ただし **3 秒以内**に応答する必要があります。時間がかかる処理は先に `defer_interaction` を呼びます。
 
 ```perl
 my $gw = Disperl::Gateway->new(
-    token          => $ENV{DISCORD_TOKEN},
-    intents        => [qw(GUILDS GUILD_MESSAGES)],
-    on_command     => sub {
+    token      => $ENV{DISCORD_TOKEN},
+    intents    => [qw(GUILDS GUILD_MESSAGES)],
+    on_command => sub {
         my $i = shift;                       # INTERACTION_CREATE の d
         my $client = Disperl::Client->new(token => $ENV{DISCORD_TOKEN});
 
@@ -494,7 +521,7 @@ my $gw = Disperl::Gateway->new(
                 ephemeral => 1);             # 実行者にだけ見える
         }
     },
-    on_component   => sub {
+    on_component => sub {
         my $i = shift;
         my $client = Disperl::Client->new(token => $ENV{DISCORD_TOKEN});
 
@@ -514,14 +541,67 @@ $gw->run;
 | `defer_interaction($id, $token, %opts)` | 5 | 「考え中...」を表示。あとで編集する（`ephemeral` 可） |
 | `defer_interaction($id, $token, update => 1)` | 6 | コンポーネント付きメッセージの更新を遅延 |
 | `update_interaction_message($id, $token, $content, %opts)` | 7 | ボタンが付いたメッセージをその場で書き換える |
-| `reply_modal($id, $token, $modal_or_opts)` | 9 | モーダルを表示する（`modal()` を渡す） |
 | `autocomplete_interaction($id, $token, \@choices)` | 8 | オートコンプリートの候補を返す（最大 25 件） |
+| `reply_modal($id, $token, $modal_or_opts)` | 9 | モーダルを表示する（`modal()` を渡す） |
 | `edit_interaction_response($app_id, $token, $content, %opts)` | — | defer した応答を後から編集する |
 | `interaction_callback($id, $token, $type, $data)` | — | 低レベル。`$type` は数値か `reply` / `deferred` / `deferred_update` / `update` / `autocomplete` / `modal` |
 
 - インタラクションの応答 API は認証ヘッダを付けません（ID + トークンで認証）
 - `%opts` は `send_message` と同じ（`embeds` / `components` / `allowed_mentions`）
 - `defer_interaction` のあとは `edit_interaction_response($gw->application_id, $token, ...)`
+
+#### モーダル
+
+`Disperl::Components` の `modal` / `label` / `text_input` で組み立てて `reply_modal` に渡します。
+詳細は[モーダル](#モーダル)を参照してください。
+
+```perl
+on_modal => sub {
+    my $i = shift;
+    my $client = Disperl::Client->new(token => $ENV{DISCORD_TOKEN});
+
+    # data.components は Label → Text Input の入れ子
+    my ($name) = map { $_->{component}{value} }
+        grep { ($_->{component}{custom_id} // '') eq 'name' }
+        @{ $i->{data}{components} || [] };
+
+    $client->reply_interaction(
+        $i->{id}, $i->{token}, "ようこそ、$name さん", ephemeral => 1,
+    );
+},
+```
+
+#### オートコンプリート
+
+コマンドのオプションに `autocomplete => true` を付けると、入力中に type 4 の
+`INTERACTION_CREATE` が届きます。`data.options` の `focused` が真の項目が入力中の値です。
+
+```perl
+# コマンド登録側
+options => [{
+    type         => 3,
+    name         => 'question',
+    description  => '質問',
+    required     => JSON::PP::true,
+    autocomplete => JSON::PP::true,
+}],
+
+# 受信側
+on_autocomplete => sub {
+    my $i = shift;
+    my $client = Disperl::Client->new(token => $ENV{DISCORD_TOKEN});
+
+    my ($focused) = grep { $_->{focused} } @{ $i->{data}{options} || [] };
+    my $typed = $focused ? ($focused->{value} // '') : '';
+
+    $client->autocomplete_interaction($i->{id}, $i->{token}, [
+        { name => 'はい/いいえ', value => 'はい/いいえ' },
+        { name => '賛成/反対',   value => '賛成/反対' },
+    ]);
+},
+```
+
+候補は最大 25 件です。空配列を返すと「候補なし」になります。
 
 ### スラッシュコマンドの登録
 
@@ -562,42 +642,65 @@ $client->delete_guild_command($app_id, $guild_id, $command_id);
 `test.pl` はそのまま使える小さな CLI です（`.env` を読みます）。
 
 ```sh
-perl test.pl help                 # コマンド一覧
-perl test.pl check                # トークンとチャンネルの確認
-perl test.pl send "こんにちは"      # 送信（引数が無ければ標準入力から）
-perl test.pl embed                # embed を送信
-perl test.pl history 20           # 履歴を表示（既定 10 / 最大 100）
-perl test.pl typing               # 「入力中...」を表示
-perl test.pl react <ID> check     # リアクション（check / thumbsup / wave / heart / tada / fire / eyes）
+perl test.pl help
+```
+
+### 基本
+
+```sh
+perl test.pl check                 # トークンとチャンネルの確認
+perl test.pl send "こんにちは"       # 送信（引数が無ければ標準入力から）
+perl test.pl embed                 # embed を送信
+perl test.pl history 20            # 履歴を表示（既定 10 / 最大 100）
+perl test.pl typing                # 「入力中...」を表示
+```
+
+### メッセージ操作
+
+```sh
 perl test.pl edit <ID> "新しい本文"
 perl test.pl delete <ID>
-perl test.pl pin <ID>              # ピン留め
-perl test.pl unpin <ID>            # ピン解除
-perl test.pl pins                  # ピン一覧
-perl test.pl purge <ID> <ID> ...   # 2〜100 件をまとめて削除
+perl test.pl react <ID> check      # check / thumbsup / wave / heart / tada / fire / eyes
 perl test.pl reactions <ID> check  # リアクションしたユーザー
-perl test.pl dm <ユーザーID> "本文" # DM を送る
-perl test.pl thread --private "相談" # スレッドを作る
-perl test.pl threads               # アクティブスレッド一覧（現在のギルド）
-perl test.pl threads --archived    # アーカイブ済み（現在のチャンネル）
+perl test.pl pin <ID>
+perl test.pl unpin <ID>
+perl test.pl pins
+perl test.pl purge <ID> <ID> ...   # 2〜100 件をまとめて削除
+perl test.pl upload <ファイル> "本文"
+perl test.pl dm <ユーザーID> "本文"
+```
+
+### スレッド
+
+```sh
+perl test.pl thread --private "相談"  # スレッドを作る
+perl test.pl threads                  # アクティブスレッド一覧（現在のギルド）
+perl test.pl threads --archived       # アーカイブ済み（現在のチャンネル）
 perl test.pl threads --archived --private
-perl test.pl thread-join <ID>      # スレッドに参加
-perl test.pl thread-leave <ID>     # スレッドから退出
-perl test.pl thread-archive <ID>   # アーカイブ（--unarchive / --lock / --unlock）
-perl test.pl thread-members <ID>   # スレッドメンバー一覧
-perl test.pl thread-delete <ID>    # スレッドを削除
+perl test.pl thread-join <ID>
+perl test.pl thread-leave <ID>
+perl test.pl thread-archive <ID>      # --unarchive / --lock / --unlock
+perl test.pl thread-members <ID>
+perl test.pl thread-delete <ID>
+```
+
+### ギルド・Webhook
+
+```sh
 perl test.pl channels              # チャンネル一覧（現在のギルド）
 perl test.pl invite                # 招待リンク（24 時間）
 perl test.pl user <ユーザーID>      # ユーザー情報
 perl test.pl webhook <ID> <トークン> "本文"
-perl test.pl upload <ファイル> "本文" # ファイルを添付して送る
+```
+
+### インタラクション
+
+```sh
 perl test.pl poll "質問"            # ボタン付きの投票を作る
 perl test.pl commands              # /ping /echo /poll /form をギルドに登録
 perl test.pl commands --list       # 登録済みコマンドの一覧
 perl test.pl commands --global     # グローバルに登録（反映に最大 1 時間）
-perl test.pl watch                # Gateway で受信し !ping / !echo / !poll / !status / !activity / !help に応答
-perl test.pl watch --status idle --activity "待機中"
-perl test.pl watch --status invisible   # オフライン表示
+perl test.pl watch                 # Gateway で受信
 ```
 
 `commands` のオプション:
@@ -608,7 +711,13 @@ perl test.pl watch --status invisible   # オフライン表示
 | `--global` | グローバルに登録する（既定は現在のギルド） |
 | `--guild <ID>` / `--guild=<ID>` | 対象ギルドを指定する |
 
-`watch` のオプション:
+### `watch`
+
+```sh
+perl test.pl watch
+perl test.pl watch --status idle --activity "待機中"
+perl test.pl watch --status invisible   # オフライン表示
+```
 
 | オプション | 説明 |
 |---|---|
@@ -616,20 +725,26 @@ perl test.pl watch --status invisible   # オフライン表示
 | `--activity <名前>` | アクティビティの表示名 |
 | `--type <種類>` | `playing` / `streaming` / `listening` / `watching` / `competing` / `custom` |
 
-`watch` 中は Discord から `!status idle` や `!activity "作業中"` で変更できます。
+`watch` 中に反応するもの:
+
+- メッセージコマンド: `!ping` / `!echo` / `!poll` / `!status` / `!activity` / `!help`
+- ボタン（`!poll` の投票）
+- スラッシュコマンド: `/ping` / `/echo` / `/poll` / `/form`
+- `/poll` の入力候補（オートコンプリート）
+- `/form` のモーダル送信
+
+`!status idle` や `!activity "作業中"` でステータスも変更できます。
 ステータスは接続している間だけ有効です（終了すると通常のオフラインに戻ります）。
 
 - `send` は引数が無いとき標準入力（UTF-8）を読みます
 - 送信結果の ID をそのまま `edit` / `react` / `delete` に渡せます
-- `watch` は `MESSAGE_CONTENT`（Privileged Intent）が必要です
 - `poll` は投票メッセージを直接投稿します。`watch` 中の `!poll` は
   他のユーザーが送ったときだけ反応します（Bot 自身のメッセージは無視するため）
 - `commands` はギルド登録が既定です。グローバル登録は反映に時間がかかります
-- `watch` 中はボタンとスラッシュコマンド（`/ping` `/echo` `/poll` `/form`）にも応答します
-- `/poll` の質問入力ではオートコンプリート候補が出ます
-- `/form` はモーダルを開き、送信内容を本人だけに返します
 - Windows のコンソールは cp932 のことが多いため、出力は実際のコードページに合わせます。
   `DISPERL_CONSOLE_ENCODING=UTF-8` で上書きできます（引数は `DISPERL_ARG_ENCODING`、既定 cp932）
+
+## テスト
 
 単体テストはネットワーク不要です。
 
@@ -657,18 +772,55 @@ prove -l t
 | `t/12_rest_extras.t` | ピン / 一括削除 / リアクション一覧 / スレッド / DM / ギルド / 招待 / Webhook |
 | `t/13_rate_bucket.t` | バケット単位のレート制限 / major parameter / グローバル 429 |
 | `t/14_files.t` | ファイル添付（multipart / MIME / ファイル名 / 入力検証） |
-| `t/15_components.t` | ボタン / セレクトメニュー / action_row の組み立て |
+| `t/15_components.t` | ボタン / セレクトメニュー / action_row / モーダル部品 |
 | `t/16_interactions.t` | インタラクション応答 / コマンド登録 / Gateway の type 2・3 配送 |
-| `t/17_modals_autocomplete.t` | モーダル（type 9）/ オートコンプリート（type 8）/ Gateway の type 4・5 配送 |
-| `t/18_threads.t` | スレッド一覧 / 参加・退出 / メンバー / アーカイブ / 更新 |
+| `t/17_modals_autocomplete.t` | モーダル（type 9）/ オートコンプリート（type 8）/ type 4・5 配送 |
+| `t/18_threads.t` | スレッド一覧 / 参加・退出 / メンバー / アーカイブ / 更新 / 削除 |
 
 Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパスを解決）。
 
-### Windows での注意
+## 注意事項
+
+### Privileged Intents
+
+- `MESSAGE_CONTENT`（1 << 15）は **Privileged Intent** です。
+  Developer Portal の Bot 設定で有効にしないと `msg->{content}` が空になります
+- `GUILD_MEMBERS` / `GUILD_PRESENCES` も Privileged Intent です
+- メンバー一覧系の API は `GUILD_MEMBERS` が有効な Bot でないと制限されます
+
+### Windows
 
 - Perl は日本語を含むパス（例: `G:\マイドライブ\...`）からスクリプトを開けないことがあります
-  （`Can't open perl script ...`）。ASCII のみのパスに clone するか、ジャンクション経由で実行してください。
-- 環境変数 `HOME` は Windows では通常未設定です（`USERPROFILE` を使う）。`test.pl` は `FindBin` を使うので不要です。
-- `.env` を保存するときは UTF-8（BOM なし推奨、BOM 付きも可）。PowerShell の `>` リダイレクトは UTF-16 になることがあるので、エディタで保存してください。
+  （`Can't open perl script ...`）。ASCII のみのパスに clone するか、ジャンクション経由で実行してください
+- 環境変数 `HOME` は Windows では通常未設定です（`USERPROFILE` を使う）。
+  `test.pl` は `FindBin` を使うので不要です
+- `.env` を保存するときは UTF-8（BOM なし推奨、BOM 付きも可）。
+  PowerShell の `>` リダイレクトは UTF-16 になることがあるので、エディタで保存してください
 - コンソールに日本語を `print` すると `Wide character in print` が出ることがあります。
-  表示だけの問題なので、必要なら `binmode STDOUT, ':encoding(cp932)'` を設定してください。
+  表示だけの問題なので、必要なら `binmode STDOUT, ':encoding(cp932)'` を設定してください
+
+## 実装範囲
+
+### 対応済み
+
+- メッセージ: 送信・編集・削除・取得・履歴・返信・embeds・TTS
+- リアクション・入力中・ピン留め・一括削除
+- ファイル添付（1 リクエスト 1 ファイル）
+- スレッド: 作成・一覧・参加・退出・メンバー・アーカイブ・削除
+- DM・ギルド情報の取得・招待・Webhook 実行
+- Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス
+- インタラクション: ボタン・セレクト・モーダル・オートコンプリート
+- スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）
+- レート制限: バケット単位・major parameter・429 / 5xx リトライ
+
+### 未対応
+
+- 音声（Voice）
+- OAuth2
+- AutoMod・監査ログ・スケジュールイベント
+- チャンネル / ギルドの作成・編集・権限管理
+- Webhook の管理（作成・一覧・編集・削除）
+- 複数ファイルの同時添付
+- ネイティブ投票（Poll）・フォーラム / メディアチャンネル
+- 課金・Entitlements・SKU
+- ユーザーアプリ / 埋め込みアプリ
