@@ -10,6 +10,11 @@ use Time::Local qw(timegm);
 my $API_BASE    = 'https://discord.com/api/v10';
 my $MAX_CONTENT = 2000;
 
+# embed の制限（Discord API）
+my $MAX_EMBEDS       = 10;
+my $MAX_EMBED_CHARS  = 6000;   # 全 embed の文字数の合計
+my $MAX_EMBED_FIELDS = 25;
+
 # JSON::PP は encode/decode で状態を持たないので使い回せる
 my $JSON = JSON::PP->new->utf8(1);
 
@@ -1059,6 +1064,7 @@ sub _message_payload {
     }
 
     $payload{embeds} = $opts->{embeds} if $opts->{embeds};
+    $self->_validate_embeds($payload{embeds}) if $payload{embeds};
 
     $payload{components} = $opts->{components} if $opts->{components};
 
@@ -1082,6 +1088,103 @@ sub _message_payload {
             || $opts->{allow_empty};
 
     return \%payload;
+}
+
+# embed の構造と文字数制限を検証する。違反時は die する。
+sub _validate_embeds {
+    my ($self, $embeds) = @_;
+
+    die "embeds must be an array reference\n"
+        unless ref $embeds eq 'ARRAY';
+    die "at most $MAX_EMBEDS embeds are allowed\n"
+        if @$embeds > $MAX_EMBEDS;
+
+    my $total = 0;
+
+    for my $i (0 .. $#$embeds) {
+        my $n     = $i + 1;
+        my $embed = $embeds->[$i];
+
+        die "embed #$n must be a hash reference\n"
+            unless ref $embed eq 'HASH';
+
+        $total += _check_embed_text($embed->{title},       256,  "embed #$n title");
+        $total += _check_embed_text($embed->{description}, 4096, "embed #$n description");
+
+        if (defined $embed->{footer}) {
+            die "embed #$n footer must be a hash reference\n"
+                unless ref $embed->{footer} eq 'HASH';
+            die "embed #$n footer text is required\n"
+                unless defined $embed->{footer}{text}
+                    && !ref $embed->{footer}{text}
+                    && length $embed->{footer}{text};
+            $total += _check_embed_text(
+                $embed->{footer}{text}, 2048, "embed #$n footer text",
+            );
+        }
+
+        if (defined $embed->{author}) {
+            die "embed #$n author must be a hash reference\n"
+                unless ref $embed->{author} eq 'HASH';
+            die "embed #$n author name is required\n"
+                unless defined $embed->{author}{name}
+                    && !ref $embed->{author}{name}
+                    && length $embed->{author}{name};
+            $total += _check_embed_text(
+                $embed->{author}{name}, 256, "embed #$n author name",
+            );
+        }
+
+        my $fields = $embed->{fields};
+        next unless defined $fields;
+
+        die "embed #$n fields must be an array reference\n"
+            unless ref $fields eq 'ARRAY';
+        die "embed #$n must have $MAX_EMBED_FIELDS fields or less\n"
+            if @$fields > $MAX_EMBED_FIELDS;
+
+        for my $j (0 .. $#$fields) {
+            my $m     = $j + 1;
+            my $field = $fields->[$j];
+
+            die "embed #$n field #$m must be a hash reference\n"
+                unless ref $field eq 'HASH';
+
+            die "embed #$n field #$m name is required\n"
+                unless defined $field->{name} && !ref $field->{name}
+                    && length $field->{name};
+            die "embed #$n field #$m value is required\n"
+                unless defined $field->{value} && !ref $field->{value}
+                    && length $field->{value};
+
+            $total += _check_embed_text(
+                $field->{name}, 256, "embed #$n field #$m name",
+            );
+            $total += _check_embed_text(
+                $field->{value}, 1024, "embed #$n field #$m value",
+            );
+        }
+    }
+
+    die "total embed text must be $MAX_EMBED_CHARS characters or less"
+        . " (got $total)\n"
+        if $total > $MAX_EMBED_CHARS;
+
+    return 1;
+}
+
+# 1 つのテキスト項目を検証し、文字数を返す。未定義なら 0。
+sub _check_embed_text {
+    my ($value, $max, $label) = @_;
+
+    return 0 unless defined $value;
+    die "$label must be a string\n" if ref $value;
+
+    my $len = length "$value";
+    die "$label must be $max characters or less (got $len)\n"
+        if $len > $max;
+
+    return $len;
 }
 
 sub _messages_url {

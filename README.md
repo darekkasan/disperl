@@ -146,6 +146,27 @@ $client->edit_message($channel_id, $message_id, $content, \%opts);
 - 429 は `retry_after`（JSON ボディ優先、無ければ `Retry-After` ヘッダ）秒待ってリトライ
 - 5xx は 1 秒待ってリトライ。それ以外の 4xx はリトライしない
 
+### embed の制限
+
+`embeds` は送信前に検証し、超えていれば `die` します（`send_message` / `edit_message` /
+`send_file` / `reply_interaction` など共通）。
+
+| 項目 | 上限 |
+|---|---|
+| embed の個数 | 10 |
+| `title` | 256 文字 |
+| `description` | 4,096 文字 |
+| `fields` の個数 | 25 |
+| `fields[].name` | 256 文字 |
+| `fields[].value` | 1,024 文字 |
+| `footer.text` | 2,048 文字 |
+| `author.name` | 256 文字 |
+| 全 embed の合計文字数 | 6,000 文字 |
+
+- 文字数は UTF-8 の文字（コードポイント）単位で数えます
+- `fields[].name` と `fields[].value` は必須です
+- `embeds => []` は「embed を消す」として有効です（編集時など）
+
 ### メッセージの取得・削除
 
 | メソッド | 成功時 | 説明 |
@@ -780,6 +801,7 @@ prove -l t
 | `t/16_interactions.t` | インタラクション応答 / コマンド登録 / Gateway の type 2・3 配送 |
 | `t/17_modals_autocomplete.t` | モーダル（type 9）/ オートコンプリート（type 8）/ type 4・5 配送 |
 | `t/18_threads.t` | スレッド一覧 / 参加・退出 / メンバー / アーカイブ / 更新 / 削除 |
+| `t/19_embed_validation.t` | embed の個数・文字数・構造の検証 |
 
 Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパスを解決）。
 
@@ -807,7 +829,7 @@ Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパ�
 
 ### 対応済み
 
-- メッセージ: 送信・編集・削除・取得・履歴・返信・embeds・TTS
+- メッセージ: 送信・編集・削除・取得・履歴・返信・embeds（上限を送信前に検証）・TTS
 - リアクション・入力中・ピン留め・一括削除
 - ファイル添付（1 リクエスト 1 ファイル）
 - スレッド: 作成・一覧・参加・退出・メンバー・アーカイブ・削除
