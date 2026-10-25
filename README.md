@@ -6,6 +6,7 @@ Perl 製の Discord Bot 用クライアント。REST API と Gateway（WebSocket
 
 - メッセージの送信・編集・削除・取得、embeds、返信、リアクション、入力中表示
 - ファイル添付（最大 10 個。multipart を自前で送信。追加依存なし）
+- ネイティブ投票（Poll）の作成・終了・投票者取得
 - インタラクションのフォローアップ送信（添付・ephemeral 対応）
 - ピン留め、一括削除、スレッド、DM、招待、Webhook
 - スレッドの一覧・参加・退出・メンバー管理・アーカイブ
@@ -138,6 +139,8 @@ $client->edit_message($channel_id, $message_id, $content, \%opts);
 | `components` | `[ action_row(button(...)) ]` | ボタン / セレクトメニュー |
 | `reply_to` | `'123456789012345678'` | 返信先メッセージ ID |
 | `tts` | `1` | 読み上げメッセージ |
+| `poll` | `{ question => '...', answers => [...] }` | ネイティブ投票。`content` は省略可 |
+| `attachments` | `[{ id => '...', description => '...' }]` | 編集時に添付を保持する / `[]` で削除 |
 | `allowed_mentions` | `{ parse => ['users'] }` | この呼び出しだけメンション設定を変える |
 
 - 成功時: メッセージのハッシュリファレンス
@@ -247,6 +250,41 @@ $client->send_files_data($channel, [
 - `filename` で送信時のファイル名を上書きできます
 - `content_type` で MIME タイプを明示できます（省略時は拡張子から推定）
 - 本文（`content`）は省略できます（添付だけ送れます）
+
+### 投票（Poll）
+
+Discord 標準の投票を作れます。`poll` を指定すると本文なしでも送信できます。
+
+```perl
+my $message = $client->send_message($channel, undef, {
+    poll => {
+        question    => 'どちらが好き?',
+        answers     => [ '犬', '猫' ],
+        duration    => 24,        # 時間（1〜768、省略時は Discord の既定）
+        multiselect => 1,         # 複数選択を許可
+    },
+});
+
+# 投票を終了する（結果付きのメッセージが返る）
+my $ended = $client->end_poll($channel, $message->{id});
+
+# 特定の選択肢に投票したユーザー
+my $answer_id = $message->{poll}{answers}[0]{answer_id};
+my $voters = $client->get_poll_answer_voters(
+    $channel, $message->{id}, $answer_id, limit => 100,
+);
+```
+
+| メソッド | 説明 |
+|---|---|
+| `send_message($channel_id, undef, { poll => {...} })` | 投票付きメッセージ（作成時のみ） |
+| `end_poll($channel_id, $message_id)` | 投票を終了し、結果付きのメッセージを返す |
+| `get_poll_answer_voters($channel_id, $message_id, $answer_id, %opts)` | `{ users => [...] }`。`limit` (1..100) / `after` |
+
+- `question` は文字列か `{ text => ... }`、`answers` は文字列 / `{ text => ... }` / `{ poll_media => {...} }`
+- 質問は 300 文字、選択肢は 2〜10 個で各 55 文字まで（送信前に検証）
+- `duration` は 1〜768 時間
+- 結果は `$message->{poll}{results}{answer_counts}` に入ります
 
 ### スレッド
 
@@ -756,6 +794,16 @@ perl test.pl upload a.txt b.png "2 ファイル"   # 複数添付（最大 10 �
 perl test.pl dm <ユーザーID> "本文"
 ```
 
+### 投票
+
+```sh
+perl test.pl poll "どちらが好き?" --answer 犬 --answer 猫 --duration 24
+perl test.pl poll "複数選択できます" --answer A --answer B --multiselect
+perl test.pl poll-buttons "はい / いいえ"       # 従来のボタン投票
+perl test.pl poll-end <メッセージID>            # 終了して結果を表示
+perl test.pl poll-voters <メッセージID> <answer_id> --limit 100
+```
+
 ### スレッド
 
 ```sh
@@ -864,6 +912,7 @@ prove -l t
 | `t/18_threads.t` | スレッド一覧 / 参加・退出 / メンバー / アーカイブ / 更新 / 削除 |
 | `t/19_embed_validation.t` | embed の個数・文字数・構造の検証 |
 | `t/20_followups.t` | フォローアップの作成・編集・削除 / 添付 / 添付メタデータ |
+| `t/21_polls.t` | ネイティブ投票（正規化・上限・終了・投票者取得） |
 
 Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパスを解決）。
 
@@ -894,6 +943,7 @@ Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパ�
 - メッセージ: 送信・編集・削除・取得・履歴・返信・embeds（上限を送信前に検証）・TTS
 - リアクション・入力中・ピン留め・一括削除
 - ファイル添付（最大 10 個をまとめて送信）
+- ネイティブ投票（作成・終了・投票者取得）
 - スレッド: 作成・一覧・参加・退出・メンバー・アーカイブ・削除
 - DM・ギルド情報の取得・招待・Webhook 実行（ファイル添付可）
 - Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス
@@ -908,6 +958,6 @@ Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパ�
 - AutoMod・監査ログ・スケジュールイベント
 - チャンネル / ギルドの作成・編集・権限管理
 - Webhook の管理（作成・一覧・編集・削除）
-- ネイティブ投票（Poll）・フォーラム / メディアチャンネル
+- フォーラム / メディアチャンネル
 - 課金・Entitlements・SKU
 - ユーザーアプリ / 埋め込みアプリ

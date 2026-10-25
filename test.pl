@@ -218,7 +218,12 @@ disperl 動作確認 CLI
   perl test.pl webhook <ID> <トークン> <本文>  Webhook で送信する
   perl test.pl upload <ファイル> [<ファイル> ...] [--] [本文]
                                        ファイルを添付して送る（最大 10 個）
-  perl test.pl poll <質問>            ボタン付きの投票を作る
+  perl test.pl poll <質問> [--answer 選択肢]... [--duration 時間] [--multiselect]
+                                       ネイティブ投票を作る（既定は はい / いいえ）
+  perl test.pl poll-buttons <質問>     ボタン付きの投票を作る
+  perl test.pl poll-end <メッセージID> 投票を終了して結果を表示する
+  perl test.pl poll-voters <メッセージID> <answer_id> [--after ID] [--limit N]
+                                       特定の選択肢に投票したユーザー一覧
   perl test.pl commands [--list] [--global] [--guild ID]
                                       /ping /echo /poll /form を登録する（既定は現在のギルド）
   perl test.pl watch [オプション]      Gateway に接続し !ping / !echo / !poll / !status / !activity / !help に応答する
@@ -235,6 +240,8 @@ disperl 動作確認 CLI
   perl test.pl pins
   perl test.pl channels
   perl test.pl upload memo.txt "ログです"
+  perl test.pl poll "どちらが好き?" --answer 犬 --answer 猫 --duration 24
+  perl test.pl poll-buttons "はい / いいえ で答えてください"
   perl test.pl upload a.txt b.png "2 ファイル"
   perl test.pl commands
   perl test.pl thread --private "相談"
@@ -804,7 +811,7 @@ sub _command_definitions {
         },
         {
             name        => 'poll',
-            description => 'ボタン付きの投票を作ります',
+            description => '投票を作ります（はい / いいえ）',
             options     => [{
                 type         => 3,
                 name         => 'question',
@@ -920,11 +927,11 @@ sub _poll_payload {
     };
 }
 
-sub cmd_poll {
+sub cmd_poll_buttons {
     my (@words) = map { _decode_arg($_) } @_;
 
     my $question = join ' ', @words;
-    _fatal('使い方: perl test.pl poll <質問>') unless length $question;
+    _fatal('使い方: perl test.pl poll-buttons <質問>') unless length $question;
 
     my $poll_id = _new_poll($question);
     my $message = client()->send_message(
@@ -933,6 +940,151 @@ sub cmd_poll {
 
     out "投票を作成しました: id=$message->{id} (poll=$poll_id)\n";
     return 0;
+}
+
+sub cmd_poll {
+    my (@args) = map { _decode_arg($_) } @_;
+
+    my (@question, @answers);
+    my ($duration, $multiselect);
+
+    while (@args) {
+        my $arg = shift @args;
+
+        if ($arg eq '--answer') {
+            _fatal('--answer には値が必要です') unless @args;
+            push @answers, shift @args;
+        } elsif ($arg =~ /^--answer=(.+)\z/s) {
+            push @answers, $1;
+        } elsif ($arg eq '--duration') {
+            _fatal('--duration には値が必要です') unless @args;
+            $duration = shift @args;
+        } elsif ($arg =~ /^--duration=(.+)\z/) {
+            $duration = $1;
+        } elsif ($arg eq '--multiselect') {
+            $multiselect = 1;
+        } elsif ($arg eq '--') {
+            push @question, @args;
+            last;
+        } else {
+            push @question, $arg;
+        }
+    }
+
+    my $text = join ' ', @question;
+    _fatal('使い方: perl test.pl poll <質問> [--answer 選択肢]... [--duration 時間] [--multiselect]')
+        unless length $text;
+
+    @answers = ('はい', 'いいえ') unless @answers;
+
+    my %poll = (question => $text, answers => \@answers);
+    $poll{duration}    = $duration if defined $duration;
+    $poll{multiselect} = 1         if $multiselect;
+
+    my $message = client()->send_message(
+        channel_id(), undef, { poll => \%poll },
+    ) or _api_fail('投票の送信');
+
+    out "投票を作成しました: id=$message->{id}\n";
+    _print_poll_answers($message);
+    return 0;
+}
+
+sub cmd_poll_end {
+    my ($message_id) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl poll-end <メッセージID>')
+        unless defined $message_id && length $message_id;
+
+    my $message = client()->end_poll(channel_id(), $message_id)
+        or _api_fail('投票の終了');
+
+    out "投票を終了しました: id=$message->{id}\n";
+    _print_poll_results($message);
+    return 0;
+}
+
+sub cmd_poll_voters {
+    my (@args) = map { _decode_arg($_) } @_;
+
+    my ($message_id, $answer_id);
+    my %opts;
+
+    while (@args) {
+        my $arg = shift @args;
+
+        if ($arg eq '--after') {
+            _fatal('--after には値が必要です') unless @args;
+            $opts{after} = shift @args;
+        } elsif ($arg =~ /^--after=(.+)\z/) {
+            $opts{after} = $1;
+        } elsif ($arg eq '--limit') {
+            _fatal('--limit には値が必要です') unless @args;
+            $opts{limit} = shift @args;
+        } elsif ($arg =~ /^--limit=(.+)\z/) {
+            $opts{limit} = $1;
+        } elsif (!defined $message_id) {
+            $message_id = $arg;
+        } elsif (!defined $answer_id) {
+            $answer_id = $arg;
+        } else {
+            _fatal("不明な引数: $arg");
+        }
+    }
+
+    _fatal('使い方: perl test.pl poll-voters <メッセージID> <answer_id> [--after ID] [--limit N]')
+        unless defined $message_id && length $message_id
+            && defined $answer_id  && length $answer_id;
+
+    my $result = client()->get_poll_answer_voters(
+        channel_id(), $message_id, $answer_id, %opts,
+    ) or _api_fail('投票者の取得');
+
+    my $users = $result->{users} || [];
+    if (!@$users) {
+        out "投票者はいません\n";
+        return 0;
+    }
+
+    for my $user (@$users) {
+        out sprintf "%s (id: %s)\n",
+            _author_name($user), $user->{id} // '?';
+    }
+
+    return 0;
+}
+
+sub _print_poll_answers {
+    my ($message) = @_;
+
+    my $poll = $message->{poll} or return;
+    for my $answer (@{ $poll->{answers} || [] }) {
+        out sprintf "  answer_id=%s  %s\n",
+            $answer->{answer_id} // '?',
+            $answer->{poll_media}{text} // '';
+    }
+}
+
+sub _print_poll_results {
+    my ($message) = @_;
+
+    my $poll = $message->{poll} or return;
+
+    my %count = map { $_->{id} => ($_->{count} // 0) }
+        @{ $poll->{results}{answer_counts} || [] };
+
+    my $total = 0;
+    for my $answer (@{ $poll->{answers} || [] }) {
+        my $n = $count{ $answer->{answer_id} } // 0;
+        $total += $n;
+
+        out sprintf "  %s: %d 票 (answer_id=%s)\n",
+            $answer->{poll_media}{text} // '',
+            $n,
+            $answer->{answer_id} // '?';
+    }
+
+    out "  合計: $total 票\n";
 }
 
 sub cmd_watch {
@@ -1192,8 +1344,13 @@ sub _handle_interaction {
         }
 
         if ($name eq 'poll') {
-            my $poll_id = _new_poll($option{question} // '投票');
-            $api->reply_interaction($id, $token, undef, %{ _poll_payload($poll_id) });
+            $api->reply_interaction(
+                $id, $token, undef,
+                poll => {
+                    question => $option{question} // '投票',
+                    answers  => [ 'はい', 'いいえ' ],
+                },
+            );
             return;
         }
 
@@ -1259,6 +1416,24 @@ sub _handle_command {
         my $question = $1;
         $question =~ s/\s+\z//;
 
+        my $sent = $api->send_message($channel, undef, {
+            reply_to => $reply,
+            poll     => {
+                question => $question,
+                answers  => [ 'はい', 'いいえ' ],
+            },
+        });
+
+        out $sent
+            ? "  -> 投票を作成しました (id=$sent->{id})\n"
+            : "  -> 投票の送信に失敗しました\n";
+        return;
+    }
+
+    if ($content =~ /^!poll-buttons\s+(.+)/is) {
+        my $question = $1;
+        $question =~ s/\s+\z//;
+
         my $poll_id = _new_poll($question);
         my $payload = _poll_payload($poll_id);
 
@@ -1268,7 +1443,7 @@ sub _handle_command {
         });
 
         out $sent
-            ? "  -> 投票を作成しました (poll=$poll_id)\n"
+            ? "  -> ボタン投票を作成しました (poll=$poll_id)\n"
             : "  -> 投票の送信に失敗しました\n";
         return;
     }
@@ -1356,7 +1531,8 @@ sub _help_embed {
         fields      => [
             { name => '!ping',            value => 'pong を返します',                     inline => JSON::PP::true },
             { name => '!echo <本文>',      value => '本文をそのまま返します',               inline => JSON::PP::true },
-            { name => '!poll <質問>',      value => 'ボタン付きの投票を作ります',           inline => JSON::PP::true },
+            { name => '!poll <質問>',      value => 'ネイティブ投票を作ります（はい / いいえ）', inline => JSON::PP::true },
+            { name => '!poll-buttons <質問>', value => 'ボタン付きの投票を作ります',        inline => JSON::PP::true },
             { name => '!help',            value => 'このヘルプを表示します',               inline => JSON::PP::true },
             { name => '!status [状態]',    value => 'online / idle / dnd / invisible（オフライン表示）', inline => JSON::PP::false },
             { name => '!activity <本文>',  value => 'アクティビティを変更します（引数なしで解除）', inline => JSON::PP::false },
@@ -1397,6 +1573,9 @@ my %COMMANDS = (
     upload    => \&cmd_upload,
     commands  => \&cmd_commands,
     poll      => \&cmd_poll,
+    'poll-buttons' => \&cmd_poll_buttons,
+    'poll-end'     => \&cmd_poll_end,
+    'poll-voters'  => \&cmd_poll_voters,
     watch     => \&cmd_watch,
     help      => \&cmd_help,
 );

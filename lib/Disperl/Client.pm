@@ -18,6 +18,12 @@ my $MAX_EMBED_FIELDS = 25;
 # 1 メッセージに添付できるファイル数の上限（Discord API）
 my $MAX_FILES = 10;
 
+# 投票（Poll）の上限（Discord API）
+my $MAX_POLL_ANSWERS  = 10;
+my $MAX_POLL_QUESTION = 300;
+my $MAX_POLL_ANSWER   = 55;
+my $MAX_POLL_DURATION = 768;    # 時間
+
 # JSON::PP は encode/decode で状態を持たないので使い回せる
 my $JSON = JSON::PP->new->utf8(1);
 
@@ -242,6 +248,55 @@ sub bulk_delete_messages {
         { messages => [@$ids] },
     );
     return $self->_finish($res, 'none');
+}
+
+# ---------------------------------------------------------------- polls
+
+# 投票を終了する。成功時は終了後のメッセージ（poll.results を含む）。
+#   end_poll($channel_id, $message_id)
+sub end_poll {
+    my ($self, $channel_id, $message_id) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+    die "message id is required\n"
+        unless defined $message_id && length $message_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/channels/$channel_id/polls/$message_id/expire",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 特定の選択肢に投票したユーザー一覧。戻り値は { users => [...] }。
+#   get_poll_answer_voters($channel_id, $message_id, $answer_id, limit => 100, after => $user_id)
+sub get_poll_answer_voters {
+    my ($self, $channel_id, $message_id, $answer_id, %opts) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+    die "message id is required\n"
+        unless defined $message_id && length $message_id;
+    die "answer id is required\n"
+        unless defined $answer_id && length $answer_id;
+
+    my $limit = $opts{limit} // 25;
+    die "limit must be an integer between 1 and 100\n"
+        unless !ref $limit && $limit =~ /^\d+\z/ && $limit >= 1 && $limit <= 100;
+
+    my @query = ('limit=' . ($limit + 0));
+    push @query, 'after=' . _uri_escape($opts{after})
+        if defined $opts{after};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET',
+        "$API_BASE/channels/$channel_id/polls/$message_id/answers/$answer_id"
+            . '?' . join('&', @query),
+    );
+    return $self->_finish($res, 'hash');
 }
 
 # ---------------------------------------------------------------- threads
@@ -1320,6 +1375,10 @@ sub _message_payload {
         $payload{attachments} = $opts->{attachments};
     }
 
+    if (exists $opts->{poll}) {
+        $payload{poll} = $self->_validate_poll($opts->{poll});
+    }
+
     if (exists $opts->{tts}) {
         $payload{tts} = $opts->{tts} ? JSON::PP::true : JSON::PP::false;
     }
@@ -1333,10 +1392,11 @@ sub _message_payload {
         : $self->{allowed_mentions};
     $payload{allowed_mentions} = $allowed if defined $allowed;
 
-    die "content, embeds or components is required\n"
+    die "content, embeds or components is required (or poll)\n"
         unless (defined $payload{content} && length $payload{content})
             || $payload{embeds}
             || $payload{components}
+            || $payload{poll}
             || $opts->{allow_empty};
 
     return \%payload;
@@ -1437,6 +1497,90 @@ sub _check_embed_text {
         if $len > $max;
 
     return $len;
+}
+
+# 投票の構造と上限を検証し、Discord の形式に正規化する。
+#   { question => '...', answers => ['A', 'B'], duration => 24, multiselect => 1 }
+sub _validate_poll {
+    my ($self, $poll) = @_;
+
+    die "poll must be a hash reference\n" unless ref $poll eq 'HASH';
+
+    my $question = $poll->{question};
+    $question = $question->{text} if ref $question eq 'HASH';
+
+    die "poll question is required\n"
+        unless defined $question && !ref $question && length $question;
+    die "poll question must be $MAX_POLL_QUESTION characters or less (got "
+        . length($question) . ")\n"
+        if length($question) > $MAX_POLL_QUESTION;
+
+    my $answers = $poll->{answers};
+    die "poll answers must be an array reference\n"
+        unless ref $answers eq 'ARRAY';
+    die "poll must have 2 to $MAX_POLL_ANSWERS answers\n"
+        if @$answers < 2 || @$answers > $MAX_POLL_ANSWERS;
+
+    my @normalized;
+    for my $i (0 .. $#$answers) {
+        my $n       = $i + 1;
+        my $answer  = $answers->[$i];
+        my ($text, $emoji);
+
+        if (ref $answer eq 'HASH') {
+            my $media = $answer->{poll_media};
+
+            if (defined $media) {
+                die "poll answer #$n poll_media must be a hash reference\n"
+                    unless ref $media eq 'HASH';
+                $text  = $media->{text};
+                $emoji = $media->{emoji};
+            } else {
+                $text  = $answer->{text};
+                $emoji = $answer->{emoji};
+            }
+        } elsif (!ref $answer) {
+            $text = $answer;
+        } else {
+            die "poll answer #$n must be a string or a hash reference\n";
+        }
+
+        die "poll answer #$n text is required\n"
+            unless defined $text && !ref $text && length $text;
+        die "poll answer #$n text must be $MAX_POLL_ANSWER characters or less"
+            . " (got " . length($text) . ")\n"
+            if length($text) > $MAX_POLL_ANSWER;
+
+        my %media = (text => "$text");
+        $media{emoji} = $emoji if defined $emoji;
+
+        push @normalized, { poll_media => \%media };
+    }
+
+    my %out = (
+        question => { text => "$question" },
+        answers  => \@normalized,
+    );
+
+    if (defined $poll->{duration}) {
+        my $duration = $poll->{duration};
+        die "poll duration must be an integer between 1 and $MAX_POLL_DURATION\n"
+            unless !ref $duration
+                && $duration =~ /^\d+\z/
+                && $duration >= 1
+                && $duration <= $MAX_POLL_DURATION;
+
+        $out{duration} = $duration + 0;
+    }
+
+    my $multiselect = exists $poll->{allow_multiselect}
+        ? $poll->{allow_multiselect}
+        : $poll->{multiselect};
+
+    $out{allow_multiselect} = $multiselect ? JSON::PP::true : JSON::PP::false
+        if defined $multiselect;
+
+    return \%out;
 }
 
 sub _messages_url {
