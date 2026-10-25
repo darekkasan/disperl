@@ -4,10 +4,13 @@ Perl 製の Discord Bot 用クライアント。
 
 - メッセージの送信・編集・削除・取得
 - embeds / 返信 / リアクション / 入力中表示
+- ファイル添付（multipart を自前で送信。追加依存なし）
 - ピン留め / 一括削除 / スレッド / DM / 招待 / Webhook
 - レート制限（バケット単位・429）対応と事前スロットリング
 - Gateway（WebSocket）でイベントを受信
 - ステータス（online / idle / dnd / invisible）とアクティビティの変更
+- ボタン / セレクトメニュー（`Disperl::Components`）とインタラクション応答
+- スラッシュコマンドの登録と受信
 
 ## 必要なもの
 
@@ -38,6 +41,7 @@ DISCORD_CHANNEL_ID=送信先チャンネル ID
 |---|---|
 | `DISCORD_TOKEN` | Bot トークン（必須） |
 | `DISCORD_CHANNEL_ID` | 送信先チャンネル ID（必須） |
+| `DISCORD_APPLICATION_ID` | アプリケーション ID（省略可。未設定なら Bot のユーザー ID を使う） |
 
 `.env` は UTF-8（BOM 付きでも可）・CRLF でも読めます。
 
@@ -98,6 +102,7 @@ $client->edit_message($channel_id, $message_id, $content, \%opts);
 | キー | 例 | 説明 |
 |---|---|---|
 | `embeds` | `[{ title => '...', description => '...' }]` | 埋め込み。`content` は省略可 |
+| `components` | `[ action_row(button(...)) ]` | ボタン / セレクトメニュー（下記） |
 | `reply_to` | `'123456789012345678'` | 返信先メッセージ ID |
 | `tts` | `1` | 読み上げメッセージ |
 | `allowed_mentions` | `{ parse => ['users'] }` | この呼び出しだけメンション設定を変える |
@@ -187,6 +192,68 @@ $client->execute_webhook($webhook_id, $webhook_token, '通知です',
 - `execute_webhook` は既定で `wait=1` を付けるので、送信したメッセージが返ります
   （`wait => 0` で `1`）
 
+### ファイル添付
+
+multipart/form-data を自前で組み立てるので、追加モジュールは要りません。
+
+```perl
+# ファイルを添付して送る
+my $message = $client->send_file($channel, 'memo.txt', content => 'ログです');
+
+# ファイル名を変える / 本文なしで添付だけ送る
+$client->send_file($channel, 'image.png', filename => 'renamed.png');
+
+# メモリ上のデータを添付する
+$client->send_file_data($channel, 'log.csv', "a,b\n1,2\n", content => 'CSV');
+```
+
+| メソッド | 説明 |
+|---|---|
+| `send_file($channel_id, $path, %opts)` | ファイルを読んで添付。`content` / `embeds` / `reply_to` / `tts` / `components` / `allowed_mentions` が使える |
+| `send_file_data($channel_id, $filename, $bytes, %opts)` | バイト列をそのまま添付 |
+
+- `filename` で送信時のファイル名を上書きできます
+- `content_type` で MIME タイプを明示できます（省略時は拡張子から推定）
+- 本文（`content`）は省略できます（添付だけ送れます）
+- 1 リクエスト 1 ファイルです
+
+### ボタン・セレクトメニュー
+
+`Disperl::Components` でコンポーネントを組み立てます。
+
+```perl
+use Disperl::Components qw(action_row button string_select);
+
+$client->send_message($channel, '投票してください', {
+    components => [
+        action_row(
+            button(style => 'success', label => 'はい',   custom_id => 'poll:yes'),
+            button(style => 'danger',  label => 'いいえ', custom_id => 'poll:no'),
+        ),
+        action_row(
+            string_select(
+                custom_id   => 'pick',
+                placeholder => '選んでください',
+                options     => [
+                    { label => 'A', value => 'a' },
+                    { label => 'B', value => 'b', description => '説明' },
+                ],
+            ),
+        ),
+    ],
+});
+```
+
+| 関数 | 説明 |
+|---|---|
+| `action_row(@components)` | 1〜5 個のコンポーネントを 1 行にまとめる（`type => 1`） |
+| `button(%args)` | `style` / `label` / `custom_id` / `emoji` / `disabled`。リンクボタンは `style => 'link'` + `url` |
+| `string_select(%args)` | `options` が必須。`placeholder` / `min_values` / `max_values` / `disabled` |
+| `user_select` / `role_select` / `mentionable_select` / `channel_select` | それぞれのセレクト。`channel_select` は `channel_types` も指定可 |
+
+`style` は `primary` (1) / `secondary` (2) / `success` (3) / `danger` (4) / `link` (5) / `premium` (6)。
+数値でも指定できます。リンクボタンには `custom_id` ではなく `url` が必要です。
+
 ### レート制限
 
 Discord の制限は「バケット（`X-RateLimit-Bucket`）」＋「major parameter」単位です。
@@ -232,6 +299,9 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `intents` | `GUILDS \| GUILD_MESSAGES` (513) | 整数、または名前の配列 |
 | `on_event` | — | `sub { my ($type, $data, $raw) = @_ }` 全イベント |
 | `on_message` | — | `MESSAGE_CREATE` のときだけ呼ばれる |
+| `on_interaction` | — | `INTERACTION_CREATE` のときだけ呼ばれる（全 type） |
+| `on_command` | — | `INTERACTION_CREATE` の type 2（スラッシュコマンド）だけ |
+| `on_component` | — | `INTERACTION_CREATE` の type 3（ボタン / セレクト）だけ |
 | `on_ready` | — | `READY` のときだけ呼ばれる |
 | `on_error` | 未指定なら `warn` | 接続エラー・再接続の通知 |
 | `reconnect` | `1` | 自動再接続するか |
@@ -254,6 +324,8 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 - `stop()` でループを止められます
 - Heartbeat の ACK が返らない場合はゾンビ接続とみなして再接続します
 - 4004 / 4010〜4014（認証・Intent 系）は再接続しません
+- `$gw->application_id` で READY で受け取ったアプリケーション ID を参照できます
+  （インタラクション応答の編集に使います）
 
 ### ステータス（プレゼンス）
 
@@ -291,6 +363,85 @@ $gw->set_presence(activity => { type => 'custom', state => '作業中', emoji =>
 - `invisible` は他のユーザーからオフラインに見えます（Bot 自体は動作を続けます）
 - REST API では変更できません（Gateway の op 3 を使っています）
 
+### インタラクション（ボタン・スラッシュコマンド）
+
+インタラクションへの応答は Gateway 経由で完結します（公開 HTTP サーバーは不要）。
+ただし **3 秒以内**に応答する必要があります。時間がかかる処理は先に `defer_interaction` を呼びます。
+
+```perl
+my $gw = Disperl::Gateway->new(
+    token          => $ENV{DISCORD_TOKEN},
+    intents        => [qw(GUILDS GUILD_MESSAGES)],
+    on_command     => sub {
+        my $i = shift;                       # INTERACTION_CREATE の d
+        my $client = Disperl::Client->new(token => $ENV{DISCORD_TOKEN});
+
+        if ($i->{data}{name} eq 'ping') {
+            $client->reply_interaction($i->{id}, $i->{token}, 'pong',
+                ephemeral => 1);             # 実行者にだけ見える
+        }
+    },
+    on_component   => sub {
+        my $i = shift;
+        my $client = Disperl::Client->new(token => $ENV{DISCORD_TOKEN});
+
+        # 押されたボタンの custom_id は $i->{data}{custom_id}
+        $client->update_interaction_message(
+            $i->{id}, $i->{token}, '押されました',
+        );
+    },
+);
+
+$gw->run;
+```
+
+| メソッド | type | 説明 |
+|---|---|---|
+| `reply_interaction($id, $token, $content, %opts)` | 4 | その場で返信。`ephemeral => 1` で本人だけに表示 |
+| `defer_interaction($id, $token, %opts)` | 5 | 「考え中...」を表示。あとで編集する（`ephemeral` 可） |
+| `defer_interaction($id, $token, update => 1)` | 6 | コンポーネント付きメッセージの更新を遅延 |
+| `update_interaction_message($id, $token, $content, %opts)` | 7 | ボタンが付いたメッセージをその場で書き換える |
+| `edit_interaction_response($app_id, $token, $content, %opts)` | — | defer した応答を後から編集する |
+| `interaction_callback($id, $token, $type, $data)` | — | 低レベル。`$type` は数値か `reply` / `deferred` / `deferred_update` / `update` |
+
+- インタラクションの応答 API は認証ヘッダを付けません（ID + トークンで認証）
+- `%opts` は `send_message` と同じ（`embeds` / `components` / `allowed_mentions`）
+- `defer_interaction` のあとは `edit_interaction_response($gw->application_id, $token, ...)`
+
+### スラッシュコマンドの登録
+
+```perl
+use JSON::PP;
+
+my $commands = [
+    { name => 'ping', description => 'pong を返します' },
+    {
+        name        => 'echo',
+        description => '本文をそのまま返します',
+        options     => [{
+            type        => 3,                # 3 = 文字列
+            name        => 'text',
+            description => '返す本文',
+            required    => JSON::PP::true,
+        }],
+    },
+];
+
+# ギルド限定（即時反映。テスト向き）
+$client->register_guild_commands($app_id, $guild_id, $commands);
+
+# グローバル（全サーバー。反映に最大 1 時間）
+$client->register_global_commands($app_id, $commands);
+
+my $registered = $client->get_guild_commands($app_id, $guild_id);
+$client->delete_guild_command($app_id, $guild_id, $command_id);
+```
+
+- アプリケーション ID は Bot のユーザー ID と同じです（`$client->get_current_user->{id}`）
+- 登録は `PUT`（配列を丸ごと置き換え）です。既存のコマンドは消えるので注意してください
+- `get_global_commands` / `delete_global_command` も同じ形です
+- `name` と `description` は必須です
+
 ## 動作確認（CLI）
 
 `test.pl` はそのまま使える小さな CLI です（`.env` を読みます）。
@@ -316,10 +467,23 @@ perl test.pl channels              # チャンネル一覧（現在のギルド�
 perl test.pl invite                # 招待リンク（24 時間）
 perl test.pl user <ユーザーID>      # ユーザー情報
 perl test.pl webhook <ID> <トークン> "本文"
-perl test.pl watch                # Gateway で受信し !ping / !echo / !status / !activity / !help に応答
+perl test.pl upload <ファイル> "本文" # ファイルを添付して送る
+perl test.pl poll "質問"            # ボタン付きの投票を作る
+perl test.pl commands              # /ping /echo /poll をギルドに登録
+perl test.pl commands --list       # 登録済みコマンドの一覧
+perl test.pl commands --global     # グローバルに登録（反映に最大 1 時間）
+perl test.pl watch                # Gateway で受信し !ping / !echo / !poll / !status / !activity / !help に応答
 perl test.pl watch --status idle --activity "待機中"
 perl test.pl watch --status invisible   # オフライン表示
 ```
+
+`commands` のオプション:
+
+| オプション | 説明 |
+|---|---|
+| `--list` | 登録せず一覧を表示する |
+| `--global` | グローバルに登録する（既定は現在のギルド） |
+| `--guild <ID>` / `--guild=<ID>` | 対象ギルドを指定する |
 
 `watch` のオプション:
 
@@ -335,6 +499,10 @@ perl test.pl watch --status invisible   # オフライン表示
 - `send` は引数が無いとき標準入力（UTF-8）を読みます
 - 送信結果の ID をそのまま `edit` / `react` / `delete` に渡せます
 - `watch` は `MESSAGE_CONTENT`（Privileged Intent）が必要です
+- `poll` は投票メッセージを直接投稿します。`watch` 中の `!poll` は
+  他のユーザーが送ったときだけ反応します（Bot 自身のメッセージは無視するため）
+- `commands` はギルド登録が既定です。グローバル登録は反映に時間がかかります
+- `watch` 中はボタンとスラッシュコマンド（`/ping` `/echo` `/poll`）にも応答します
 - Windows のコンソールは cp932 のことが多いため、出力は実際のコードページに合わせます。
   `DISPERL_CONSOLE_ENCODING=UTF-8` で上書きできます（引数は `DISPERL_ARG_ENCODING`、既定 cp932）
 
@@ -363,6 +531,9 @@ prove -l t
 | `t/11_presence.t` | ステータス / アクティビティ / Identify への反映 / 更新間隔 |
 | `t/12_rest_extras.t` | ピン / 一括削除 / リアクション一覧 / スレッド / DM / ギルド / 招待 / Webhook |
 | `t/13_rate_bucket.t` | バケット単位のレート制限 / major parameter / グローバル 429 |
+| `t/14_files.t` | ファイル添付（multipart / MIME / ファイル名 / 入力検証） |
+| `t/15_components.t` | ボタン / セレクトメニュー / action_row の組み立て |
+| `t/16_interactions.t` | インタラクション応答 / コマンド登録 / Gateway の type 2・3 配送 |
 
 Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパスを解決）。
 

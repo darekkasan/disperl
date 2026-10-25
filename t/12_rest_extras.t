@@ -240,7 +240,7 @@ subtest 'execute_webhook' => sub {
     like $@, qr/webhook token is required/, 'token is required';
 
     eval { $client->execute_webhook('123', 'tok') };
-    like $@, qr/content or embeds is required/, 'content is required';
+    like $@, qr/content, embeds or components is required/, 'content is required';
 };
 
 done_testing;

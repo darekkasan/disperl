@@ -177,14 +177,14 @@ subtest 'embeds-only message' => sub {
     is $body->{embeds}[0]{title}, 'only', 'embed present';
 };
 
-subtest 'content or embeds is required' => sub {
+subtest 'content, embeds or components is required' => sub {
     my ($client) = client_with();
 
     eval { $client->send_message('999', undef) };
-    like $@, qr/content or embeds is required/, 'send dies';
+    like $@, qr/content, embeds or components is required/, 'send dies';
 
     eval { $client->send_message('999', '') };
-    like $@, qr/content or embeds is required/, 'empty content dies';
+    like $@, qr/content, embeds or components is required/, 'empty content dies';
 };
 
 subtest 'allowed_mentions defaults to no pings' => sub {

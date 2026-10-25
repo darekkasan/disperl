@@ -68,6 +68,9 @@ sub new {
         url            => $args{url} // 'wss://gateway.discord.gg/?v=10&encoding=json',
         on_event       => $args{on_event},
         on_message     => $args{on_message},
+        on_interaction => $args{on_interaction},
+        on_command     => $args{on_command},
+        on_component   => $args{on_component},
         on_ready       => $args{on_ready},
         on_error       => $args{on_error},
         reconnect      => exists $args{reconnect} ? $args{reconnect} : 1,
@@ -85,6 +88,7 @@ sub new {
 
         seq             => undef,
         session_id      => undef,
+        application_id  => undef,
         resume_url      => undef,
         resume_next     => 1,
         awaiting_ack    => 0,
@@ -98,6 +102,7 @@ sub new {
 
 sub intents { $_[0]->{intents} }
 sub session_id { $_[0]->{session_id} }
+sub application_id { $_[0]->{application_id} }
 sub user { $_[0]->{user} }
 sub is_running { $_[0]->{running} }
 
@@ -404,6 +409,8 @@ sub _handle {
             $self->{session_id}  = $data->{session_id};
             $self->{resume_url}  = $data->{resume_gateway_url};
             $self->{user}        = $data->{user};
+            $self->{application_id} = $data->{application}{id}
+                if ref $data->{application} eq 'HASH';
             $self->{resume_next} = 1;
             $self->{ready}       = 1;
             # Identify 後に set_presence されていれば、ここで反映する
@@ -415,6 +422,15 @@ sub _handle {
             $self->_apply_presence;
         } elsif ($type eq 'MESSAGE_CREATE') {
             $self->{on_message}->($data) if $self->{on_message};
+        } elsif ($type eq 'INTERACTION_CREATE') {
+            $self->{on_interaction}->($data) if $self->{on_interaction};
+
+            # type 2 = スラッシュコマンド、type 3 = ボタン / セレクト
+            my $kind = $data->{type} // 0;
+            $self->{on_command}->($data)
+                if $kind == 2 && $self->{on_command};
+            $self->{on_component}->($data)
+                if $kind == 3 && $self->{on_component};
         }
 
         $self->{on_event}->($type, $data, $msg) if $self->{on_event};

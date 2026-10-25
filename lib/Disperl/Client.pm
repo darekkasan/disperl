@@ -491,6 +491,286 @@ sub execute_webhook {
     return $self->_finish($res, $wait ? 'hash' : 'none');
 }
 
+# ---------------------------------------------------------------- files
+
+my %MIME = (
+    txt  => 'text/plain',
+    md   => 'text/markdown',
+    json => 'application/json',
+    csv  => 'text/csv',
+    html => 'text/html',
+    xml  => 'application/xml',
+    png  => 'image/png',
+    jpg  => 'image/jpeg',
+    jpeg => 'image/jpeg',
+    gif  => 'image/gif',
+    webp => 'image/webp',
+    svg  => 'image/svg+xml',
+    pdf  => 'application/pdf',
+    zip  => 'application/zip',
+    mp3  => 'audio/mpeg',
+    ogg  => 'audio/ogg',
+    wav  => 'audio/wav',
+    mp4  => 'video/mp4',
+    webm => 'video/webm',
+);
+
+# ファイルを添付して送る（multipart/form-data を自前で組む）。
+#   send_file($channel_id, 'memo.txt', content => '本文', reply_to => $id)
+#   send_file($channel_id, 'a.png', filename => 'renamed.png')
+sub send_file {
+    my ($self, $channel_id, $path, %opts) = @_;
+
+    die "file path is required\n" unless defined $path && length $path;
+    die "file not found: $path\n"  unless -f $path;
+
+    open my $fh, '<:raw', $path or die "cannot read $path: $!\n";
+    local $/;
+    my $bytes = <$fh>;
+    close $fh;
+    $bytes = '' unless defined $bytes;
+
+    my $filename = $opts{filename} // _basename($path);
+
+    return $self->_upload($channel_id, $filename, $bytes, \%opts);
+}
+
+# メモリ上のデータを添付して送る。
+#   send_file_data($channel_id, 'log.txt', $bytes, content => '本文')
+sub send_file_data {
+    my ($self, $channel_id, $filename, $bytes, %opts) = @_;
+
+    die "filename is required\n"
+        unless defined $filename && length $filename;
+    die "file data is required\n" unless defined $bytes;
+
+    return $self->_upload($channel_id, $filename, $bytes, \%opts);
+}
+
+sub _upload {
+    my ($self, $channel_id, $filename, $bytes, $opts) = @_;
+
+    my $boundary = '----disperl'
+        . join('', map { sprintf '%02x', int rand 256 } 1 .. 16);
+
+    my %payload_opts = (%$opts, allow_empty => 1);
+    my $json = $self->_message_payload($opts->{content}, \%payload_opts);
+
+    my $type = $opts->{content_type} // _content_type($filename);
+
+    # ヘッダを壊す文字だけ落とす
+    (my $safe = $filename) =~ s/["\r\n]/_/g;
+
+    my $body = "--$boundary\r\n"
+        . "Content-Disposition: form-data; name=\"payload_json\"\r\n"
+        . "Content-Type: application/json\r\n\r\n"
+        . $JSON->encode($json) . "\r\n"
+        . "--$boundary\r\n"
+        . "Content-Disposition: form-data; name=\"files[0]\"; filename=\"$safe\"\r\n"
+        . "Content-Type: $type\r\n\r\n"
+        . $bytes . "\r\n"
+        . "--$boundary--\r\n";
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        $self->_messages_url($channel_id),
+        undef,
+        {
+            raw          => $body,
+            content_type => "multipart/form-data; boundary=$boundary",
+        },
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub _basename {
+    my ($path) = @_;
+    $path =~ s{.*[\\/]}{}s;
+    return length $path ? $path : 'file';
+}
+
+sub _content_type {
+    my ($name) = @_;
+    return 'application/octet-stream' unless $name =~ /\.([A-Za-z0-9]+)\z/;
+    return $MIME{lc $1} // 'application/octet-stream';
+}
+
+# ---------------------------------------------------------------- interactions
+
+my %INTERACTION_RESPONSE = (
+    reply           => 4,
+    deferred        => 5,
+    deferred_update => 6,
+    update          => 7,
+);
+
+# インタラクションに応答する（3 秒以内に呼ぶ）。
+#   interaction_callback($id, $token, 4, { content => 'pong' })
+# type: 4 = メッセージ, 5 = 後で返信, 6 = 後で更新, 7 = メッセージを更新
+sub interaction_callback {
+    my ($self, $interaction_id, $token, $type, $data) = @_;
+
+    die "interaction id is required\n"
+        unless defined $interaction_id && length $interaction_id;
+    die "interaction token is required\n"
+        unless defined $token && length $token;
+
+    if (defined $type && !ref $type && $type =~ /\D/) {
+        $type = $INTERACTION_RESPONSE{lc $type};
+    }
+    die "Unknown interaction response type: " . ($type // 'undef') . "\n"
+        unless defined $type && $type =~ /^\d+\z/;
+
+    my %payload = (type => $type + 0);
+    $payload{data} = $data if defined $data;
+
+    my $url = "$API_BASE/interactions/$interaction_id/"
+        . _uri_escape($token) . '/callback';
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('POST', $url, \%payload, { auth => 0 });
+    return $self->_finish($res, 'none');
+}
+
+# インタラクションにその場で返信する（type 4）。
+#   reply_interaction($id, $token, 'pong', ephemeral => 1)
+#   reply_interaction($id, $token, undef, embeds => [...], components => [...])
+sub reply_interaction {
+    my ($self, $interaction_id, $token, $content, %opts) = @_;
+
+    my $data = $self->_message_payload($content, \%opts);
+    $data->{flags} = $opts{ephemeral} ? 64 : 0 if exists $opts{ephemeral};
+
+    return $self->interaction_callback($interaction_id, $token, 4, $data);
+}
+
+# ボタンなどが付いたメッセージをその場で書き換える（type 7）。
+sub update_interaction_message {
+    my ($self, $interaction_id, $token, $content, %opts) = @_;
+
+    my $data = $self->_message_payload($content, \%opts);
+    $data->{flags} = $opts{ephemeral} ? 64 : 0 if exists $opts{ephemeral};
+
+    return $self->interaction_callback($interaction_id, $token, 7, $data);
+}
+
+# 「考え中...」を出す（type 5）。あとで edit_interaction_response で編集する。
+#   defer_interaction($id, $token, ephemeral => 1)
+#   defer_interaction($id, $token, update => 1)
+sub defer_interaction {
+    my ($self, $interaction_id, $token, %opts) = @_;
+
+    my $type = $opts{update} ? 6 : 5;
+    my $data = (!$opts{update} && $opts{ephemeral})
+        ? { flags => 64 }
+        : undef;
+
+    return $self->interaction_callback($interaction_id, $token, $type, $data);
+}
+
+# 遅延した応答（type 5）を編集する。
+#   edit_interaction_response($app_id, $token, '結果です')
+sub edit_interaction_response {
+    my ($self, $application_id, $token, $content, %opts) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "interaction token is required\n"
+        unless defined $token && length $token;
+
+    my $payload = $self->_message_payload($content, \%opts);
+    my $url = "$API_BASE/webhooks/$application_id/"
+        . _uri_escape($token) . '/messages/@original';
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('PATCH', $url, $payload, { auth => 0 });
+    return $self->_finish($res, 'hash');
+}
+
+# ---------------------------------------------------------------- application commands
+
+# グローバル（全サーバー）コマンドを登録する。反映に最大 1 時間かかる。
+sub register_global_commands {
+    my ($self, $application_id, $commands) = @_;
+
+    return $self->_register_commands(
+        "$API_BASE/applications/$application_id/commands", $commands,
+    );
+}
+
+# ギルド限定のコマンドを登録する（即時反映。テスト向き）。
+sub register_guild_commands {
+    my ($self, $application_id, $guild_id, $commands) = @_;
+
+    return $self->_register_commands(
+        "$API_BASE/applications/$application_id/guilds/$guild_id/commands",
+        $commands,
+    );
+}
+
+sub get_global_commands {
+    my ($self, $application_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/applications/$application_id/commands",
+    );
+    return $self->_finish($res, 'array');
+}
+
+sub get_guild_commands {
+    my ($self, $application_id, $guild_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET',
+        "$API_BASE/applications/$application_id/guilds/$guild_id/commands",
+    );
+    return $self->_finish($res, 'array');
+}
+
+sub delete_global_command {
+    my ($self, $application_id, $command_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/applications/$application_id/commands/$command_id",
+    );
+    return $self->_finish($res, 'none');
+}
+
+sub delete_guild_command {
+    my ($self, $application_id, $guild_id, $command_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/applications/$application_id/guilds/$guild_id/commands/$command_id",
+    );
+    return $self->_finish($res, 'none');
+}
+
+sub _register_commands {
+    my ($self, $url, $commands) = @_;
+
+    die "commands must be an array reference\n"
+        unless ref $commands eq 'ARRAY';
+    for my $command (@$commands) {
+        die "each command must be a hash reference\n"
+            unless ref $command eq 'HASH';
+        die "command name is required\n"
+            unless defined $command->{name} && length $command->{name};
+        die "command description is required\n"
+            unless defined $command->{description};
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('PUT', $url, $commands);
+    return $self->_finish($res, 'array');
+}
+
 # ---------------------------------------------------------------- internals
 
 # 送信・編集で共通の JSON ボディを作る。
@@ -508,6 +788,8 @@ sub _message_payload {
 
     $payload{embeds} = $opts->{embeds} if $opts->{embeds};
 
+    $payload{components} = $opts->{components} if $opts->{components};
+
     if (exists $opts->{tts}) {
         $payload{tts} = $opts->{tts} ? JSON::PP::true : JSON::PP::false;
     }
@@ -521,8 +803,11 @@ sub _message_payload {
         : $self->{allowed_mentions};
     $payload{allowed_mentions} = $allowed if defined $allowed;
 
-    die "content or embeds is required\n"
-        unless (defined $payload{content} && length $payload{content}) || $payload{embeds};
+    die "content, embeds or components is required\n"
+        unless (defined $payload{content} && length $payload{content})
+            || $payload{embeds}
+            || $payload{components}
+            || $opts->{allow_empty};
 
     return \%payload;
 }
@@ -553,7 +838,12 @@ sub _request {
     my %args = (headers => {});
     $args{headers}{'Authorization'} = "Bot $self->{token}"
         unless exists $opts->{auth} && !$opts->{auth};
-    if (defined $payload) {
+
+    if (defined $opts->{raw}) {
+        $args{content} = $opts->{raw};
+        $args{headers}{'Content-Type'} = $opts->{content_type}
+            // 'application/octet-stream';
+    } elsif (defined $payload) {
         $args{headers}{'Content-Type'} = 'application/json';
         $args{content} = $JSON->encode($payload);
     }

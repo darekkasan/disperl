@@ -107,14 +107,14 @@ subtest 'retries apply to edit and delete' => sub {
     is scalar @waits, 2, 'slept twice';
 };
 
-subtest 'content or embeds is required for send and edit' => sub {
+subtest 'content, embeds or components is required for send and edit' => sub {
     my $client = Disperl::Client->new(token => 'dummy', ua => FakeUA->new);
 
     eval { $client->send_message('999') };
-    like $@, qr/content or embeds is required/, 'send_message dies';
+    like $@, qr/content, embeds or components is required/, 'send_message dies';
 
     eval { $client->edit_message('999', '42') };
-    like $@, qr/content or embeds is required/, 'edit_message dies';
+    like $@, qr/content, embeds or components is required/, 'edit_message dies';
 };
 
 subtest 'HTTP methods' => sub {

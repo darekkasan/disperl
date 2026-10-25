@@ -16,6 +16,7 @@ use Time::HiRes qw(time);
 use JSON::PP;
 use Disperl::Config qw(load_dotenv);
 use Disperl::Client;
+use Disperl::Components qw(action_row button);
 use Disperl::Gateway;
 
 load_dotenv("$FindBin::Bin/.env");
@@ -206,7 +207,11 @@ disperl 動作確認 CLI
   perl test.pl invite                 招待リンクを作る（24 時間有効）
   perl test.pl user <ユーザーID>       ユーザー情報を表示する
   perl test.pl webhook <ID> <トークン> <本文>  Webhook で送信する
-  perl test.pl watch [オプション]      Gateway に接続し !ping / !echo / !status / !activity / !help に応答する
+  perl test.pl upload <ファイル> [本文]  ファイルを添付して送る
+  perl test.pl poll <質問>            ボタン付きの投票を作る
+  perl test.pl commands [--list] [--global] [--guild ID]
+                                      /ping /echo /poll を登録する（既定は現在のギルド）
+  perl test.pl watch [オプション]      Gateway に接続し !ping / !echo / !poll / !status / !activity / !help に応答する
       --status <状態>                  online / idle / dnd / invisible（オフライン表示）
       --activity <名前>                アクティビティ
       --type <種類>                    playing / streaming / listening / watching / competing / custom
@@ -219,6 +224,8 @@ disperl 動作確認 CLI
   perl test.pl react 123456789012345678 check
   perl test.pl pins
   perl test.pl channels
+  perl test.pl upload memo.txt "ログです"
+  perl test.pl commands
   perl test.pl thread --private "相談"
   perl test.pl watch --status idle --activity "待機中"
   perl test.pl watch --status invisible
@@ -577,7 +584,185 @@ sub cmd_webhook {
     return 0;
 }
 
+# ---------------------------------------------------------------- 添付 / コマンド登録
+
+sub cmd_upload {
+    my ($path, @words) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl upload <ファイル> [本文]')
+        unless defined $path && length $path;
+
+    my $text = join ' ', @words;
+
+    my $message = client()->send_file(
+        channel_id(),
+        $path,
+        (length $text ? (content => $text) : ()),
+    ) or _api_fail('ファイル送信');
+
+    out "ファイルを送信しました: id=$message->{id}\n";
+    return 0;
+}
+
+sub _application_id {
+    my $id = $ENV{DISCORD_APPLICATION_ID};
+    return $id if defined $id && length $id;
+
+    # Bot のユーザー ID はアプリケーション ID と同じ
+    my $me = client()->get_current_user() or _api_fail('アプリケーション ID の取得');
+    return $me->{id};
+}
+
+sub _current_guild_id {
+    my $ch = client()->get_channel(channel_id()) or _api_fail('チャンネル確認');
+    my $guild_id = $ch->{guild_id};
+
+    _fatal('このチャンネルはギルドに属していません（--guild を指定してください）')
+        unless defined $guild_id && length $guild_id;
+
+    return $guild_id;
+}
+
+sub _command_definitions {
+    return (
+        { name => 'ping', description => 'pong を返します' },
+        {
+            name        => 'echo',
+            description => '本文をそのまま返します',
+            options     => [{
+                type        => 3,
+                name        => 'text',
+                description => '返す本文',
+                required    => JSON::PP::true,
+            }],
+        },
+        {
+            name        => 'poll',
+            description => 'ボタン付きの投票を作ります',
+            options     => [{
+                type        => 3,
+                name        => 'question',
+                description => '質問',
+                required    => JSON::PP::true,
+            }],
+        },
+    );
+}
+
+sub cmd_commands {
+    my (@args) = map { _decode_arg($_) } @_;
+
+    my ($global, $list, $guild_id);
+    while (@args) {
+        my $arg = shift @args;
+
+        if ($arg eq '--global') {
+            $global = 1;
+        } elsif ($arg eq '--list') {
+            $list = 1;
+        } elsif ($arg =~ /^--guild=(.+)\z/) {
+            $guild_id = $1;
+        } elsif ($arg eq '--guild') {
+            _fatal('--guild には値が必要です') unless @args;
+            $guild_id = shift @args;
+        } else {
+            _fatal("不明なオプション: $arg");
+        }
+    }
+
+    my $app_id = _application_id();
+    $guild_id //= _current_guild_id() unless $global;
+
+    if ($list) {
+        my $commands = $global
+            ? client()->get_global_commands($app_id)
+            : client()->get_guild_commands($app_id, $guild_id);
+        _api_fail('コマンド一覧の取得') unless defined $commands;
+
+        if (!@$commands) {
+            out "登録されたコマンドはありません\n";
+            return 0;
+        }
+
+        for my $command (@$commands) {
+            out sprintf "/%s  %s (id: %s)\n",
+                $command->{name},
+                $command->{description} // '',
+                $command->{id} // '?';
+        }
+        return 0;
+    }
+
+    my @commands = _command_definitions();
+    my $registered = $global
+        ? client()->register_global_commands($app_id, \@commands)
+        : client()->register_guild_commands($app_id, $guild_id, \@commands);
+    _api_fail('コマンド登録') unless defined $registered;
+
+    out sprintf "%d 個のコマンドを%s に登録しました\n",
+        scalar @$registered,
+        $global ? 'グローバル' : "ギルド $guild_id";
+    out "  /$_->{name}\n" for @$registered;
+    out "グローバルコマンドは反映に最大 1 時間かかります\n" if $global;
+
+    return 0;
+}
+
 # ---------------------------------------------------------------- Gateway
+
+# ---------------------------------------------------------------- 投票（ボタン）
+
+my %POLLS;
+
+sub _new_poll {
+    my ($question) = @_;
+
+    my $id = sprintf '%d%03d', time, int(rand 1000);
+    $POLLS{$id} = { question => $question, yes => 0, no => 0 };
+
+    return $id;
+}
+
+sub _poll_payload {
+    my ($id) = @_;
+
+    my $poll = $POLLS{$id} or return undef;
+    my $total = $poll->{yes} + $poll->{no};
+
+    return {
+        embeds => [{
+            title       => '投票',
+            description => $poll->{question},
+            color       => 0x5865F2,
+            fields      => [
+                { name => 'はい',   value => "$poll->{yes} 票", inline => JSON::PP::true },
+                { name => 'いいえ', value => "$poll->{no} 票",  inline => JSON::PP::true },
+            ],
+            footer => { text => "合計 $total 票" },
+        }],
+        components => [
+            action_row(
+                button(style => 'success', label => 'はい',   custom_id => "poll:yes:$id"),
+                button(style => 'danger',  label => 'いいえ', custom_id => "poll:no:$id"),
+            ),
+        ],
+    };
+}
+
+sub cmd_poll {
+    my (@words) = map { _decode_arg($_) } @_;
+
+    my $question = join ' ', @words;
+    _fatal('使い方: perl test.pl poll <質問>') unless length $question;
+
+    my $poll_id = _new_poll($question);
+    my $message = client()->send_message(
+        channel_id(), undef, _poll_payload($poll_id),
+    ) or _api_fail('投票の送信');
+
+    out "投票を作成しました: id=$message->{id} (poll=$poll_id)\n";
+    return 0;
+}
 
 sub cmd_watch {
     my (@args) = map { _decode_arg($_) } @_;
@@ -617,6 +802,16 @@ sub cmd_watch {
                     my $error = $@;
                     $error =~ s/\s+\z//;
                     out "  -> コマンド処理エラー: $error\n";
+                };
+        },
+        on_interaction => sub {
+            my ($interaction) = @_;
+
+            eval { _handle_interaction($api, $gateway, $interaction); 1 }
+                or do {
+                    my $error = $@;
+                    $error =~ s/\s+\z//;
+                    out "  -> インタラクション処理エラー: $error\n";
                 };
         },
         on_error => sub {
@@ -682,6 +877,76 @@ sub _parse_watch_options {
     return %opt;
 }
 
+sub _handle_interaction {
+    my ($api, $gateway, $interaction) = @_;
+
+    my $type  = $interaction->{type} // 0;
+    my $id    = $interaction->{id};
+    my $token = $interaction->{token};
+
+    # ボタン / セレクトメニュー
+    if ($type == 3) {
+        my $custom = $interaction->{data}{custom_id} // '';
+        out "  <- ボタン: $custom\n";
+
+        if ($custom =~ /^poll:(yes|no):(\d+)\z/) {
+            my ($choice, $poll_id) = ($1, $2);
+            my $poll = $POLLS{$poll_id};
+
+            if (!$poll) {
+                $api->reply_interaction(
+                    $id, $token, 'この投票は終了しました', ephemeral => 1,
+                );
+                return;
+            }
+
+            $poll->{$choice}++;
+
+            $api->update_interaction_message(
+                $id, $token, undef, %{ _poll_payload($poll_id) },
+            );
+
+            out sprintf "  -> 投票: %s (はい=%d, いいえ=%d)\n",
+                $choice, $poll->{yes}, $poll->{no};
+            return;
+        }
+
+        $api->reply_interaction(
+            $id, $token, "未対応のボタンです: $custom", ephemeral => 1,
+        );
+        return;
+    }
+
+    # スラッシュコマンド
+    if ($type == 2) {
+        my $name = $interaction->{data}{name} // '';
+        out "  <- コマンド: /$name\n";
+
+        my %option = map { $_->{name} => $_->{value} }
+            @{ $interaction->{data}{options} || [] };
+
+        if ($name eq 'ping') {
+            $api->reply_interaction($id, $token, 'pong', ephemeral => 1);
+            return;
+        }
+
+        if ($name eq 'echo') {
+            $api->reply_interaction($id, $token, $option{text} // '(空)');
+            return;
+        }
+
+        if ($name eq 'poll') {
+            my $poll_id = _new_poll($option{question} // '投票');
+            $api->reply_interaction($id, $token, undef, %{ _poll_payload($poll_id) });
+            return;
+        }
+
+        $api->reply_interaction(
+            $id, $token, "未対応のコマンドです: /$name", ephemeral => 1,
+        );
+    }
+}
+
 sub _handle_command {
     my ($api, $gateway, $message, $content) = @_;
 
@@ -707,6 +972,24 @@ sub _handle_command {
         out _reply($api, $channel, $reply, $body)
             ? "  -> echo を返信しました\n"
             : "  -> echo に失敗しました\n";
+        return;
+    }
+
+    if ($content =~ /^!poll\s+(.+)/is) {
+        my $question = $1;
+        $question =~ s/\s+\z//;
+
+        my $poll_id = _new_poll($question);
+        my $payload = _poll_payload($poll_id);
+
+        my $sent = $api->send_message($channel, undef, {
+            %$payload,
+            reply_to => $reply,
+        });
+
+        out $sent
+            ? "  -> 投票を作成しました (poll=$poll_id)\n"
+            : "  -> 投票の送信に失敗しました\n";
         return;
     }
 
@@ -793,6 +1076,7 @@ sub _help_embed {
         fields      => [
             { name => '!ping',            value => 'pong を返します',                     inline => JSON::PP::true },
             { name => '!echo <本文>',      value => '本文をそのまま返します',               inline => JSON::PP::true },
+            { name => '!poll <質問>',      value => 'ボタン付きの投票を作ります',           inline => JSON::PP::true },
             { name => '!help',            value => 'このヘルプを表示します',               inline => JSON::PP::true },
             { name => '!status [状態]',    value => 'online / idle / dnd / invisible（オフライン表示）', inline => JSON::PP::false },
             { name => '!activity <本文>',  value => 'アクティビティを変更します（引数なしで解除）', inline => JSON::PP::false },
@@ -824,6 +1108,9 @@ my %COMMANDS = (
     invite    => \&cmd_invite,
     user      => \&cmd_user,
     webhook   => \&cmd_webhook,
+    upload    => \&cmd_upload,
+    commands  => \&cmd_commands,
+    poll      => \&cmd_poll,
     watch     => \&cmd_watch,
     help      => \&cmd_help,
 );
