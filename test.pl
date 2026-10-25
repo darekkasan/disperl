@@ -1,18 +1,41 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
-use lib "$ENV{HOME}/disperl/lib";
+use FindBin;
+use lib "$FindBin::Bin/lib";
+use Disperl::Config qw(load_dotenv);
 use Disperl::Client;
 
-# 設定ファイルを読み込む
-require "$ENV{HOME}/disperl/config.pl";
-our ($TOKEN, $CHANNEL_ID);
+# .env を読み込む（すでに設定済みの環境変数が優先される）
+load_dotenv("$FindBin::Bin/.env");
 
-my $client = Disperl::Client->new(token => $TOKEN);
-use Data::Dumper; print Dumper($client);
+my $token   = $ENV{DISCORD_TOKEN}      // die "DISCORD_TOKEN is not set (copy .env.example to .env)\n";
+my $channel = $ENV{DISCORD_CHANNEL_ID} // die "DISCORD_CHANNEL_ID is not set (copy .env.example to .env)\n";
+
+my $client = Disperl::Client->new(token => $token);
+
+# 送信前にトークンとチャンネルを確認する
+my $me = $client->get_current_user;
+if (!$me) {
+    my $err = $client->last_error // {};
+    die "Token check failed: $err->{status} $err->{message}\n";
+}
+print "Token OK (bot user id: $me->{id})\n";
+
+my $info = $client->get_channel($channel);
+if (!$info) {
+    my $err = $client->last_error // {};
+    die "Channel check failed: $err->{status} $err->{message}\n";
+}
+print "Channel OK (type: $info->{type})\n";
+
 print "Sending message...\n";
-if ($client->send_message($CHANNEL_ID, "Hello from disperl on kamaboko!")) {
-    print "Message sent successfully!\n";
+my $message = $client->send_message($channel, "Hello from disperl on kamaboko!");
+
+if ($message) {
+    print "Message sent successfully! (id: $message->{id})\n";
 } else {
-    print "Failed to send message.\n";
+    my $err = $client->last_error // {};
+    warn "Failed to send message: $err->{status} $err->{message}\n";
+    exit 1;
 }

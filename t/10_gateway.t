@@ -1,0 +1,281 @@
+use strict;
+use warnings;
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+use Test::More;
+use JSON::PP;
+use Disperl::Gateway;
+
+my $json = JSON::PP->new->utf8(1);
+
+sub frame {
+    my ($msg) = @_;
+    return { opcode => 1, payload => $json->encode($msg) };
+}
+
+# WebSocket の代わりに、あらかじめ積んだフレームを返す偽クライアント
+package FakeWS;
+
+our $INSTANCE;
+our $LAST_URL;
+
+sub new {
+    my ($class, %args) = @_;
+    return bless {
+        sent   => [],
+        queue  => $args{queue} || [],
+        closed => 0,
+    }, $class;
+}
+
+sub connect {
+    my ($class, %args) = @_;
+    $LAST_URL = $args{url};
+    return $INSTANCE;
+}
+
+sub send_text {
+    my ($self, $text) = @_;
+    push @{ $self->{sent} }, $text;
+    return 1;
+}
+
+sub recv_frame {
+    my ($self, %args) = @_;
+    return shift @{ $self->{queue} };
+}
+
+sub close {
+    my ($self, $code) = @_;
+    $self->{closed} = $code // 1;
+    return 1;
+}
+
+sub sent { $_[0]->{sent} }
+
+package main;
+
+subtest 'token is required' => sub {
+    eval { Disperl::Gateway->new() };
+    like $@, qr/Bot token is required/, 'dies without token';
+};
+
+subtest 'intents' => sub {
+    my $messages_bits = Disperl::Gateway->intent_bits(qw(GUILDS GUILD_MESSAGES));
+    is $messages_bits, 513, 'GUILDS | GUILD_MESSAGES';
+
+    my $content_bits = Disperl::Gateway->intent_bits(qw(GUILDS MESSAGE_CONTENT));
+    is $content_bits, 1 | 32768, 'MESSAGE_CONTENT bit';
+
+    eval { Disperl::Gateway->intent_bits('NOPE') };
+    like $@, qr/Unknown intent: NOPE/, 'unknown intent dies';
+
+    my $default = Disperl::Gateway->new(token => 't');
+    is $default->intents, 513, 'default intents';
+
+    my $custom = Disperl::Gateway->new(token => 't', intents => [qw(GUILDS MESSAGE_CONTENT)]);
+    is $custom->intents, 1 | 32768, 'array form';
+};
+
+subtest 'dispatch: READY and MESSAGE_CREATE' => sub {
+    my (@events, @messages);
+    my $ready;
+
+    my $gw = Disperl::Gateway->new(
+        token      => 't',
+        on_event   => sub { push @events, [@_] },
+        on_message => sub { push @messages, $_[0] },
+        on_ready   => sub { $ready = $_[0] },
+    );
+
+    $gw->_handle({
+        op => 0, t => 'READY', s => 1,
+        d  => {
+            session_id         => 'sess-1',
+            resume_gateway_url => 'wss://resume.example',
+            user               => { id => '9', username => 'disperl' },
+        },
+    });
+
+    is $gw->session_id, 'sess-1', 'session id stored';
+    is $gw->user->{username}, 'disperl', 'bot user stored';
+    is $ready->{session_id}, 'sess-1', 'on_ready called';
+
+    $gw->_handle({
+        op => 0, t => 'MESSAGE_CREATE', s => 2,
+        d  => { id => '42', content => 'hello', channel_id => '999' },
+    });
+
+    is scalar @messages, 1, 'on_message called';
+    is $messages[0]{content}, 'hello', 'message content';
+
+    is scalar @events, 2, 'on_event called for both';
+    is $events[1][0], 'MESSAGE_CREATE', 'event name';
+};
+
+subtest 'identify payload' => sub {
+    my $fake = FakeWS->new;
+    my $gw = Disperl::Gateway->new(token => 'secret', intents => [qw(GUILDS GUILD_MESSAGES)]);
+
+    $gw->_identify($fake);
+
+    my $msg = $json->decode($fake->sent->[0]);
+    is $msg->{op}, 2, 'op 2';
+    is $msg->{d}{token}, 'secret', 'token is raw (no "Bot " prefix)';
+    is $msg->{d}{intents}, 513, 'intents';
+    is $msg->{d}{properties}{browser}, 'disperl', 'properties';
+};
+
+subtest 'resume payload' => sub {
+    my $fake = FakeWS->new;
+    my $gw = Disperl::Gateway->new(token => 'secret');
+    $gw->{session_id} = 'sess-1';
+    $gw->{seq}        = 7;
+
+    $gw->_resume($fake);
+
+    my $msg = $json->decode($fake->sent->[0]);
+    is $msg->{op}, 6, 'op 6';
+    is $msg->{d}{session_id}, 'sess-1', 'session id';
+    is $msg->{d}{seq}, 7, 'sequence';
+};
+
+subtest 'control ops' => sub {
+    my $fake = FakeWS->new;
+    my $gw = Disperl::Gateway->new(token => 't');
+    $gw->{ws} = $fake;
+    $gw->{seq} = 3;
+
+    $gw->_handle({ op => 1 });
+    my $hb = $json->decode($fake->sent->[0]);
+    is $hb->{op}, 1, 'heartbeat sent';
+    is $hb->{d}, 3, 'heartbeat carries the sequence';
+    is $gw->{awaiting_ack}, 1, 'waiting for ACK';
+
+    $gw->_handle({ op => 11 });
+    is $gw->{awaiting_ack}, 0, 'ACK clears the flag';
+
+    is $gw->_handle({ op => 7 }), 'resume', 'op 7 asks for resume';
+    is $gw->_handle({ op => 9 }), 'invalid_session', 'op 9 asks for re-identify';
+};
+
+subtest 'run_once: hello, identify, ready, message, close' => sub {
+    my (@messages);
+    my $ready;
+
+    my $fake = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 60000 } }),
+        frame({
+            op => 0, t => 'READY', s => 1,
+            d  => {
+                session_id         => 'sess-1',
+                resume_gateway_url => 'wss://resume.example',
+                user               => { id => '9' },
+            },
+        }),
+        frame({ op => 0, t => 'MESSAGE_CREATE', s => 2, d => { content => 'hello' } }),
+        { opcode => 8, code => 1000, reason => 'bye' },
+    ]);
+    $FakeWS::INSTANCE = $fake;
+    $FakeWS::LAST_URL = undef;
+
+    my $gw = Disperl::Gateway->new(
+        token      => 'secret',
+        ws_class   => 'FakeWS',
+        reconnect  => 0,
+        on_message => sub { push @messages, $_[0] },
+        on_ready   => sub { $ready = $_[0] },
+    );
+
+    my $reason = $gw->_run_once;
+
+    is $reason, 'resume', 'close leads to a reconnect decision';
+    is $FakeWS::LAST_URL, 'wss://gateway.discord.gg/?v=10&encoding=json', 'default URL';
+
+    my $identify = $json->decode($fake->sent->[0]);
+    is $identify->{op}, 2, 'identify first';
+    is $identify->{d}{intents}, 513, 'default intents';
+
+    is $ready->{session_id}, 'sess-1', 'ready dispatched';
+    is $messages[0]{content}, 'hello', 'message dispatched';
+    is $fake->{closed}, 1000, 'socket closed';
+};
+
+subtest 'run_once: resumes when a session exists' => sub {
+    my $fake = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 60000 } }),
+        { opcode => 8, code => 1000 },
+    ]);
+    $FakeWS::INSTANCE = $fake;
+    $FakeWS::LAST_URL = undef;
+
+    my $gw = Disperl::Gateway->new(
+        token     => 'secret',
+        ws_class  => 'FakeWS',
+        reconnect => 0,
+    );
+    $gw->{session_id}  = 'sess-1';
+    $gw->{seq}         = 5;
+    $gw->{resume_next} = 1;
+    $gw->{resume_url}  = 'wss://resume.example';
+
+    $gw->_run_once;
+
+    is $FakeWS::LAST_URL, 'wss://resume.example?v=10&encoding=json', 'resume URL';
+    my $resume = $json->decode($fake->sent->[0]);
+    is $resume->{op}, 6, 'resume instead of identify';
+    is $resume->{d}{seq}, 5, 'sequence sent';
+};
+
+subtest 'fatal close code is not retried' => sub {
+    my $fake = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 60000 } }),
+        { opcode => 8, code => 4004, reason => 'Authentication failed.' },
+    ]);
+    $FakeWS::INSTANCE = $fake;
+
+    my $gw = Disperl::Gateway->new(token => 'bad', ws_class => 'FakeWS', reconnect => 0);
+
+    eval { $gw->_run_once };
+    like $@, qr/Fatal gateway close code 4004/, 'dies with the close code';
+};
+
+subtest 'run does not retry fatal close codes' => sub {
+    my $fake = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 60000 } }),
+        { opcode => 8, code => 4004 },
+    ]);
+    $FakeWS::INSTANCE = $fake;
+
+    my @errors;
+    my $gw = Disperl::Gateway->new(
+        token     => 'bad',
+        ws_class  => 'FakeWS',
+        reconnect => 1,
+        on_error  => sub { push @errors, $_[0] },
+    );
+
+    $gw->run;
+
+    is scalar @errors, 1, 'reported once';
+    is scalar @{ $fake->sent }, 1, 'identified only once';
+};
+
+subtest 'zombie connection triggers a resume' => sub {
+    my $fake = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 1 } }),
+    ]);
+    $FakeWS::INSTANCE = $fake;
+
+    my $gw = Disperl::Gateway->new(
+        token     => 't',
+        ws_class  => 'FakeWS',
+        reconnect => 0,
+        on_error  => sub { },
+    );
+
+    my $reason = $gw->_run_once;
+    is $reason, 'resume', 'no ACK leads to a resume';
+};
+
+done_testing;
