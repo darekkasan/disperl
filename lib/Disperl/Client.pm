@@ -300,6 +300,214 @@ sub _thread_payload {
     return \%payload;
 }
 
+# ---------------------------------------------------------------- threads (list / members)
+
+# ギルドのアクティブスレッド一覧。
+# 返り値は { threads => [...], members => [...] }。
+sub get_active_threads {
+    my ($self, $guild_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/threads/active",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# アーカイブ済みスレッド一覧。
+#   get_archived_threads($channel_id, limit => 50, before => '2026-01-01T00:00:00Z')
+#   get_archived_threads($channel_id, private => 1)
+# 返り値は { threads => [...], members => [...], has_more => bool }。
+sub get_archived_threads {
+    my ($self, $channel_id, %opts) = @_;
+
+    my $kind = $opts{private} ? 'private' : 'public';
+    my $url = "$API_BASE/channels/$channel_id/threads/archived/$kind";
+    my $query = $self->_thread_query(%opts);
+    $url .= "?$query" if length $query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'hash');
+}
+
+# 自分が参加しているプライベートスレッドのアーカイブ一覧。
+sub get_joined_private_archived_threads {
+    my ($self, $channel_id, %opts) = @_;
+
+    my $url = "$API_BASE/channels/$channel_id/users/\@me/threads/archived/private";
+    my $query = $self->_thread_query(%opts);
+    $url .= "?$query" if length $query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'hash');
+}
+
+sub _thread_query {
+    my ($self, %opts) = @_;
+
+    my @query;
+    push @query, 'before=' . _uri_escape($opts{before}) if defined $opts{before};
+
+    if (defined $opts{limit}) {
+        die "limit must be between 1 and 100\n"
+            unless $opts{limit} =~ /^\d+\z$/ && $opts{limit} >= 1 && $opts{limit} <= 100;
+        push @query, 'limit=' . ($opts{limit} + 0);
+    }
+
+    return join('&', @query);
+}
+
+# スレッドのメンバー一覧。
+#   get_thread_members($thread_id, with_member => 1, limit => 100)
+sub get_thread_members {
+    my ($self, $thread_id, %opts) = @_;
+
+    my @query;
+    push @query, 'with_member=true' if $opts{with_member};
+    push @query, 'after=' . _uri_escape($opts{after}) if defined $opts{after};
+
+    if (defined $opts{limit}) {
+        die "limit must be between 1 and 100\n"
+            unless $opts{limit} =~ /^\d+\z$/ && $opts{limit} >= 1 && $opts{limit} <= 100;
+        push @query, 'limit=' . ($opts{limit} + 0);
+    }
+
+    my $url = "$API_BASE/channels/$thread_id/thread-members";
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'array');
+}
+
+# 特定ユーザーがスレッドのメンバーか取得する（404 なら undef）。
+sub get_thread_member {
+    my ($self, $thread_id, $user_id, %opts) = @_;
+
+    my $url = "$API_BASE/channels/$thread_id/thread-members/$user_id";
+    $url .= '?with_member=true' if $opts{with_member};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'hash');
+}
+
+# スレッドに参加 / 退出する（成功時は 1）。
+sub join_thread {
+    my ($self, $thread_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT', "$API_BASE/channels/$thread_id/thread-members/\@me",
+    );
+    return $self->_finish($res, 'none');
+}
+
+sub leave_thread {
+    my ($self, $thread_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE', "$API_BASE/channels/$thread_id/thread-members/\@me",
+    );
+    return $self->_finish($res, 'none');
+}
+
+# 他のユーザーをスレッドに追加 / 削除する（成功時は 1）。
+sub add_thread_member {
+    my ($self, $thread_id, $user_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT', "$API_BASE/channels/$thread_id/thread-members/$user_id",
+    );
+    return $self->_finish($res, 'none');
+}
+
+sub remove_thread_member {
+    my ($self, $thread_id, $user_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE', "$API_BASE/channels/$thread_id/thread-members/$user_id",
+    );
+    return $self->_finish($res, 'none');
+}
+
+# スレッドの設定を変更する。
+#   update_thread($thread_id, name => '新しい名前')
+#   update_thread($thread_id, archived => 1, locked => 1)
+#   update_thread($thread_id, auto_archive_duration => 1440)
+sub update_thread {
+    my ($self, $thread_id, %opts) = @_;
+
+    my %payload;
+
+    if (defined $opts{name}) {
+        die "thread name must be 1 to 100 characters\n"
+            unless length $opts{name} && length($opts{name}) <= 100;
+        $payload{name} = $opts{name};
+    }
+
+    for my $key (qw(archived locked invitable)) {
+        next unless exists $opts{$key};
+        $payload{$key} = $opts{$key} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    if (defined $opts{auto_archive_duration}) {
+        my $d = $opts{auto_archive_duration};
+        die "auto_archive_duration must be 60, 1440, 4320 or 10080\n"
+            unless $d =~ /^\d+\z$/ && ($d == 60 || $d == 1440 || $d == 4320 || $d == 10080);
+        $payload{auto_archive_duration} = $d + 0;
+    }
+
+    if (defined $opts{rate_limit_per_user}) {
+        my $r = $opts{rate_limit_per_user};
+        die "rate_limit_per_user must be between 0 and 21600\n"
+            unless $r =~ /^\d+\z$/ && $r <= 21600;
+        $payload{rate_limit_per_user} = $r + 0;
+    }
+
+    if (defined $opts{flags}) {
+        die "flags must be an integer\n" unless $opts{flags} =~ /^\d+\z$/;
+        $payload{flags} = $opts{flags} + 0;
+    }
+
+    $payload{applied_tags} = $opts{applied_tags}
+        if ref $opts{applied_tags} eq 'ARRAY';
+
+    die "no thread fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/channels/$thread_id", \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# アーカイブ / アーカイブ解除のショートカット。
+sub archive_thread {
+    my ($self, $thread_id) = @_;
+    return $self->update_thread($thread_id, archived => 1);
+}
+
+sub unarchive_thread {
+    my ($self, $thread_id) = @_;
+    return $self->update_thread($thread_id, archived => 0);
+}
+
+# チャンネル / スレッドを削除する（成功時は 1）。
+# スレッドの削除もこのエンドポイントを使う。
+sub delete_channel {
+    my ($self, $channel_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('DELETE', "$API_BASE/channels/$channel_id");
+    return $self->_finish($res, 'none');
+}
+
 # ---------------------------------------------------------------- direct messages
 
 # ユーザーとの DM チャンネルを開く（既にあればそれを返す）。
@@ -603,11 +811,14 @@ my %INTERACTION_RESPONSE = (
     deferred        => 5,
     deferred_update => 6,
     update          => 7,
+    autocomplete    => 8,
+    modal           => 9,
 );
 
 # インタラクションに応答する（3 秒以内に呼ぶ）。
 #   interaction_callback($id, $token, 4, { content => 'pong' })
-# type: 4 = メッセージ, 5 = 後で返信, 6 = 後で更新, 7 = メッセージを更新
+# type: 4 = メッセージ, 5 = 後で返信, 6 = 後で更新, 7 = メッセージを更新,
+#       8 = オートコンプリート, 9 = モーダル
 sub interaction_callback {
     my ($self, $interaction_id, $token, $type, $data) = @_;
 
@@ -667,6 +878,66 @@ sub defer_interaction {
         : undef;
 
     return $self->interaction_callback($interaction_id, $token, $type, $data);
+}
+
+# モーダルを表示する（type 9）。
+#   reply_modal($id, $token, modal(
+#       title      => 'お問い合わせ',
+#       custom_id  => 'contact',
+#       components => [ label(...), label(...) ],
+#   ))
+#   reply_modal($id, $token, title => '...', custom_id => '...', components => [...])
+sub reply_modal {
+    my ($self, $interaction_id, $token, @args) = @_;
+
+    my $data = (@args == 1 && ref $args[0] eq 'HASH')
+        ? $args[0]
+        : { @args };
+
+    die "modal title is required\n"
+        unless defined $data->{title} && length $data->{title};
+    die "modal custom_id is required\n"
+        unless defined $data->{custom_id} && length $data->{custom_id};
+    die "modal components must be a non-empty array reference\n"
+        unless ref $data->{components} eq 'ARRAY' && @{ $data->{components} };
+
+    return $self->interaction_callback($interaction_id, $token, 9, $data);
+}
+
+# オートコンプリートの候補を返す（type 8）。
+#   autocomplete_interaction($id, $token, [
+#       { name => 'はい', value => 'yes' },
+#       { name => 'いいえ', value => 'no' },
+#   ])
+# 候補は最大 25 件。空配列を渡すと「候補なし」になる。
+sub autocomplete_interaction {
+    my ($self, $interaction_id, $token, $choices) = @_;
+
+    die "choices must be an array reference\n"
+        unless ref $choices eq 'ARRAY';
+    die "at most 25 autocomplete choices are allowed\n"
+        if @$choices > 25;
+
+    my @out;
+    for my $choice (@$choices) {
+        die "each choice must be a hash reference\n"
+            unless ref $choice eq 'HASH';
+        die "choice name is required\n"
+            unless defined $choice->{name} && length $choice->{name};
+        die "choice value is required\n"
+            unless defined $choice->{value} && !ref $choice->{value};
+
+        my $name  = "$choice->{name}";
+        my $value = "$choice->{value}";
+        die "choice name must be 100 characters or less\n" if length($name) > 100;
+        die "choice value must be 100 characters or less\n" if length($value) > 100;
+
+        push @out, { name => $name, value => $value };
+    }
+
+    return $self->interaction_callback(
+        $interaction_id, $token, 8, { choices => \@out },
+    );
 }
 
 # 遅延した応答（type 5）を編集する。

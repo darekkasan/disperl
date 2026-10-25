@@ -7,6 +7,7 @@ use JSON::PP;
 use Disperl::Components qw(
     action_row button
     string_select user_select role_select mentionable_select channel_select
+    text_input label modal
 );
 
 my $json = JSON::PP->new->utf8(1);
@@ -106,6 +107,92 @@ subtest 'other select types' => sub {
 
     my $channel = channel_select(custom_id => 'c', channel_types => [ 0, 2 ]);
     is_deeply $channel->{channel_types}, [ 0, 2 ], 'channel_types';
+
+    my $modal_select = encoded(string_select(
+        custom_id => 'pick', required => 1,
+        options   => [ { label => 'A', value => 'a' } ],
+    ));
+    ok $modal_select->{required}, 'select can be required in a modal';
+};
+
+subtest 'text_input' => sub {
+    my $short = encoded(text_input(
+        custom_id   => 'name',
+        placeholder => '名前',
+        max_length  => 80,
+    ));
+
+    is $short->{type}, 4, 'type 4';
+    is $short->{style}, 1, 'short is 1 by default';
+    is $short->{custom_id}, 'name', 'custom_id';
+    is $short->{placeholder}, '名前', 'placeholder';
+    is $short->{max_length}, 80, 'max_length';
+
+    my $paragraph = encoded(text_input(
+        custom_id => 'body', style => 'paragraph',
+        min_length => 10, max_length => 4000,
+        required => 1, value => '初期値',
+    ));
+    is $paragraph->{style}, 2, 'paragraph is 2';
+    is $paragraph->{min_length}, 10, 'min_length';
+    ok $paragraph->{required}, 'required is encoded as true';
+    is $paragraph->{value}, '初期値', 'value';
+
+    my $legacy = encoded(text_input(custom_id => 'x', label => '旧式'));
+    is $legacy->{label}, '旧式', 'label can be set for legacy action rows';
+
+    eval { text_input() };
+    like $@, qr/custom_id is required/, 'custom_id is required';
+
+    eval { text_input(custom_id => 'x', style => 'nope') };
+    like $@, qr/Unknown text input style/, 'unknown style';
+
+    eval { text_input(custom_id => 'x', max_length => 5000) };
+    like $@, qr/between 0 and 4000/, 'max_length range';
+
+    eval { text_input(custom_id => 'x', min_length => 20, max_length => 10) };
+    like $@, qr/min_length must not be greater/, 'min <= max';
+};
+
+subtest 'label and modal' => sub {
+    my $field = encoded(label(
+        label       => 'お名前',
+        description => '表示名でも可',
+        component   => text_input(custom_id => 'name'),
+    ));
+
+    is $field->{type}, 18, 'type 18';
+    is $field->{label}, 'お名前', 'label';
+    is $field->{description}, '表示名でも可', 'description';
+    is $field->{component}{custom_id}, 'name', 'wrapped component';
+
+    my $form = encoded(modal(
+        title      => 'お問い合わせ',
+        custom_id  => 'contact',
+        components => [
+            label(label => '名前', component => text_input(custom_id => 'name')),
+            label(
+                label     => '本文',
+                component => text_input(custom_id => 'body', style => 'paragraph'),
+            ),
+        ],
+    ));
+
+    is $form->{title}, 'お問い合わせ', 'title';
+    is $form->{custom_id}, 'contact', 'custom_id';
+    is scalar @{ $form->{components} }, 2, 'components';
+
+    eval { label(component => text_input(custom_id => 'x')) };
+    like $@, qr/label is required/, 'label text is required';
+
+    eval { label(label => 'x') };
+    like $@, qr/component is required/, 'component is required';
+
+    eval { modal(title => 'x', custom_id => 'y', components => []) };
+    like $@, qr/non-empty array/, 'components are required';
+
+    eval { modal(custom_id => 'y', components => [ {} ]) };
+    like $@, qr/title is required/, 'title is required';
 };
 
 done_testing;

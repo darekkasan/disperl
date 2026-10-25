@@ -71,6 +71,8 @@ sub new {
         on_interaction => $args{on_interaction},
         on_command     => $args{on_command},
         on_component   => $args{on_component},
+        on_autocomplete => $args{on_autocomplete},
+        on_modal       => $args{on_modal},
         on_ready       => $args{on_ready},
         on_error       => $args{on_error},
         reconnect      => exists $args{reconnect} ? $args{reconnect} : 1,
@@ -425,12 +427,17 @@ sub _handle {
         } elsif ($type eq 'INTERACTION_CREATE') {
             $self->{on_interaction}->($data) if $self->{on_interaction};
 
-            # type 2 = スラッシュコマンド、type 3 = ボタン / セレクト
+            # type 2 = スラッシュコマンド、type 3 = ボタン / セレクト、
+            # type 4 = オートコンプリート、type 5 = モーダル送信
             my $kind = $data->{type} // 0;
             $self->{on_command}->($data)
                 if $kind == 2 && $self->{on_command};
             $self->{on_component}->($data)
                 if $kind == 3 && $self->{on_component};
+            $self->{on_autocomplete}->($data)
+                if $kind == 4 && $self->{on_autocomplete};
+            $self->{on_modal}->($data)
+                if $kind == 5 && $self->{on_modal};
         }
 
         $self->{on_event}->($type, $data, $msg) if $self->{on_event};

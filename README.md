@@ -6,10 +6,12 @@ Perl 製の Discord Bot 用クライアント。
 - embeds / 返信 / リアクション / 入力中表示
 - ファイル添付（multipart を自前で送信。追加依存なし）
 - ピン留め / 一括削除 / スレッド / DM / 招待 / Webhook
+- スレッドの一覧・参加・退出・メンバー管理・アーカイブ
 - レート制限（バケット単位・429）対応と事前スロットリング
 - Gateway（WebSocket）でイベントを受信
 - ステータス（online / idle / dnd / invisible）とアクティビティの変更
 - ボタン / セレクトメニュー（`Disperl::Components`）とインタラクション応答
+- モーダル（入力フォーム）とオートコンプリート
 - スラッシュコマンドの登録と受信
 
 ## 必要なもの
@@ -169,6 +171,52 @@ $client->send_message($dm->{id}, 'こんにちは');
 
 スレッドはチャンネル扱いなので、以降は `send_message($thread->{id}, ...)` で送れます。
 
+#### スレッドの一覧・参加・アーカイブ
+
+```perl
+# ギルドのアクティブスレッド（{ threads => [...], members => [...] }）
+my $active = $client->get_active_threads($guild_id);
+
+# アーカイブ済み（{ threads, members, has_more }）
+my $public  = $client->get_archived_threads($channel, limit => 50);
+my $private = $client->get_archived_threads($channel, private => 1);
+
+# 自分が参加しているプライベートスレッドのアーカイブ
+my $mine = $client->get_joined_private_archived_threads($channel);
+
+# 参加 / 退出
+$client->join_thread($thread_id);
+$client->leave_thread($thread_id);
+
+# 他のユーザーを追加 / 削除
+$client->add_thread_member($thread_id, $user_id);
+$client->remove_thread_member($thread_id, $user_id);
+
+# メンバー一覧 / 1 人だけ取得
+my $members = $client->get_thread_members($thread_id, with_member => 1, limit => 100);
+my $member  = $client->get_thread_member($thread_id, $user_id, with_member => 1);
+
+# アーカイブ / 解除 / ロック
+$client->archive_thread($thread_id);
+$client->unarchive_thread($thread_id);
+$client->update_thread($thread_id, locked => 1, auto_archive_duration => 1440);
+```
+
+| メソッド | 説明 |
+|---|---|
+| `get_active_threads($guild_id)` | ギルドのアクティブスレッド。`threads` / `members` |
+| `get_archived_threads($channel_id, %opts)` | `private` / `before` / `limit`。`has_more` 付き |
+| `get_joined_private_archived_threads($channel_id, %opts)` | 自分が参加中のプライベートスレッド |
+| `join_thread` / `leave_thread($thread_id)` | 自分を参加 / 退出させる |
+| `add_thread_member` / `remove_thread_member($thread_id, $user_id)` | 他ユーザーの追加 / 削除 |
+| `get_thread_members($thread_id, %opts)` | `with_member` / `after` / `limit` |
+| `get_thread_member($thread_id, $user_id, %opts)` | 1 人分（未参加なら `undef`） |
+| `update_thread($thread_id, %opts)` | `name` / `archived` / `locked` / `invitable` / `auto_archive_duration` / `rate_limit_per_user` / `flags` / `applied_tags` |
+| `archive_thread` / `unarchive_thread($thread_id)` | `update_thread` のショートカット |
+| `delete_channel($channel_id)` | チャンネル / スレッドを削除する |
+
+`get_thread_members` は `GUILD_MEMBERS`（Privileged Intent）が有効な Bot でないと制限されます。
+
 ### ギルド・招待・Webhook
 
 ```perl
@@ -248,11 +296,74 @@ $client->send_message($channel, '投票してください', {
 |---|---|
 | `action_row(@components)` | 1〜5 個のコンポーネントを 1 行にまとめる（`type => 1`） |
 | `button(%args)` | `style` / `label` / `custom_id` / `emoji` / `disabled`。リンクボタンは `style => 'link'` + `url` |
-| `string_select(%args)` | `options` が必須。`placeholder` / `min_values` / `max_values` / `disabled` |
+| `string_select(%args)` | `options` が必須。`placeholder` / `min_values` / `max_values` / `required` / `disabled` |
 | `user_select` / `role_select` / `mentionable_select` / `channel_select` | それぞれのセレクト。`channel_select` は `channel_types` も指定可 |
+| `text_input(%args)` | モーダル用の入力欄。`style` は `short` (1) / `paragraph` (2)。`min_length` / `max_length` / `required` / `value` |
+| `label(%args)` | モーダルの 1 項目。`label` と `component` が必須。`description` も指定可 |
+| `modal(%args)` | モーダル本体。`title` / `custom_id` / `components` |
 
 `style` は `primary` (1) / `secondary` (2) / `success` (3) / `danger` (4) / `link` (5) / `premium` (6)。
 数値でも指定できます。リンクボタンには `custom_id` ではなく `url` が必要です。
+
+#### モーダル
+
+モーダルは `label`（type 18）で入力欄を包みます。テキスト入力は `label` の中に置いてください
+（Action Row 内の Text Input は非推奨です）。
+
+```perl
+use Disperl::Components qw(label modal text_input);
+
+my $form = modal(
+    title      => 'お問い合わせ',
+    custom_id  => 'contact',
+    components => [
+        label(
+            label     => 'お名前',
+            component => text_input(custom_id => 'name', max_length => 80),
+        ),
+        label(
+            label       => '本文',
+            description => '4000 文字まで',
+            component   => text_input(
+                custom_id => 'body', style => 'paragraph', required => 1,
+            ),
+        ),
+    ],
+);
+
+$client->reply_modal($interaction_id, $interaction_token, $form);
+```
+
+送信結果は `INTERACTION_CREATE` の type 5（`MODAL_SUBMIT`）で届きます。
+`data.components` は Label → Text Input の入れ子になっているので、`component.custom_id` と
+`component.value` を取り出してください。
+
+#### オートコンプリート
+
+コマンドのオプションに `autocomplete => true` を付けると、入力中に type 4 の
+`INTERACTION_CREATE` が届きます。`data.options` の `focused` が真の項目が入力中の値です。
+
+```perl
+# コマンド登録側
+options => [{
+    type         => 3,
+    name         => 'question',
+    description  => '質問',
+    required     => JSON::PP::true,
+    autocomplete => JSON::PP::true,
+}],
+
+# 受信側（on_autocomplete）
+my ($focused) = grep { $_->{focused} } @{ $i->{data}{options} || [] };
+my $typed = $focused ? ($focused->{value} // '') : '';
+
+$client->autocomplete_interaction($i->{id}, $i->{token}, [
+    { name => 'はい/いいえ', value => 'はい/いいえ' },
+    { name => '賛成/反対',   value => '賛成/反対' },
+]);
+```
+
+候補は最大 25 件です。空配列を返すと「候補なし」になります。
 
 ### レート制限
 
@@ -302,6 +413,8 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `on_interaction` | — | `INTERACTION_CREATE` のときだけ呼ばれる（全 type） |
 | `on_command` | — | `INTERACTION_CREATE` の type 2（スラッシュコマンド）だけ |
 | `on_component` | — | `INTERACTION_CREATE` の type 3（ボタン / セレクト）だけ |
+| `on_autocomplete` | — | `INTERACTION_CREATE` の type 4（オートコンプリート）だけ |
+| `on_modal` | — | `INTERACTION_CREATE` の type 5（モーダル送信）だけ |
 | `on_ready` | — | `READY` のときだけ呼ばれる |
 | `on_error` | 未指定なら `warn` | 接続エラー・再接続の通知 |
 | `reconnect` | `1` | 自動再接続するか |
@@ -401,8 +514,10 @@ $gw->run;
 | `defer_interaction($id, $token, %opts)` | 5 | 「考え中...」を表示。あとで編集する（`ephemeral` 可） |
 | `defer_interaction($id, $token, update => 1)` | 6 | コンポーネント付きメッセージの更新を遅延 |
 | `update_interaction_message($id, $token, $content, %opts)` | 7 | ボタンが付いたメッセージをその場で書き換える |
+| `reply_modal($id, $token, $modal_or_opts)` | 9 | モーダルを表示する（`modal()` を渡す） |
+| `autocomplete_interaction($id, $token, \@choices)` | 8 | オートコンプリートの候補を返す（最大 25 件） |
 | `edit_interaction_response($app_id, $token, $content, %opts)` | — | defer した応答を後から編集する |
-| `interaction_callback($id, $token, $type, $data)` | — | 低レベル。`$type` は数値か `reply` / `deferred` / `deferred_update` / `update` |
+| `interaction_callback($id, $token, $type, $data)` | — | 低レベル。`$type` は数値か `reply` / `deferred` / `deferred_update` / `update` / `autocomplete` / `modal` |
 
 - インタラクションの応答 API は認証ヘッダを付けません（ID + トークンで認証）
 - `%opts` は `send_message` と同じ（`embeds` / `components` / `allowed_mentions`）
@@ -463,13 +578,21 @@ perl test.pl purge <ID> <ID> ...   # 2〜100 件をまとめて削除
 perl test.pl reactions <ID> check  # リアクションしたユーザー
 perl test.pl dm <ユーザーID> "本文" # DM を送る
 perl test.pl thread --private "相談" # スレッドを作る
+perl test.pl threads               # アクティブスレッド一覧（現在のギルド）
+perl test.pl threads --archived    # アーカイブ済み（現在のチャンネル）
+perl test.pl threads --archived --private
+perl test.pl thread-join <ID>      # スレッドに参加
+perl test.pl thread-leave <ID>     # スレッドから退出
+perl test.pl thread-archive <ID>   # アーカイブ（--unarchive / --lock / --unlock）
+perl test.pl thread-members <ID>   # スレッドメンバー一覧
+perl test.pl thread-delete <ID>    # スレッドを削除
 perl test.pl channels              # チャンネル一覧（現在のギルド）
 perl test.pl invite                # 招待リンク（24 時間）
 perl test.pl user <ユーザーID>      # ユーザー情報
 perl test.pl webhook <ID> <トークン> "本文"
 perl test.pl upload <ファイル> "本文" # ファイルを添付して送る
 perl test.pl poll "質問"            # ボタン付きの投票を作る
-perl test.pl commands              # /ping /echo /poll をギルドに登録
+perl test.pl commands              # /ping /echo /poll /form をギルドに登録
 perl test.pl commands --list       # 登録済みコマンドの一覧
 perl test.pl commands --global     # グローバルに登録（反映に最大 1 時間）
 perl test.pl watch                # Gateway で受信し !ping / !echo / !poll / !status / !activity / !help に応答
@@ -502,7 +625,9 @@ perl test.pl watch --status invisible   # オフライン表示
 - `poll` は投票メッセージを直接投稿します。`watch` 中の `!poll` は
   他のユーザーが送ったときだけ反応します（Bot 自身のメッセージは無視するため）
 - `commands` はギルド登録が既定です。グローバル登録は反映に時間がかかります
-- `watch` 中はボタンとスラッシュコマンド（`/ping` `/echo` `/poll`）にも応答します
+- `watch` 中はボタンとスラッシュコマンド（`/ping` `/echo` `/poll` `/form`）にも応答します
+- `/poll` の質問入力ではオートコンプリート候補が出ます
+- `/form` はモーダルを開き、送信内容を本人だけに返します
 - Windows のコンソールは cp932 のことが多いため、出力は実際のコードページに合わせます。
   `DISPERL_CONSOLE_ENCODING=UTF-8` で上書きできます（引数は `DISPERL_ARG_ENCODING`、既定 cp932）
 
@@ -534,6 +659,8 @@ prove -l t
 | `t/14_files.t` | ファイル添付（multipart / MIME / ファイル名 / 入力検証） |
 | `t/15_components.t` | ボタン / セレクトメニュー / action_row の組み立て |
 | `t/16_interactions.t` | インタラクション応答 / コマンド登録 / Gateway の type 2・3 配送 |
+| `t/17_modals_autocomplete.t` | モーダル（type 9）/ オートコンプリート（type 8）/ Gateway の type 4・5 配送 |
+| `t/18_threads.t` | スレッド一覧 / 参加・退出 / メンバー / アーカイブ / 更新 |
 
 Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパスを解決）。
 

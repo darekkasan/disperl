@@ -16,7 +16,7 @@ use Time::HiRes qw(time);
 use JSON::PP;
 use Disperl::Config qw(load_dotenv);
 use Disperl::Client;
-use Disperl::Components qw(action_row button);
+use Disperl::Components qw(action_row button label modal text_input);
 use Disperl::Gateway;
 
 load_dotenv("$FindBin::Bin/.env");
@@ -203,6 +203,15 @@ disperl 動作確認 CLI
   perl test.pl reactions <ID> <絵文字> リアクションしたユーザー一覧
   perl test.pl dm <ユーザーID> <本文>   DM を送る
   perl test.pl thread [--private] <名前> スレッドを作る
+  perl test.pl threads                アクティブスレッド一覧（現在のギルド）
+  perl test.pl threads --archived     アーカイブ済みスレッド一覧（現在のチャンネル）
+  perl test.pl threads --archived --private
+  perl test.pl thread-join <ID>       スレッドに参加する
+  perl test.pl thread-leave <ID>      スレッドから退出する
+  perl test.pl thread-archive <ID> [--unarchive] [--lock|--unlock]
+                                      スレッドをアーカイブ / 解除する
+  perl test.pl thread-members <ID>    スレッドメンバー一覧
+  perl test.pl thread-delete <ID>     スレッドを削除する
   perl test.pl channels [ギルドID]     チャンネル一覧（省略時は現在のギルド）
   perl test.pl invite                 招待リンクを作る（24 時間有効）
   perl test.pl user <ユーザーID>       ユーザー情報を表示する
@@ -210,7 +219,7 @@ disperl 動作確認 CLI
   perl test.pl upload <ファイル> [本文]  ファイルを添付して送る
   perl test.pl poll <質問>            ボタン付きの投票を作る
   perl test.pl commands [--list] [--global] [--guild ID]
-                                      /ping /echo /poll を登録する（既定は現在のギルド）
+                                      /ping /echo /poll /form を登録する（既定は現在のギルド）
   perl test.pl watch [オプション]      Gateway に接続し !ping / !echo / !poll / !status / !activity / !help に応答する
       --status <状態>                  online / idle / dnd / invisible（オフライン表示）
       --activity <名前>                アクティビティ
@@ -227,6 +236,9 @@ disperl 動作確認 CLI
   perl test.pl upload memo.txt "ログです"
   perl test.pl commands
   perl test.pl thread --private "相談"
+  perl test.pl threads
+  perl test.pl threads --archived
+  perl test.pl thread-archive 123456789012345678
   perl test.pl watch --status idle --activity "待機中"
   perl test.pl watch --status invisible
 
@@ -504,6 +516,146 @@ sub cmd_thread {
     return 0;
 }
 
+sub cmd_threads {
+    my (@args) = map { _decode_arg($_) } @_;
+
+    my ($guild_id, $channel_id, $archived, $private);
+    while (@args) {
+        my $arg = shift @args;
+
+        if ($arg eq '--archived') {
+            $archived = 1;
+        } elsif ($arg eq '--private') {
+            $private = 1;
+        } elsif ($arg =~ /^--guild=(.+)\z/) {
+            $guild_id = $1;
+        } elsif ($arg eq '--guild') {
+            _fatal('--guild には値が必要です') unless @args;
+            $guild_id = shift @args;
+        } elsif ($arg =~ /^--channel=(.+)\z/) {
+            $channel_id = $1;
+        } elsif ($arg eq '--channel') {
+            _fatal('--channel には値が必要です') unless @args;
+            $channel_id = shift @args;
+        } else {
+            _fatal("不明なオプション: $arg");
+        }
+    }
+
+    if ($archived) {
+        $channel_id //= channel_id();
+        my $result = client()->get_archived_threads(
+            $channel_id, private => $private, limit => 100,
+        ) or _api_fail('アーカイブ済みスレッドの取得');
+
+        my $threads = $result->{threads} || [];
+        out sprintf "アーカイブ済みスレッド %d 件%s\n",
+            scalar @$threads, $result->{has_more} ? '（続きあり）' : '';
+        for my $thread (@$threads) {
+            out sprintf "  %s  %s\n", $thread->{id}, $thread->{name} // '(無名)';
+        }
+        return 0;
+    }
+
+    $guild_id //= _current_guild_id();
+    my $result = client()->get_active_threads($guild_id)
+        or _api_fail('アクティブスレッドの取得');
+
+    my $threads = $result->{threads} || [];
+    out sprintf "アクティブスレッド %d 件\n", scalar @$threads;
+    for my $thread (@$threads) {
+        out sprintf "  %s  %s (メッセージ %s / メンバー %s)\n",
+            $thread->{id},
+            $thread->{name} // '(無名)',
+            $thread->{message_count} // '?',
+            $thread->{member_count}  // '?';
+    }
+    return 0;
+}
+
+sub cmd_thread_join {
+    my ($id) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl thread-join <スレッドID>')
+        unless defined $id && length $id;
+
+    client()->join_thread($id) or _api_fail('スレッドへの参加');
+    out "スレッドに参加しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_thread_leave {
+    my ($id) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl thread-leave <スレッドID>')
+        unless defined $id && length $id;
+
+    client()->leave_thread($id) or _api_fail('スレッドからの退出');
+    out "スレッドから退出しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_thread_archive {
+    my ($id, @args) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl thread-archive <スレッドID> [--unarchive] [--lock|--unlock]')
+        unless defined $id && length $id;
+
+    my %opts = (archived => 1);
+    for my $arg (@args) {
+        if ($arg eq '--unarchive') {
+            $opts{archived} = 0;
+        } elsif ($arg eq '--lock') {
+            $opts{locked} = 1;
+        } elsif ($arg eq '--unlock') {
+            $opts{locked} = 0;
+        } else {
+            _fatal("不明なオプション: $arg");
+        }
+    }
+
+    my $thread = client()->update_thread($id, %opts)
+        or _api_fail('スレッドの更新');
+
+    my $metadata = $thread->{thread_metadata} || {};
+    out sprintf "スレッドを更新しました: id=%s archived=%s locked=%s\n",
+        $id,
+        $metadata->{archived} ? 'yes' : 'no',
+        $metadata->{locked}   ? 'yes' : 'no';
+    return 0;
+}
+
+sub cmd_thread_members {
+    my ($id, @args) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl thread-members <スレッドID>')
+        unless defined $id && length $id;
+
+    my $members = client()->get_thread_members($id, limit => 100)
+        or _api_fail('スレッドメンバーの取得');
+
+    out sprintf "スレッドメンバー %d 件\n", scalar @$members;
+    for my $member (@$members) {
+        my $user = $member->{member}{user} || {};
+        out sprintf "  %s  %s (joined: %s)\n",
+            $member->{user_id} // '?',
+            $user->{username} // '',
+            $member->{join_timestamp} // '?';
+    }
+    return 0;
+}
+
+sub cmd_thread_delete {
+    my ($id) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl thread-delete <スレッドID>')
+        unless defined $id && length $id;
+
+    client()->delete_channel($id) or _api_fail('スレッドの削除');
+    out "スレッドを削除しました: id=$id\n";
+    return 0;
+}
+
 # ---------------------------------------------------------------- ギルド / 招待 / ユーザー
 
 my %CHANNEL_TYPE = (
@@ -640,11 +792,16 @@ sub _command_definitions {
             name        => 'poll',
             description => 'ボタン付きの投票を作ります',
             options     => [{
-                type        => 3,
-                name        => 'question',
-                description => '質問',
-                required    => JSON::PP::true,
+                type         => 3,
+                name         => 'question',
+                description  => '質問（入力すると候補が出ます）',
+                required     => JSON::PP::true,
+                autocomplete => JSON::PP::true,
             }],
+        },
+        {
+            name        => 'form',
+            description => 'モーダル（入力フォーム）を開きます',
         },
     );
 }
@@ -877,12 +1034,97 @@ sub _parse_watch_options {
     return %opt;
 }
 
+# モーダル送信の components から custom_id => 入力値 を取り出す。
+# Label (type 18) / Action Row (type 1) のどちらでも動く。
+sub _modal_values {
+    my ($components, $out) = @_;
+    $out ||= {};
+
+    for my $component (@{ $components || [] }) {
+        next unless ref $component eq 'HASH';
+
+        if (defined $component->{custom_id}) {
+            my $value = exists $component->{values}
+                ? join(', ', @{ $component->{values} || [] })
+                : $component->{value};
+            $out->{ $component->{custom_id} } = $value;
+        }
+
+        _modal_values($component->{components}, $out)
+            if ref $component->{components} eq 'ARRAY';
+        _modal_values([ $component->{component} ], $out)
+            if ref $component->{component} eq 'HASH';
+    }
+
+    return $out;
+}
+
 sub _handle_interaction {
     my ($api, $gateway, $interaction) = @_;
 
     my $type  = $interaction->{type} // 0;
     my $id    = $interaction->{id};
     my $token = $interaction->{token};
+
+    # オートコンプリート（入力中に候補を返す）
+    if ($type == 4) {
+        my $name = $interaction->{data}{name} // '';
+        my ($focused) = grep { $_->{focused} }
+            @{ $interaction->{data}{options} || [] };
+        my $typed = $focused ? ($focused->{value} // '') : '';
+
+        out "  <- オートコンプリート: /$name ($typed)\n";
+
+        my @suggestions = (
+            'はい/いいえ',
+            '賛成/反対',
+            'A/B/C',
+            '今日の予定',
+            '次回の開催日',
+        );
+
+        my @choices = map { { name => $_, value => $_ } }
+            grep { index($_, $typed) >= 0 } @suggestions;
+
+        # 一致が無いときは入力値をそのまま候補にする
+        if (!@choices && length $typed) {
+            @choices = ({ name => $typed, value => $typed });
+        }
+
+        $api->autocomplete_interaction($id, $token, \@choices);
+        out sprintf "  -> 候補 %d 件\n", scalar @choices;
+        return;
+    }
+
+    # モーダル送信
+    if ($type == 5) {
+        my $custom = $interaction->{data}{custom_id} // '';
+        out "  <- モーダル: $custom\n";
+
+        my $values = _modal_values($interaction->{data}{components});
+
+        if ($custom eq 'form:main') {
+            $api->reply_interaction(
+                $id, $token, undef,
+                ephemeral => 1,
+                embeds    => [{
+                    title  => '送信内容',
+                    color  => 0x5865F2,
+                    fields => [
+                        { name => 'お名前', value => $values->{name} // '(未入力)', inline => JSON::PP::true },
+                        { name => '本文',   value => $values->{body} // '(未入力)' },
+                    ],
+                }],
+            );
+            out "  -> フォームの内容を返信しました\n";
+            return;
+        }
+
+        $api->reply_interaction(
+            $id, $token, "未対応のフォームです: $custom", ephemeral => 1,
+        );
+        return;
+    }
 
     # ボタン / セレクトメニュー
     if ($type == 3) {
@@ -938,6 +1180,30 @@ sub _handle_interaction {
         if ($name eq 'poll') {
             my $poll_id = _new_poll($option{question} // '投票');
             $api->reply_interaction($id, $token, undef, %{ _poll_payload($poll_id) });
+            return;
+        }
+
+        if ($name eq 'form') {
+            $api->reply_modal($id, $token, modal(
+                title      => 'お問い合わせ',
+                custom_id  => 'form:main',
+                components => [
+                    label(
+                        label     => 'お名前',
+                        component => text_input(
+                            custom_id => 'name', max_length => 80,
+                        ),
+                    ),
+                    label(
+                        label       => '本文',
+                        description => '4000 文字まで',
+                        component   => text_input(
+                            custom_id => 'body', style => 'paragraph',
+                            required  => 1,
+                        ),
+                    ),
+                ],
+            ));
             return;
         }
 
@@ -1104,6 +1370,12 @@ my %COMMANDS = (
     reactions => \&cmd_reactions,
     dm        => \&cmd_dm,
     thread    => \&cmd_thread,
+    threads   => \&cmd_threads,
+    'thread-join'    => \&cmd_thread_join,
+    'thread-leave'   => \&cmd_thread_leave,
+    'thread-archive' => \&cmd_thread_archive,
+    'thread-members' => \&cmd_thread_members,
+    'thread-delete'  => \&cmd_thread_delete,
     channels  => \&cmd_channels,
     invite    => \&cmd_invite,
     user      => \&cmd_user,
