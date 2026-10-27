@@ -401,6 +401,55 @@ $client->execute_webhook($webhook_id, $webhook_token, 'ログです',
   （`wait => 0` で `1`）
 - `files` は `{ filename, data, content_type? }` の配列です（`send_files_data` と同じ形）
 
+### Webhook の管理
+
+```perl
+my $hook = $client->create_webhook($channel_id, name => '通知');
+# 作成時だけ token が返ります（以後は取得できません）
+my $token = $hook->{token};
+
+# avatar は data URI、reason は監査ログの理由（自動で URL エンコード）
+my $with_avatar = $client->create_webhook(
+    $channel_id,
+    name   => '通知',
+    avatar => 'data:image/png;base64,...',
+    reason => 'テスト用に作成',
+);
+
+my $channel_hooks = $client->get_channel_webhooks($channel_id);
+my $guild_hooks   = $client->get_guild_webhooks($guild_id);
+
+my $info     = $client->get_webhook($hook->{id});
+my $by_token = $client->get_webhook($hook->{id}, token => $token);
+
+$client->edit_webhook($hook->{id}, name => '新しい名前');
+$client->edit_webhook($hook->{id}, token => $token, name => '新しい名前');
+$client->delete_webhook($hook->{id});
+$client->delete_webhook($hook->{id}, token => $token);
+
+# Webhook が送信したメッセージ（token だけで操作できる）
+my $msg = $client->get_webhook_message($hook->{id}, $token, $message_id);
+$client->edit_webhook_message($hook->{id}, $token, $message_id, '新しい本文');
+$client->delete_webhook_message($hook->{id}, $token, $message_id);
+```
+
+| メソッド | 説明 |
+|---|---|
+| `create_webhook($channel_id, %opts)` | `name`（必須・80 文字まで）/ `avatar`（data URI）/ `reason` |
+| `get_channel_webhooks($channel_id)` | チャンネルの Webhook 一覧 |
+| `get_guild_webhooks($guild_id)` | ギルドの Webhook 一覧 |
+| `get_webhook($id, %opts)` | Webhook 情報。`token` を渡すと認証不要 |
+| `edit_webhook($id, %opts)` | `name` / `avatar` / `channel_id` / `token` / `reason` |
+| `delete_webhook($id, %opts)` | Webhook を削除。`token` を渡すと認証不要 |
+| `get_webhook_message($id, $token, $message_id, %opts)` | 送信済みメッセージを取得。`thread_id` 対応 |
+| `edit_webhook_message($id, $token, $message_id, $content, %opts)` | 本文 / embeds / `files` で編集 |
+| `delete_webhook_message($id, $token, $message_id, %opts)` | 送信済みメッセージを削除 |
+
+- `token` を指定した操作は `/webhooks/{id}/{token}` を使い、認証ヘッダを付けません
+- `token` 付きの `edit_webhook` では `channel_id` を変更できません（送信前に `die`）
+- `avatar => undef` でアバターを削除できます
+- Webhook の管理（作成・一覧・編集・削除）には Bot 側の「Webhook の管理」権限が必要です
+
 ### レート制限
 
 Discord の制限は「バケット（`X-RateLimit-Bucket`）」＋「major parameter」単位です。
@@ -825,12 +874,32 @@ perl test.pl channels              # チャンネル一覧（現在のギルド�
 perl test.pl invite                # 招待リンク（24 時間）
 perl test.pl user <ユーザーID>      # ユーザー情報
 perl test.pl webhook <ID> <トークン> "本文"
+
+# Webhook の管理
+perl test.pl webhook-create "通知" --avatar icon.png
+perl test.pl webhook-create "通知" --channel <チャンネルID> --reason "テスト用"
+perl test.pl webhooks              # 現在のチャンネルの一覧
+perl test.pl webhooks --guild <ギルドID>
+perl test.pl webhook-info <ID>
+perl test.pl webhook-info <ID> --token <トークン>
+perl test.pl webhook-edit <ID> --name "新しい名前"
+perl test.pl webhook-edit <ID> --avatar icon.png
+perl test.pl webhook-delete <ID>
+
+# Webhook が送信したメッセージ
+perl test.pl webhook-message <ID> <トークン> <メッセージID>
+perl test.pl webhook-message-edit <ID> <トークン> <メッセージID> "新しい本文"
+perl test.pl webhook-message-edit <ID> <トークン> <メッセージID> --file memo.txt
+perl test.pl webhook-message-delete <ID> <トークン> <メッセージID>
 ```
+
+- `--avatar` は png / jpg / gif / webp に対応しています（data URI に変換して送信）
+- `--thread` でスレッド内の Webhook メッセージを指定できます
 
 ### インタラクション
 
 ```sh
-perl test.pl poll "質問"            # ボタン付きの投票を作る
+perl test.pl poll "質問"            # ネイティブ投票を作る
 perl test.pl commands              # /ping /echo /poll /form をギルドに登録
 perl test.pl commands --list       # 登録済みコマンドの一覧
 perl test.pl commands --global     # グローバルに登録（反映に最大 1 時間）
@@ -913,6 +982,7 @@ prove -l t
 | `t/19_embed_validation.t` | embed の個数・文字数・構造の検証 |
 | `t/20_followups.t` | フォローアップの作成・編集・削除 / 添付 / 添付メタデータ |
 | `t/21_polls.t` | ネイティブ投票（正規化・上限・終了・投票者取得） |
+| `t/22_webhooks.t` | Webhook の管理（作成・一覧・取得・編集・削除）/ メッセージ操作 / 入力検証 |
 
 Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパスを解決）。
 
@@ -946,6 +1016,7 @@ Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパ�
 - ネイティブ投票（作成・終了・投票者取得）
 - スレッド: 作成・一覧・参加・退出・メンバー・アーカイブ・削除
 - DM・ギルド情報の取得・招待・Webhook 実行（ファイル添付可）
+- Webhook の管理（作成・一覧・取得・編集・削除）と送信済みメッセージの取得・編集・削除
 - Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス
 - インタラクション: ボタン・セレクト・モーダル・オートコンプリート・フォローアップ
 - スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）
@@ -957,7 +1028,6 @@ Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパ�
 - OAuth2
 - AutoMod・監査ログ・スケジュールイベント
 - チャンネル / ギルドの作成・編集・権限管理
-- Webhook の管理（作成・一覧・編集・削除）
 - フォーラム / メディアチャンネル
 - 課金・Entitlements・SKU
 - ユーザーアプリ / 埋め込みアプリ

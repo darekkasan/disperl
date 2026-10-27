@@ -216,6 +216,22 @@ disperl 動作確認 CLI
   perl test.pl invite                 招待リンクを作る（24 時間有効）
   perl test.pl user <ユーザーID>       ユーザー情報を表示する
   perl test.pl webhook <ID> <トークン> <本文>  Webhook で送信する
+  perl test.pl webhook-create <名前> [--channel ID] [--avatar 画像] [--reason 理由]
+                                       Webhook を作る（既定は現在のチャンネル）
+  perl test.pl webhooks [--channel ID | --guild ID]
+                                       チャンネル / ギルドの Webhook 一覧
+  perl test.pl webhook-info <ID> [--token トークン]
+                                       Webhook の情報を表示する
+  perl test.pl webhook-edit <ID> [--token トークン] [--name 名前] [--avatar 画像] [--channel ID] [--reason 理由]
+                                       Webhook を編集する
+  perl test.pl webhook-delete <ID> [--token トークン] [--reason 理由]
+                                       Webhook を削除する
+  perl test.pl webhook-message <ID> <トークン> <メッセージID> [--thread ID]
+                                       Webhook が送信したメッセージを表示する
+  perl test.pl webhook-message-edit <ID> <トークン> <メッセージID> [本文] [--thread ID] [--file パス]
+                                       Webhook メッセージを編集する
+  perl test.pl webhook-message-delete <ID> <トークン> <メッセージID> [--thread ID]
+                                       Webhook メッセージを削除する
   perl test.pl upload <ファイル> [<ファイル> ...] [--] [本文]
                                        ファイルを添付して送る（最大 10 個）
   perl test.pl poll <質問> [--answer 選択肢]... [--duration 時間] [--multiselect]
@@ -240,6 +256,10 @@ disperl 動作確認 CLI
   perl test.pl pins
   perl test.pl channels
   perl test.pl upload memo.txt "ログです"
+  perl test.pl webhook-create "通知" --avatar icon.png
+  perl test.pl webhooks
+  perl test.pl webhook-info 123456789012345678
+  perl test.pl webhook-message-delete 123456789012345678 <トークン> 123456789012345678
   perl test.pl poll "どちらが好き?" --answer 犬 --answer 猫 --duration 24
   perl test.pl poll-buttons "はい / いいえ で答えてください"
   perl test.pl upload a.txt b.png "2 ファイル"
@@ -743,6 +763,315 @@ sub cmd_webhook {
 
     out "Webhook で送信しました: id=" . ($message->{id} // '?') . "\n";
     return 0;
+}
+
+# --name 値 / --name=値 形式のオプションと位置引数を分ける。
+# $repeatable に挙げたオプションは配列で受け取る。
+sub _parse_options {
+    my ($args, $valued, $repeatable) = @_;
+
+    my %is_valued   = map { $_ => 1 } @{ $valued || [] };
+    my %is_repeatable = map { $_ => 1 } @{ $repeatable || [] };
+    my (%opt, @pos);
+
+    while (@$args) {
+        my $arg = shift @$args;
+
+        if ($arg eq '--') {
+            push @pos, @$args;
+            last;
+        }
+
+        my ($name, $value);
+        if ($arg =~ /^--([a-z][a-z0-9-]*)=(.*)\z/s) {
+            ($name, $value) = ($1, $2);
+        } elsif ($arg =~ /^--([a-z][a-z0-9-]*)\z/) {
+            $name = $1;
+            _fatal("--$name には値が必要です") unless @$args;
+            $value = shift @$args;
+        } else {
+            push @pos, $arg;
+            next;
+        }
+
+        _fatal("不明なオプション: --$name") unless $is_valued{$name};
+
+        if ($is_repeatable{$name}) {
+            push @{ $opt{$name} }, $value;
+        } else {
+            $opt{$name} = $value;
+        }
+    }
+
+    return (\%opt, \@pos);
+}
+
+my %AVATAR_MIME = (
+    png  => 'image/png',
+    jpg  => 'image/jpeg',
+    jpeg => 'image/jpeg',
+    gif  => 'image/gif',
+    webp => 'image/webp',
+);
+
+sub _avatar_data_uri {
+    my ($path) = @_;
+
+    _fatal("アバター画像が見つかりません: $path") unless -f $path;
+
+    my $ext = lc $path;
+    $ext =~ s/.*\.//;
+    my $mime = $AVATAR_MIME{$ext}
+        or _fatal("対応していない画像形式です: $path（png / jpg / gif / webp）");
+
+    open my $fh, '<:raw', $path
+        or _fatal("アバター画像を開けません: $path");
+    local $/;
+    my $bytes = <$fh>;
+    close $fh;
+
+    require MIME::Base64;
+    return "data:$mime;base64," . MIME::Base64::encode_base64($bytes, '');
+}
+
+sub _print_webhook {
+    my ($hook) = @_;
+
+    out sprintf "%s  %s  (channel: %s)\n",
+        $hook->{id} // '?',
+        $hook->{name} // '',
+        $hook->{channel_id} // '?';
+
+    out "  token: $hook->{token}\n"
+        if defined $hook->{token} && length $hook->{token};
+    out "  guild: $hook->{guild_id}\n"
+        if defined $hook->{guild_id} && length $hook->{guild_id};
+    out "  user:  " . _author_name($hook->{user}) . "\n"
+        if ref $hook->{user} eq 'HASH';
+}
+
+sub cmd_webhook_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(channel avatar reason)]);
+
+    my $name = join ' ', @$pos;
+    _fatal('使い方: perl test.pl webhook-create <名前> [--channel ID] [--avatar 画像] [--reason 理由]')
+        unless length $name;
+
+    my $channel = $opt->{channel} // channel_id();
+
+    my %opts = (name => $name);
+    $opts{avatar} = _avatar_data_uri($opt->{avatar}) if defined $opt->{avatar};
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $hook = client()->create_webhook($channel, %opts)
+        or _api_fail('Webhook の作成');
+
+    out "Webhook を作成しました:\n";
+    _print_webhook($hook);
+    return 0;
+}
+
+sub cmd_webhooks {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild channel)]);
+
+    _fatal("不明な引数: $pos->[0]") if @$pos;
+    _fatal('--guild と --channel は同時に指定できません')
+        if defined $opt->{guild} && defined $opt->{channel};
+
+    my ($hooks, $label);
+
+    if (defined $opt->{guild}) {
+        $hooks = client()->get_guild_webhooks($opt->{guild});
+        $label = "ギルド $opt->{guild}";
+    } else {
+        my $channel = $opt->{channel} // channel_id();
+        $hooks = client()->get_channel_webhooks($channel);
+        $label = "チャンネル $channel";
+    }
+
+    _api_fail('Webhook 一覧の取得') unless defined $hooks;
+
+    if (!@$hooks) {
+        out "$label に Webhook はありません\n";
+        return 0;
+    }
+
+    for my $hook (@$hooks) {
+        _print_webhook($hook);
+    }
+
+    out sprintf "(%d 件)\n", scalar @$hooks;
+    return 0;
+}
+
+sub cmd_webhook_info {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(token)]);
+
+    my $id = shift @$pos;
+    _fatal('使い方: perl test.pl webhook-info <ID> [--token トークン]')
+        unless defined $id && length $id;
+
+    my %opts = defined $opt->{token} ? (token => $opt->{token}) : ();
+    my $hook = client()->get_webhook($id, %opts)
+        or _api_fail('Webhook の取得');
+
+    _print_webhook($hook);
+    return 0;
+}
+
+sub cmd_webhook_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(token name avatar channel reason)]);
+
+    my $id = shift @$pos;
+    _fatal('使い方: perl test.pl webhook-edit <ID> [--token トークン] [--name 名前] [--avatar 画像] [--channel ID] [--reason 理由]')
+        unless defined $id && length $id;
+
+    _fatal('--name / --avatar / --channel のいずれかを指定してください')
+        unless grep { defined $opt->{$_} } qw(name avatar channel);
+
+    _fatal('--channel は --token と同時に指定できません')
+        if defined $opt->{token} && defined $opt->{channel};
+
+    my %opts;
+    $opts{token}      = $opt->{token}   if defined $opt->{token};
+    $opts{name}       = $opt->{name}    if defined $opt->{name};
+    $opts{avatar}     = _avatar_data_uri($opt->{avatar})
+        if defined $opt->{avatar};
+    $opts{channel_id} = $opt->{channel} if defined $opt->{channel};
+    $opts{reason}     = $opt->{reason}  if defined $opt->{reason};
+
+    my $hook = client()->edit_webhook($id, %opts)
+        or _api_fail('Webhook の編集');
+
+    out "Webhook を編集しました:\n";
+    _print_webhook($hook);
+    return 0;
+}
+
+sub cmd_webhook_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(token reason)]);
+
+    my $id = shift @$pos;
+    _fatal('使い方: perl test.pl webhook-delete <ID> [--token トークン] [--reason 理由]')
+        unless defined $id && length $id;
+
+    my %opts;
+    $opts{token}  = $opt->{token}  if defined $opt->{token};
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    client()->delete_webhook($id, %opts)
+        or _api_fail('Webhook の削除');
+
+    out "Webhook を削除しました: $id\n";
+    return 0;
+}
+
+sub cmd_webhook_message {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(thread)]);
+
+    my ($id, $token, $message_id) = @$pos;
+    _fatal('使い方: perl test.pl webhook-message <ID> <トークン> <メッセージID> [--thread ID]')
+        unless defined $id && defined $token && defined $message_id;
+
+    my %opts = defined $opt->{thread} ? (thread_id => $opt->{thread}) : ();
+    my $message = client()->get_webhook_message($id, $token, $message_id, %opts)
+        or _api_fail('Webhook メッセージの取得');
+
+    _print_webhook_message($message);
+    return 0;
+}
+
+sub cmd_webhook_message_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(thread file)], [qw(file)]);
+
+    my ($id, $token, $message_id, @words) = @$pos;
+    my $content = join ' ', @words;
+
+    _fatal('使い方: perl test.pl webhook-message-edit <ID> <トークン> <メッセージID> [本文] [--thread ID] [--file パス]')
+        unless defined $id && defined $token && defined $message_id;
+
+    my $files = $opt->{file};
+    _fatal('本文か --file のどちらかが必要です')
+        unless length $content || ($files && @$files);
+
+    my %opts;
+    $opts{thread_id} = $opt->{thread} if defined $opt->{thread};
+    if ($files) {
+        $opts{files} = [
+            map { { filename => $_->[0], data => $_->[1] } }
+            map { [ _basename($_), _read_bytes($_) ] } @$files
+        ];
+    }
+
+    my $message = client()->edit_webhook_message(
+        $id, $token, $message_id,
+        length $content ? $content : undef,
+        %opts,
+    ) or _api_fail('Webhook メッセージの編集');
+
+    out "Webhook メッセージを編集しました: id=" . ($message->{id} // '?') . "\n";
+    return 0;
+}
+
+sub cmd_webhook_message_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(thread)]);
+
+    my ($id, $token, $message_id) = @$pos;
+    _fatal('使い方: perl test.pl webhook-message-delete <ID> <トークン> <メッセージID> [--thread ID]')
+        unless defined $id && defined $token && defined $message_id;
+
+    my %opts = defined $opt->{thread} ? (thread_id => $opt->{thread}) : ();
+    client()->delete_webhook_message($id, $token, $message_id, %opts)
+        or _api_fail('Webhook メッセージの削除');
+
+    out "Webhook メッセージを削除しました: $message_id\n";
+    return 0;
+}
+
+sub _basename {
+    my ($path) = @_;
+    $path =~ s{\\}{/}g;
+    $path =~ s{.*/}{};
+    return $path;
+}
+
+sub _read_bytes {
+    my ($path) = @_;
+
+    _fatal("ファイルが見つかりません: $path") unless -f $path;
+
+    open my $fh, '<:raw', $path
+        or _fatal("ファイルを開けません: $path");
+    local $/;
+    my $bytes = <$fh>;
+    close $fh;
+
+    return $bytes;
+}
+
+sub _print_webhook_message {
+    my ($message) = @_;
+
+    out sprintf "id=%s  author=%s\n",
+        $message->{id} // '?',
+        _author_name($message->{author});
+
+    out "本文: $message->{content}\n"
+        if defined $message->{content} && length $message->{content};
+
+    my $embeds = $message->{embeds} || [];
+    out "embed: " . scalar(@$embeds) . " 件\n" if @$embeds;
+
+    my $attachments = $message->{attachments} || [];
+    out "添付: " . scalar(@$attachments) . " 件\n" if @$attachments;
 }
 
 # ---------------------------------------------------------------- 添付 / コマンド登録
@@ -1570,6 +1899,14 @@ my %COMMANDS = (
     invite    => \&cmd_invite,
     user      => \&cmd_user,
     webhook   => \&cmd_webhook,
+    'webhook-create'  => \&cmd_webhook_create,
+    webhooks          => \&cmd_webhooks,
+    'webhook-info'    => \&cmd_webhook_info,
+    'webhook-edit'    => \&cmd_webhook_edit,
+    'webhook-delete'  => \&cmd_webhook_delete,
+    'webhook-message' => \&cmd_webhook_message,
+    'webhook-message-edit'   => \&cmd_webhook_message_edit,
+    'webhook-message-delete' => \&cmd_webhook_message_delete,
     upload    => \&cmd_upload,
     commands  => \&cmd_commands,
     poll      => \&cmd_poll,

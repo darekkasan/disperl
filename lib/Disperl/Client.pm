@@ -784,6 +784,269 @@ sub execute_webhook {
     return $self->_finish($res, $wait ? 'hash' : 'none');
 }
 
+# Webhook を作成する（Bot 認証が必要）。
+#   create_webhook($channel_id, name => '通知', avatar => 'data:image/png;base64,...')
+sub create_webhook {
+    my ($self, $channel_id, %opts) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+
+    my $payload = $self->_webhook_payload(\%opts, 1);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/channels/$channel_id/webhooks",
+        $payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# チャンネルに登録されている Webhook の一覧。
+sub get_channel_webhooks {
+    my ($self, $channel_id) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/channels/$channel_id/webhooks");
+    return $self->_finish($res, 'array');
+}
+
+# ギルドに登録されている Webhook の一覧。
+sub get_guild_webhooks {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n"
+        unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/webhooks");
+    return $self->_finish($res, 'array');
+}
+
+# Webhook を取得する。token を渡すと認証不要のエンドポイントを使う。
+#   get_webhook($webhook_id)
+#   get_webhook($webhook_id, token => '...')
+sub get_webhook {
+    my ($self, $webhook_id, %opts) = @_;
+
+    die "webhook id is required\n"
+        unless defined $webhook_id && length $webhook_id;
+
+    my ($url, $auth) = $self->_webhook_url($webhook_id, \%opts);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url, undef, { auth => $auth });
+    return $self->_finish($res, 'hash');
+}
+
+# Webhook を編集する。token 付きでは channel_id を変更できない。
+#   edit_webhook($webhook_id, name => '新しい名前')
+#   edit_webhook($webhook_id, token => '...', name => '...')
+sub edit_webhook {
+    my ($self, $webhook_id, %opts) = @_;
+
+    die "webhook id is required\n"
+        unless defined $webhook_id && length $webhook_id;
+
+    my $has_token = defined $opts{token} && length $opts{token};
+    die "channel_id cannot be changed with a webhook token\n"
+        if $has_token && exists $opts{channel_id};
+
+    my $payload = $self->_webhook_payload(\%opts, 0);
+    my ($url, $auth) = $self->_webhook_url($webhook_id, \%opts);
+
+    my $req_opts = { auth => $auth };
+    $req_opts = $self->_audit_opts(\%opts) unless $has_token;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('PATCH', $url, $payload, $req_opts);
+    return $self->_finish($res, 'hash');
+}
+
+# Webhook を削除する。token 付きなら認証不要。
+sub delete_webhook {
+    my ($self, $webhook_id, %opts) = @_;
+
+    die "webhook id is required\n"
+        unless defined $webhook_id && length $webhook_id;
+
+    my $has_token = defined $opts{token} && length $opts{token};
+    my ($url, $auth) = $self->_webhook_url($webhook_id, \%opts);
+
+    my $req_opts = { auth => $auth };
+    $req_opts = $self->_audit_opts(\%opts) unless $has_token;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('DELETE', $url, undef, $req_opts);
+    return $self->_finish($res, 'none');
+}
+
+# Webhook が送信したメッセージを取得する（token のみで認証不要）。
+#   get_webhook_message($id, $token, $message_id, thread_id => '...')
+sub get_webhook_message {
+    my ($self, $webhook_id, $token, $message_id, %opts) = @_;
+
+    $self->_check_webhook_token($webhook_id, $token);
+    die "message id is required\n"
+        unless defined $message_id && length $message_id;
+
+    my $url = "$API_BASE/webhooks/$webhook_id/" . _uri_escape($token)
+        . "/messages/$message_id";
+    $url .= '?thread_id=' . _uri_escape($opts{thread_id})
+        if defined $opts{thread_id};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url, undef, { auth => 0 });
+    return $self->_finish($res, 'hash');
+}
+
+# Webhook が送信したメッセージを編集する（files => [...] も可）。
+sub edit_webhook_message {
+    my ($self, $webhook_id, $token, $message_id, $content, %opts) = @_;
+
+    $self->_check_webhook_token($webhook_id, $token);
+    die "message id is required\n"
+        unless defined $message_id && length $message_id;
+
+    my $files = defined $opts{files} ? _normalize_files($opts{files}) : undef;
+
+    my %payload_opts = (%opts, ($files ? (allow_empty => 1) : ()));
+    my $payload = $self->_message_payload($content, \%payload_opts);
+
+    my $url = "$API_BASE/webhooks/$webhook_id/" . _uri_escape($token)
+        . "/messages/$message_id";
+    $url .= '?thread_id=' . _uri_escape($opts{thread_id})
+        if defined $opts{thread_id};
+
+    $self->{last_error} = undef;
+
+    my $res;
+    if ($files) {
+        my ($body, $boundary) = _multipart_body($payload, $files);
+        $res = $self->_request(
+            'PATCH',
+            $url,
+            undef,
+            {
+                raw          => $body,
+                content_type => "multipart/form-data; boundary=$boundary",
+                auth         => 0,
+            },
+        );
+    } else {
+        $res = $self->_request('PATCH', $url, $payload, { auth => 0 });
+    }
+
+    return $self->_finish($res, 'hash');
+}
+
+# Webhook が送信したメッセージを削除する。
+sub delete_webhook_message {
+    my ($self, $webhook_id, $token, $message_id, %opts) = @_;
+
+    $self->_check_webhook_token($webhook_id, $token);
+    die "message id is required\n"
+        unless defined $message_id && length $message_id;
+
+    my $url = "$API_BASE/webhooks/$webhook_id/" . _uri_escape($token)
+        . "/messages/$message_id";
+    $url .= '?thread_id=' . _uri_escape($opts{thread_id})
+        if defined $opts{thread_id};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('DELETE', $url, undef, { auth => 0 });
+    return $self->_finish($res, 'none');
+}
+
+sub _check_webhook_token {
+    my ($self, $webhook_id, $token) = @_;
+
+    die "webhook id is required\n"
+        unless defined $webhook_id && length $webhook_id;
+    die "webhook token is required\n"
+        unless defined $token && length $token;
+}
+
+# Webhook のエンドポイントと認証要否を返す。
+# token があれば /webhooks/{id}/{token}（認証不要）、無ければ /webhooks/{id}。
+sub _webhook_url {
+    my ($self, $webhook_id, $opts) = @_;
+
+    if (defined $opts->{token} && length $opts->{token}) {
+        return (
+            "$API_BASE/webhooks/$webhook_id/" . _uri_escape($opts->{token}),
+            0,
+        );
+    }
+
+    return ("$API_BASE/webhooks/$webhook_id", 1);
+}
+
+# Webhook の作成・編集で共通の JSON ボディを作る。
+sub _webhook_payload {
+    my ($self, $opts, $creating) = @_;
+
+    my %payload;
+
+    if (exists $opts->{name}) {
+        my $name = $opts->{name};
+        die "webhook name is required\n"
+            unless defined $name && !ref $name && length $name;
+        die "webhook name must be 80 characters or less (got "
+            . length($name) . ")\n"
+            if length($name) > 80;
+        $payload{name} = "$name";
+    } elsif ($creating) {
+        die "webhook name is required\n";
+    }
+
+    if (exists $opts->{avatar}) {
+        my $avatar = $opts->{avatar};
+
+        if (defined $avatar) {
+            die "webhook avatar must be a data URI (data:image/...;base64,...)\n"
+                unless !ref $avatar
+                    && $avatar =~ /^data:image\/[^;]+;base64,/;
+            $payload{avatar} = $avatar;
+        } else {
+            $payload{avatar} = undef;    # null で削除
+        }
+    }
+
+    if (exists $opts->{channel_id}) {
+        my $channel_id = $opts->{channel_id};
+        die "channel id is required\n"
+            unless defined $channel_id && !ref $channel_id && length $channel_id;
+        $payload{channel_id} = "$channel_id";
+    }
+
+    die "name, avatar or channel_id is required\n"
+        unless $creating || keys %payload;
+
+    return \%payload;
+}
+
+# 監査ログの理由（X-Audit-Log-Reason）をヘッダに変換する。
+sub _audit_opts {
+    my ($self, $opts) = @_;
+
+    return {} unless defined $opts->{reason} && length $opts->{reason};
+
+    die "reason must be 512 characters or less\n"
+        if length($opts->{reason}) > 512;
+
+    return {
+        headers => {
+            'X-Audit-Log-Reason' => _uri_escape($opts->{reason}),
+        },
+    };
+}
+
 # ---------------------------------------------------------------- files
 
 my %MIME = (
@@ -1609,6 +1872,13 @@ sub _request {
     my %args = (headers => {});
     $args{headers}{'Authorization'} = "Bot $self->{token}"
         unless exists $opts->{auth} && !$opts->{auth};
+
+    if ($opts->{headers}) {
+        %{ $args{headers} } = (
+            %{ $args{headers} },
+            %{ $opts->{headers} },
+        );
+    }
 
     if (defined $opts->{raw}) {
         $args{content} = $opts->{raw};
