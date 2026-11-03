@@ -1,0 +1,211 @@
+# Disperl::Gateway
+
+Discord Gateway（WebSocket）に接続してイベントを受信します。
+Identify / Resume / Heartbeat / 自動再接続 / プレゼンス変更に対応しています。
+
+## 目次
+
+- [基本的な受信](#基本的な受信)
+- [コンストラクタ](#コンストラクタ)
+- [コールバック](#コールバック)
+- [Intent](#intent)
+- [再接続](#再接続)
+- [プレゼンス](#プレゼンス)
+- [関連ページ](#関連ページ)
+
+## 基本的な受信
+
+```perl
+use Disperl::Client;
+use Disperl::Gateway;
+
+my $client = Disperl::Client->new(token => $ENV{DISCORD_TOKEN});
+
+my $gw = Disperl::Gateway->new(
+    token   => $ENV{DISCORD_TOKEN},
+    intents => [qw(GUILDS GUILD_MESSAGES MESSAGE_CONTENT)],
+    on_message => sub {
+        my $msg = shift;
+        return if $msg->{author}{bot};          # Bot 自身は無視
+        $client->send_message($msg->{channel_id}, "echo: $msg->{content}");
+    },
+);
+
+$gw->run;    # stop() が呼ばれるまでブロックする
+```
+
+## コンストラクタ
+
+| 引数 | 既定値 | 説明 |
+|---|---|---|
+| `token` | （必須） | Bot トークン。`Bot ` を付けない生の値 |
+| `intents` | `GUILDS \| GUILD_MESSAGES` (513) | 整数、または名前の配列 |
+| `on_event` | — | `sub { my ($type, $data, $raw) = @_ }` 全イベント |
+| `on_message` | — | `MESSAGE_CREATE` のときだけ |
+| `on_interaction` | — | `INTERACTION_CREATE` のときだけ（全 type） |
+| `on_command` | — | type 2（スラッシュコマンド）だけ |
+| `on_component` | — | type 3（ボタン / セレクト）だけ |
+| `on_autocomplete` | — | type 4（オートコンプリート）だけ |
+| `on_modal` | — | type 5（モーダル送信）だけ |
+| `on_ready` | — | `READY` のときだけ |
+| `on_error` | 未指定なら `warn` | 接続エラー・再接続の通知 |
+| `reconnect` | `1` | 自動再接続するか |
+| `max_reconnects` | `5` | 連続エラーの上限（READY でリセット） |
+| `reconnect_delay` | `5` | 4008（レート制限）で再接続するまでの待ち秒 |
+| `timeout` | `60` | 受信のタイムアウト秒 |
+| `url` | `wss://gateway.discord.gg/?v=10&encoding=json` | 接続先 |
+| `ws_class` | `Disperl::WebSocket` | 差し替え可能（テスト用） |
+| `sleep` | `sub { sleep $_[0] }` | 再接続待ちのフック（テスト用） |
+| `status` | 未指定なら Discord の既定 | `online` / `idle` / `dnd` / `invisible` / `offline` |
+| `activity` | — | 文字列、または `{ type => ..., name => ... }` |
+| `activities` | — | アクティビティの配列（複数指定用） |
+| `afk` | `0` | AFK 状態にするか |
+| `since` | `null` | アイドルになった時刻（Unix ミリ秒）。`0` で null |
+| `presence_interval` | `4` | プレゼンス更新の最小間隔（秒） |
+
+参照用アクセサ:
+
+| メソッド | 内容 |
+|---|---|
+| `$gw->intents` | 現在の Intent ビットマスク |
+| `$gw->session_id` | セッション ID（READY 後） |
+| `$gw->application_id` | アプリケーション ID（READY 後） |
+| `$gw->user` | Bot 自身のユーザー情報（READY 後） |
+| `$gw->is_running` | `run` 中か |
+| `$gw->presence` | 現在のプレゼンス（未設定なら `undef`） |
+
+`stop()` でループを止められます。
+
+## コールバック
+
+`on_event` は**すべての** Dispatch イベントで呼ばれます。個別のコールバックと併用できます。
+
+```perl
+my $gw = Disperl::Gateway->new(
+    token    => $ENV{DISCORD_TOKEN},
+    on_event => sub {
+        my ($type, $data, $raw) = @_;
+        print "event: $type\n";
+    },
+    on_message => sub { ... },
+);
+```
+
+`INTERACTION_CREATE` では `on_interaction` が先に呼ばれ、その後 type に応じて
+`on_command` / `on_component` / `on_autocomplete` / `on_modal` が呼ばれます
+（同じイベントで複数のコールバックが動く点に注意）。
+
+## Intent
+
+`intents` は整数ビットマスクか、名前の配列で指定します。
+名前からビットを作るには `intent_bits` を使います。
+
+```perl
+my $bits = Disperl::Gateway->intent_bits(qw(GUILDS MESSAGE_CONTENT));
+
+my $gw = Disperl::Gateway->new(
+    token   => $ENV{DISCORD_TOKEN},
+    intents => $bits,
+);
+```
+
+| 名前 | ビット | 備考 |
+|---|---|---|
+| `GUILDS` | `1 << 0` | |
+| `GUILD_MEMBERS` | `1 << 1` | **Privileged** |
+| `GUILD_MODERATION` | `1 << 2` | |
+| `GUILD_EMOJIS_AND_STICKERS` | `1 << 3` | |
+| `GUILD_INTEGRATIONS` | `1 << 4` | |
+| `GUILD_WEBHOOKS` | `1 << 5` | |
+| `GUILD_INVITES` | `1 << 6` | |
+| `GUILD_VOICE_STATES` | `1 << 7` | |
+| `GUILD_PRESENCES` | `1 << 8` | **Privileged** |
+| `GUILD_MESSAGES` | `1 << 9` | |
+| `GUILD_MESSAGE_REACTIONS` | `1 << 10` | |
+| `GUILD_MESSAGE_TYPING` | `1 << 11` | |
+| `DIRECT_MESSAGES` | `1 << 12` | |
+| `DIRECT_MESSAGE_REACTIONS` | `1 << 13` | |
+| `DIRECT_MESSAGE_TYPING` | `1 << 14` | |
+| `MESSAGE_CONTENT` | `1 << 15` | **Privileged** |
+| `GUILD_SCHEDULED_EVENTS` | `1 << 16` | |
+
+- 既定は `GUILDS | GUILD_MESSAGES`（513）
+- `MESSAGE_CONTENT` が無いと `$msg->{content}` は空になる
+- Privileged Intent は Developer Portal の Bot 設定で有効化が必要
+
+## 再接続
+
+`run` は接続が切れるたびに次を判断して再接続します。
+
+| 状況 | 動作 |
+|---|---|
+| 正常な切断 / Resume 可能 | Resume（`op 6`）で再開 |
+| `4006` / `4007` / `4009` | セッションを破棄して Identify からやり直す |
+| `4008`（レート制限） | `reconnect_delay` 秒待ってから再接続 |
+| `4004` / `4010`〜`4014` | **再接続しない**（トークン・Intent 不正） |
+| Heartbeat の ACK が返らない | ゾンビ接続とみなして再接続 |
+| `op 7`（Reconnect） | 再接続 |
+
+- 連続失敗回数は READY / RESUMED で 0 に戻る
+- 失敗が `max_reconnects` を超えると `run` は戻る（`die` はしない）
+- `reconnect => 0` で自動再接続を無効化
+- Resume 時は READY で受け取った `resume_gateway_url` を使う
+- 初回 Heartbeat は `heartbeat_interval` の範囲でランダムにずらす
+
+エラーは `on_error` に文字列で渡されます（未指定なら `warn`）。
+`on_error => sub {}` で無音にできます。
+
+## プレゼンス
+
+```perl
+# 接続時の初期ステータス
+my $gw = Disperl::Gateway->new(
+    token    => $ENV{DISCORD_TOKEN},
+    status   => 'idle',
+    activity => '待機中',
+);
+
+# 接続中に変更する
+$gw->set_presence(status => 'online');
+$gw->set_presence(status => 'dnd', activity => '作業中');
+$gw->set_presence(status => 'invisible');          # オフライン表示
+$gw->set_presence(activity => { type => 'watching', name => '配信' });
+$gw->set_presence(activity => []);                 # アクティビティを消す
+```
+
+`activity` の `type`:
+
+| 名前 | 数値 |
+|---|---|
+| `playing` | 0 |
+| `streaming` | 1 |
+| `listening` | 2 |
+| `watching` | 3 |
+| `custom` | 4 |
+| `competing` | 5 |
+
+```perl
+$gw->set_presence(activity => {
+    type  => 'custom',
+    state => '作業中',
+    emoji => { name => '💻' },
+});
+```
+
+ルール:
+
+- `set_presence` は指定しなかった項目を現在値から引き継ぐ
+- 接続前なら次の Identify で、接続中なら READY 後に反映される
+- `streaming` は `url` が必須
+- `custom` は `state` に表示テキストを入れる（`name` 省略時は `Custom Status`）
+- 変更は Gateway に接続している間だけ有効。切断すると通常のオフラインに戻る
+- Discord の制限（20 秒に 5 回）を超えないよう、既定で 4 秒間隔に間引く
+- 間引かれている間の変更は最新の 1 件だけが送られる
+- `invisible` は他のユーザーからオフラインに見える（Bot 自体は動作を続ける）
+- REST API では変更できない（Gateway の `op 3` を使用）
+
+## 関連ページ
+
+- [インタラクション](interactions.md)
+- [Client](client.md)
+- [トラブルシューティング](troubleshooting.md)
