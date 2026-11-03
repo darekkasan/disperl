@@ -176,6 +176,11 @@ CLI では `DISPERL_CONSOLE_ENCODING` で変更できます。
 Perl は日本語を含むパスからスクリプトを開けないことがあります。
 ASCII のみのパスに clone するか、ジャンクション経由で実行してください。
 
+### `HOME` が見つからない
+
+Windows では環境変数 `HOME` は通常未設定です。`USERPROFILE` を使ってください。
+`test.pl` は `FindBin` でパスを解決するため、`HOME` が無くても動きます。
+
 ### `.env` が読めない
 
 - PowerShell の `>` リダイレクトは UTF-16 になることがある → エディタで UTF-8 保存
