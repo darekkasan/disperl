@@ -21,6 +21,7 @@ Perl 製の Discord Bot 用クライアント。REST API と Gateway（WebSocket
 
 - [必要なもの](#必要なもの)
 - [セットアップ](#セットアップ)
+- [環境構築（Windows）](#環境構築windows)
 - [クイックスタート](#クイックスタート)
 - [モジュール構成](#モジュール構成)
 - [Disperl::Client](#disperlclient)
@@ -33,7 +34,8 @@ Perl 製の Discord Bot 用クライアント。REST API と Gateway（WebSocket
 
 ## 必要なもの
 
-- Perl 5.20 以降
+- Perl 5.20 以降（動作確認は Strawberry Perl 5.42.3 / 64bit ポータブル版）
+  - Windows で管理者権限が無い場合は[環境構築（Windows）](#環境構築windows)を参照
 - `Disperl::Client` は core モジュールのみ
   （`HTTP::Tiny` / `JSON::PP` / `Encode` / `Time::HiRes`）
 - `Disperl::Gateway` は `IO::Socket::SSL` を使用
@@ -66,6 +68,42 @@ DISCORD_CHANNEL_ID=送信先チャンネル ID
 
 > `.env` やトークンは絶対にコミットしないでください。漏えいした場合は
 > Discord Developer Portal でトークンを再生成してください。
+
+## 環境構築（Windows）
+
+管理者権限が無い環境では、Strawberry Perl のポータブル版を使います（MSI インストーラ不要）。
+
+```powershell
+$root = "$env:LOCALAPPDATA\Programs\strawberry-perl"
+$zip  = "$env:TEMP\strawberry-perl-portable.zip"
+
+# 最新リリースのポータブル zip を取得（バージョンは自動で解決）
+$asset = (Invoke-RestMethod `
+    'https://api.github.com/repos/StrawberryPerl/Perl-Dist-Strawberry/releases/latest'
+).assets | Where-Object name -like '*64bit-portable.zip' | Select-Object -First 1
+curl.exe -L --fail -o $zip $asset.browser_download_url
+
+New-Item -ItemType Directory -Force $root | Out-Null
+tar.exe -xf $zip -C $root
+
+# ユーザー PATH に追加（c\bin は OpenSSL の DLL 用）
+$dirs = @("$root\c\bin", "$root\perl\bin", "$root\perl\site\bin", "$root\perl\vendor\bin")
+$cur  = [Environment]::GetEnvironmentVariable('Path', 'User')
+$new  = @(@($cur -split ';' | Where-Object { $_ }) + $dirs) | Select-Object -Unique
+[Environment]::SetEnvironmentVariable('Path', ($new -join ';'), 'User')
+```
+
+```sh
+perl -v        # バージョン確認
+prove -l t     # 全テスト（ネットワーク不要）
+```
+
+- PATH は**新しく開いたターミナル**から有効になります
+- `c\bin` を入れ忘れると `IO::Socket::SSL` が
+  `Can't load .../Net/SSLeay/SSLeay.xs.dll` で落ちます（`Disperl::Gateway` に必要）
+- このリポジトリの確認環境は `%LOCALAPPDATA%\Programs\strawberry-perl-5.42.3.1`
+- PATH を変えたくない場合は展開先の `portableshell.bat` から起動する方法もあります
+- アンインストールはフォルダを削除し、ユーザー PATH から上の 4 つを外すだけです
 
 ## クイックスタート
 
@@ -997,6 +1035,7 @@ Linux / Windows のどちらでも動きます（`test.pl` は `FindBin` でパ�
 
 ### Windows
 
+- Perl が未導入・`perl` が見つからない場合は[環境構築（Windows）](#環境構築windows)を参照
 - Perl は日本語を含むパス（例: `G:\マイドライブ\...`）からスクリプトを開けないことがあります
   （`Can't open perl script ...`）。ASCII のみのパスに clone するか、ジャンクション経由で実行してください
 - 環境変数 `HOME` は Windows では通常未設定です（`USERPROFILE` を使う）。
