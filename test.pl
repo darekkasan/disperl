@@ -23,6 +23,9 @@ use Disperl::Permissions qw(
     guild_permissions channel_permissions
 );
 use Disperl::AuditLog qw(audit_action_map audit_action_name);
+use Disperl::AutoMod qw(
+    automod_event_name automod_trigger_name automod_action_name
+);
 
 load_dotenv("$FindBin::Bin/.env");
 
@@ -274,6 +277,21 @@ disperl 動作確認 CLI
   perl test.pl audit-log [--guild ID] [--user ID] [--action 種別]
       [--before ID] [--after ID] [--limit N] [--actions]
                                        監査ログを表示する（VIEW_AUDIT_LOG が必要）
+  perl test.pl automod [--guild ID]    AutoMod ルール一覧
+  perl test.pl automod-rule <ID> [--guild ID]
+                                       AutoMod ルールを表示する
+  perl test.pl automod-create <名前> --trigger 種別 [--event 種別]
+      [--keyword 語]... [--regex 正規表現]... [--preset 名前]... [--allow 語]...
+      [--mention-limit N] [--raid-protection]
+      [--block] [--custom-message 文] [--alert-channel ID] [--timeout 秒]
+      [--block-interaction] [--exempt-role ID]... [--exempt-channel ID]...
+      [--disabled] [--guild ID] [--reason 理由]
+                                       AutoMod ルールを作る
+  perl test.pl automod-edit <ID> [--name 名前] [--event 種別] [--trigger 種別]
+      [上と同じ trigger / action / exempt オプション] [--enable|--disable]
+      [--guild ID] [--reason 理由]     AutoMod ルールを変更する
+  perl test.pl automod-delete <ID> [--guild ID] [--reason 理由]
+                                       AutoMod ルールを削除する
   perl test.pl permissions [権限名 ...] 権限名からビットマスクを計算する（--names BITS で逆引き）
   perl test.pl events [--guild ID] [--users]
                                        スケジュールイベント一覧
@@ -347,6 +365,10 @@ disperl 動作確認 CLI
   perl test.pl audit-log --action MEMBER_KICK --limit 50
   perl test.pl audit-log --user 123456789012345678 --after 0
   perl test.pl audit-log --actions
+  perl test.pl automod
+  perl test.pl automod-create "スパム対策" --trigger KEYWORD --keyword spam --regex "https?://" --block --alert-channel 123456789012345678
+  perl test.pl automod-create "メンション制限" --trigger MENTION_SPAM --mention-limit 5 --timeout 600 --block
+  perl test.pl automod-edit 123456789012345678 --disable
   perl test.pl permissions VIEW_CHANNEL SEND_MESSAGES
   perl test.pl events
   perl test.pl event-create "定例会" --start 2026-12-01T20:00:00Z --end 2026-12-01T22:00:00Z --location "Discord"
@@ -1693,6 +1715,251 @@ sub cmd_audit_log {
 
     _print_audit_entry($_, \%users) for @$entries;
     out sprintf "(%d 件)\n", scalar @$entries;
+    return 0;
+}
+
+# ---------------------------------------------------------------- AutoMod
+
+sub _print_automod_rule {
+    my ($rule) = @_;
+
+    out sprintf "  id:         %s\n", $rule->{id} // '?';
+    out sprintf "  name:       %s\n", $rule->{name} // '';
+    out sprintf "  enabled:    %s\n", $rule->{enabled} ? 'yes' : 'no';
+    out sprintf "  event:      %s\n",
+        automod_event_name($rule->{event_type}) // $rule->{event_type} // '?';
+    out sprintf "  trigger:    %s\n",
+        automod_trigger_name($rule->{trigger_type}) // $rule->{trigger_type} // '?';
+    out sprintf "  creator:    %s\n", $rule->{creator_id} // '-';
+
+    if (ref $rule->{trigger_metadata} eq 'HASH') {
+        for my $key (sort keys %{ $rule->{trigger_metadata} }) {
+            my $value = $rule->{trigger_metadata}{$key};
+            next unless defined $value;
+            out sprintf "  %-11s %s\n", "$key:", _audit_value($value);
+        }
+    }
+
+    for my $action (@{ $rule->{actions} || [] }) {
+        next unless ref $action eq 'HASH';
+        out sprintf "  action:     %s\n",
+            automod_action_name($action->{type}) // $action->{type} // '?';
+        if (ref $action->{metadata} eq 'HASH') {
+            for my $key (sort keys %{ $action->{metadata} }) {
+                my $value = $action->{metadata}{$key};
+                next unless defined $value;
+                out sprintf "    %s = %s\n", $key, _audit_value($value);
+            }
+        }
+    }
+
+    out sprintf "  exempt:     roles=%s channels=%s\n",
+        @{ $rule->{exempt_roles} || [] } ? join(',', @{ $rule->{exempt_roles} }) : '-',
+        @{ $rule->{exempt_channels} || [] } ? join(',', @{ $rule->{exempt_channels} }) : '-';
+}
+
+sub cmd_automod {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)]);
+
+    _fatal("不明な引数: $pos->[0]") if @$pos;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $rules = client()->get_guild_automod_rules($guild_id)
+        or _api_fail('AutoMod ルール一覧の取得');
+
+    for my $rule (@$rules) {
+        out sprintf "%-20s %-3s %-14s %-16s %s\n",
+            $rule->{id} // '?',
+            $rule->{enabled} ? 'on' : 'off',
+            automod_trigger_name($rule->{trigger_type}) // '?',
+            automod_event_name($rule->{event_type}) // '?',
+            $rule->{name} // '';
+    }
+    out sprintf "(%d 件)\n", scalar @$rules;
+    return 0;
+}
+
+sub cmd_automod_rule {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl automod-rule <ルールID> [--guild ID]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $rule = client()->get_guild_automod_rule($guild_id, $id)
+        or _api_fail('AutoMod ルールの取得');
+
+    _print_automod_rule($rule);
+    return 0;
+}
+
+# オプションから trigger_metadata を組み立てる（無ければ undef）。
+sub _automod_metadata_from_opt {
+    my ($opt) = @_;
+
+    my %metadata;
+    $metadata{keyword_filter} = $opt->{keyword} if $opt->{keyword};
+    $metadata{regex_patterns} = $opt->{regex}   if $opt->{regex};
+    $metadata{presets}        = $opt->{preset}  if $opt->{preset};
+    $metadata{allow_list}     = $opt->{allow}   if $opt->{allow};
+    $metadata{mention_total_limit} = $opt->{'mention-limit'}
+        if defined $opt->{'mention-limit'};
+    $metadata{mention_raid_protection_enabled} = 1
+        if $opt->{'raid-protection'};
+
+    return keys %metadata ? \%metadata : undef;
+}
+
+# オプションから actions を組み立てる（無ければ undef）。
+sub _automod_actions_from_opt {
+    my ($opt) = @_;
+
+    _fatal('--custom-message は --block と一緒に指定してください')
+        if defined $opt->{'custom-message'} && !$opt->{block};
+
+    my @actions;
+
+    if ($opt->{block}) {
+        my %metadata;
+        $metadata{custom_message} = $opt->{'custom-message'}
+            if defined $opt->{'custom-message'};
+        push @actions, {
+            type     => 'BLOCK_MESSAGE',
+            %metadata ? (metadata => \%metadata) : (),
+        };
+    }
+
+    push @actions, {
+        type     => 'SEND_ALERT_MESSAGE',
+        metadata => { channel_id => $opt->{'alert-channel'} },
+    } if defined $opt->{'alert-channel'};
+
+    push @actions, {
+        type     => 'TIMEOUT',
+        metadata => { duration_seconds => $opt->{timeout} },
+    } if defined $opt->{timeout};
+
+    push @actions, { type => 'BLOCK_MEMBER_INTERACTION' }
+        if $opt->{'block-interaction'};
+
+    return @actions ? \@actions : undef;
+}
+
+my @AUTOMOD_VALUED = qw(
+    guild name event trigger keyword regex preset allow mention-limit
+    alert-channel timeout custom-message exempt-role exempt-channel reason
+);
+my @AUTOMOD_REPEATABLE = qw(
+    keyword regex preset allow exempt-role exempt-channel
+);
+my @AUTOMOD_FLAGS = qw(
+    block block-interaction raid-protection disabled enable disable
+);
+
+sub cmd_automod_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        \@AUTOMOD_VALUED, \@AUTOMOD_REPEATABLE, \@AUTOMOD_FLAGS);
+
+    my $name = join ' ', @$pos;
+    _fatal('使い方: perl test.pl automod-create <名前> --trigger 種別 [--event 種別] [trigger / action オプション] [--guild ID] [--reason 理由]')
+        unless length $name;
+    _fatal('--trigger を指定してください') unless defined $opt->{trigger};
+
+    my %opts = (
+        name         => $name,
+        trigger_type => $opt->{trigger},
+        enabled      => $opt->{disabled} ? 0 : 1,
+    );
+    $opts{event_type} = $opt->{event} if defined $opt->{event};
+
+    my $metadata = _automod_metadata_from_opt($opt);
+    $opts{trigger_metadata} = $metadata if defined $metadata;
+
+    my $actions = _automod_actions_from_opt($opt);
+    _fatal('--block などのアクションを 1 つ以上指定してください')
+        unless defined $actions;
+    $opts{actions} = $actions;
+
+    $opts{exempt_roles}    = $opt->{'exempt-role'}
+        if defined $opt->{'exempt-role'};
+    $opts{exempt_channels} = $opt->{'exempt-channel'}
+        if defined $opt->{'exempt-channel'};
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $rule = client()->create_guild_automod_rule($guild_id, %opts)
+        or _api_fail('AutoMod ルールの作成');
+
+    out sprintf "AutoMod ルールを作成しました: %s %s\n",
+        $rule->{id} // '?', $rule->{name} // '';
+    return 0;
+}
+
+sub cmd_automod_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        \@AUTOMOD_VALUED, \@AUTOMOD_REPEATABLE, \@AUTOMOD_FLAGS);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl automod-edit <ルールID> [--name 名前] [--event 種別] [--trigger 種別] [trigger / action オプション] [--enable|--disable] [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my %opts;
+    $opts{name}       = $opt->{name}    if defined $opt->{name};
+    $opts{event_type} = $opt->{event}   if defined $opt->{event};
+    $opts{trigger_type} = $opt->{trigger} if defined $opt->{trigger};
+
+    my $metadata = _automod_metadata_from_opt($opt);
+    $opts{trigger_metadata} = $metadata if defined $metadata;
+
+    my $actions = _automod_actions_from_opt($opt);
+    $opts{actions} = $actions if defined $actions;
+
+    $opts{enabled} = 1 if $opt->{enable};
+    $opts{enabled} = 0 if $opt->{disable};
+
+    $opts{exempt_roles}    = $opt->{'exempt-role'}
+        if defined $opt->{'exempt-role'};
+    $opts{exempt_channels} = $opt->{'exempt-channel'}
+        if defined $opt->{'exempt-channel'};
+
+    _fatal('変更する項目がありません（--name などを指定してください）')
+        unless keys %opts;
+
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $rule = client()->update_guild_automod_rule($guild_id, $id, %opts)
+        or _api_fail('AutoMod ルールの変更');
+
+    out sprintf "AutoMod ルールを変更しました: %s %s\n",
+        $rule->{id} // $id, $rule->{name} // '';
+    return 0;
+}
+
+sub cmd_automod_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl automod-delete <ルールID> [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my %opts;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    client()->delete_guild_automod_rule($guild_id, $id, %opts)
+        or _api_fail('AutoMod ルールの削除');
+
+    out "AutoMod ルールを削除しました: $id\n";
     return 0;
 }
 
@@ -3049,6 +3316,11 @@ my %COMMANDS = (
     prune      => \&cmd_prune,
     'member-perms' => \&cmd_member_perms,
     'audit-log'    => \&cmd_audit_log,
+    automod          => \&cmd_automod,
+    'automod-rule'   => \&cmd_automod_rule,
+    'automod-create' => \&cmd_automod_create,
+    'automod-edit'   => \&cmd_automod_edit,
+    'automod-delete' => \&cmd_automod_delete,
     permissions => \&cmd_permissions,
     events      => \&cmd_events,
     event       => \&cmd_event,

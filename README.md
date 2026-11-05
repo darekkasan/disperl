@@ -21,6 +21,7 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - メンバーの一覧・検索・ニックネーム変更・ロール付与 / 剥奪・タイムアウト
 - キック・BAN / BAN 解除・BAN 一覧・プルーン
 - 監査ログの取得（実行者 / 種別 / 期間で絞り込み）とイベント名の変換
+- AutoMod ルールの作成・取得・変更・削除（キーワード / スパム / メンション / プロフィール）
 - スケジュールイベント（ボイス / ステージ / 外部）の作成・変更・削除・参加者取得
 - 権限名とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）
 - レート制限（バケット単位・429）対応と事前スロットリング
@@ -112,6 +113,7 @@ if ($message) {
 | `Disperl::Components` | ボタン／セレクト／モーダルのビルダー |
 | `Disperl::Permissions` | 権限名とビットマスクの相互変換・実効権限の計算 |
 | `Disperl::AuditLog` | 監査ログのイベント種別（名前と数値の変換） |
+| `Disperl::AutoMod` | AutoMod のトリガー / アクション / プリセット種別 |
 | `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が使用） |
 | `Disperl::Config` | `.env` ローダー |
 
@@ -126,6 +128,7 @@ if ($message) {
 | [ロール管理](docs/roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
 | [メンバー管理](docs/members.md) | 一覧・検索・変更・ロール付与・キック / BAN・プルーン・実効権限 |
 | [監査ログ](docs/audit-log.md) | 取得・絞り込み・ページング・イベント種別・変更内容 |
+| [AutoMod](docs/automod.md) | ルールの作成・取得・変更・削除・トリガー・アクション |
 | [スケジュールイベント](docs/events.md) | 作成・変更・削除・参加者 |
 | [ギルド・ユーザー・招待](docs/guilds.md) | ギルド情報・メンバー・DM・招待 |
 | [Webhook](docs/webhooks.md) | 実行・管理・送信済みメッセージ |
@@ -254,6 +257,32 @@ for my $entry (@{ $log->{audit_log_entries} || [] }) {
 
 `before` / `after` でページングできます。詳細は [監査ログ](docs/audit-log.md) を参照してください。
 
+### AutoMod
+
+```perl
+my $rule = $client->create_guild_automod_rule(
+    $guild_id,
+    name         => 'スパム対策',
+    trigger_type => 'KEYWORD',
+    trigger_metadata => {
+        keyword_filter => ['spam', 'crypto'],
+        regex_patterns => ['https?://\\S+'],
+    },
+    actions => [
+        { type => 'BLOCK_MESSAGE',
+          metadata => { custom_message => '宣伝は禁止です' } },
+        { type => 'SEND_ALERT_MESSAGE',
+          metadata => { channel_id => $log_channel_id } },
+    ],
+    enabled => 1,
+);
+
+$client->update_guild_automod_rule($guild_id, $rule->{id}, enabled => 0);
+$client->delete_guild_automod_rule($guild_id, $rule->{id});
+```
+
+詳細は [AutoMod](docs/automod.md) を参照してください。
+
 ### Webhook
 
 ```perl
@@ -312,6 +341,8 @@ perl test.pl prune --days 7                  # 対象人数を確認
 perl test.pl member-perms <ユーザーID> --channel <チャンネルID>
 perl test.pl audit-log --action MEMBER_KICK --limit 20
 perl test.pl audit-log --actions              # イベント種別の一覧
+perl test.pl automod                          # AutoMod ルール一覧
+perl test.pl automod-create "スパム対策" --trigger KEYWORD --keyword spam --block
 perl test.pl event-create "定例会" --start 2026-12-01T20:00:00Z --end 2026-12-01T22:00:00Z --location Discord
 perl test.pl commands              # /ping /echo /poll /form を登録
 perl test.pl watch                 # Gateway で受信
@@ -368,6 +399,7 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - メンバー: 一覧・検索・ニックネーム・ロール付与 / 剥奪・タイムアウト・キック / BAN / プルーン
 - 権限: 名前とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）
 - 監査ログ: 取得・実行者 / 種別 / 期間での絞り込み・イベント名の変換（`Disperl::AuditLog`）
+- AutoMod: ルールの作成・取得・変更・削除・トリガー / アクションの検証（`Disperl::AutoMod`）
 - スケジュールイベント: 一覧・取得・作成・変更・削除・参加者
 - DM・ギルド情報の取得・招待・Webhook 実行（ファイル添付可）
 - Webhook の管理と送信済みメッセージの取得・編集・削除
@@ -380,7 +412,6 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 
 - 音声（Voice）
 - OAuth2
-- AutoMod
 - ギルド設定の変更
 - フォーラム / メディアチャンネルへの投稿（チャンネル自体の作成は可）
 - 課金・Entitlements・SKU

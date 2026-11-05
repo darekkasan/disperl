@@ -89,6 +89,22 @@
 | `action_type` | 既知のイベント名または数値 |
 | `user_id` / `before` / `after` | 空でない文字列 |
 
+## AutoMod
+
+| 項目 | 上限 |
+|---|---|
+| `name` | 1〜100 文字 |
+| `actions` | 1〜5 個 |
+| `keyword_filter` | 1,000 個、1 つ 60 文字 |
+| `regex_patterns` | 10 個、1 つ 260 文字 |
+| `allow_list` | 100 個（`KEYWORD_PRESET` は 1,000 個）、1 つ 60 文字 |
+| `mention_total_limit` | 0〜50 |
+| `custom_message`（BLOCK_MESSAGE） | 150 文字 |
+| `duration_seconds`（TIMEOUT） | 1〜2,419,200 |
+| `exempt_roles` | 20 個 |
+| `exempt_channels` | 50 個 |
+| `reason`（監査ログ） | 512 文字 |
+
 ## スケジュールイベント
 
 | 項目 | 上限 |
@@ -134,6 +150,8 @@
 | レート制限 | バケット単位。自動リトライあり |
 | 1 ギルドのチャンネル数 | 500（Discord 側） |
 | 1 カテゴリのチャンネル数 | 50（Discord 側） |
+| AutoMod の KEYWORD ルール数 | 1 ギルド 6 件（Discord 側） |
+| AutoMod の KEYWORD 以外のルール数 | 種類ごとに 1 ギルド 1 件（Discord 側） |
 
 ## バリデーションの種類
 
@@ -151,6 +169,7 @@
 - [ロール管理](roles.md)
 - [メンバー管理](members.md)
 - [監査ログ](audit-log.md)
+- [AutoMod](automod.md)
 - [スケジュールイベント](events.md)
 - [Webhook](webhooks.md)
 - [インタラクション](interactions.md)

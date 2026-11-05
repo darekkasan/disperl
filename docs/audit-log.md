@@ -218,6 +218,7 @@ perl test.pl audit-log --actions               # イベント種別の一覧
 
 ## 関連ページ
 
+- [AutoMod](automod.md)
 - [ロール管理](roles.md)
 - [メンバー管理](members.md)
 - [チャンネル管理](channels.md)

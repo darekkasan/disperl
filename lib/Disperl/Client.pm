@@ -8,6 +8,10 @@ use Time::HiRes qw(time);
 use Time::Local qw(timegm);
 use Disperl::Permissions qw(permission_bits);
 use Disperl::AuditLog qw(audit_action_type);
+use Disperl::AutoMod qw(
+    automod_trigger_type automod_event_type
+    automod_action_type automod_preset_type
+);
 
 my $API_BASE    = 'https://discord.com/api/v10';
 my $MAX_CONTENT = 2000;
@@ -1261,6 +1265,346 @@ sub get_guild_audit_log {
     $self->{last_error} = undef;
     my $res = $self->_request('GET', $url);
     return $self->_finish($res, 'hash');
+}
+
+# ---------------------------------------------------------------- automod
+
+# AutoMod ルールの一覧（MANAGE_GUILD が必要）。
+sub get_guild_automod_rules {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/auto-moderation/rules");
+    return $self->_finish($res, 'array');
+}
+
+# AutoMod ルールを 1 件取得する（MANAGE_GUILD が必要）。
+sub get_guild_automod_rule {
+    my ($self, $guild_id, $rule_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "rule id is required\n"  unless defined $rule_id  && length $rule_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET',
+        "$API_BASE/guilds/$guild_id/auto-moderation/rules/$rule_id",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# AutoMod ルールを作る（MANAGE_GUILD が必要）。
+#   create_guild_automod_rule($guild_id,
+#       name         => 'スパム対策',
+#       trigger_type => 'KEYWORD',
+#       trigger_metadata => {
+#           keyword_filter => ['spam'],
+#           regex_patterns => ['https?://'],
+#       },
+#       actions => [
+#           { type => 'BLOCK_MESSAGE' },
+#           { type => 'SEND_ALERT_MESSAGE', metadata => { channel_id => $channel_id } },
+#       ],
+#       enabled => 1,
+#   )
+sub create_guild_automod_rule {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $payload = $self->_automod_payload(\%opts, 1);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/guilds/$guild_id/auto-moderation/rules",
+        $payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# AutoMod ルールを変更する。指定したフィールドだけ更新される。
+#   update_guild_automod_rule($guild_id, $rule_id, enabled => 0)
+#   update_guild_automod_rule($guild_id, $rule_id,
+#       actions => [ { type => 'BLOCK_MESSAGE' } ])
+sub update_guild_automod_rule {
+    my ($self, $guild_id, $rule_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "rule id is required\n"  unless defined $rule_id  && length $rule_id;
+
+    my $payload = $self->_automod_payload(\%opts, 0);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH',
+        "$API_BASE/guilds/$guild_id/auto-moderation/rules/$rule_id",
+        $payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# AutoMod ルールを削除する（MANAGE_GUILD が必要）。成功時は 1。
+sub delete_guild_automod_rule {
+    my ($self, $guild_id, $rule_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "rule id is required\n"  unless defined $rule_id  && length $rule_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/guilds/$guild_id/auto-moderation/rules/$rule_id",
+        undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# トリガー種別ごとに使える trigger_metadata のフィールド。
+my %AUTOMOD_TRIGGER_FIELDS = (
+    1 => { keyword_filter => 1, regex_patterns => 1, allow_list => 1 },
+    3 => {},
+    4 => { presets => 1, allow_list => 1 },
+    5 => {
+        mention_total_limit              => 1,
+        mention_raid_protection_enabled => 1,
+    },
+    6 => { keyword_filter => 1, regex_patterns => 1, allow_list => 1 },
+);
+
+# 作成 / 更新の JSON を作る。
+sub _automod_payload {
+    my ($self, $opts, $creating) = @_;
+
+    my %payload;
+
+    if (defined $opts->{name}) {
+        my $name = $opts->{name};
+        die "automod rule name must be 1-100 characters\n"
+            if ref $name || !length($name) || length($name) > 100;
+        $payload{name} = $name;
+    } elsif ($creating) {
+        die "automod rule name is required\n";
+    }
+
+    if (exists $opts->{event_type}) {
+        $payload{event_type} = automod_event_type($opts->{event_type});
+    } elsif ($creating) {
+        $payload{event_type} = automod_event_type('MESSAGE_SEND');
+    }
+
+    my $trigger_type;
+    if (exists $opts->{trigger_type}) {
+        $trigger_type = automod_trigger_type($opts->{trigger_type});
+        $payload{trigger_type} = $trigger_type;
+    } elsif ($creating) {
+        die "automod trigger type is required\n";
+    }
+
+    if (exists $opts->{trigger_metadata}) {
+        $payload{trigger_metadata} =
+            $self->_automod_trigger_metadata($trigger_type, $opts->{trigger_metadata});
+    } elsif ($creating) {
+        # 必須の trigger_metadata が無ければここで die する
+        $self->_automod_trigger_metadata($trigger_type, {});
+    }
+
+    if (exists $opts->{actions}) {
+        $payload{actions} = $self->_automod_actions($opts->{actions});
+    } elsif ($creating) {
+        die "automod actions are required\n";
+    }
+
+    if (exists $opts->{enabled}) {
+        $payload{enabled} = $opts->{enabled} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    for my $key (qw(exempt_roles exempt_channels)) {
+        next unless exists $opts->{$key};
+
+        my $max = $key eq 'exempt_roles' ? 20 : 50;
+        my $ids = _automod_ids($opts->{$key}, $key);
+        die "$key accepts at most $max ids\n" if @$ids > $max;
+        $payload{$key} = $ids;
+    }
+
+    die "no automod fields to update\n" unless $creating || keys %payload;
+
+    return \%payload;
+}
+
+# trigger_metadata を検証して正規化する。
+sub _automod_trigger_metadata {
+    my ($self, $trigger_type, $metadata) = @_;
+
+    die "trigger_metadata must be a hash reference\n"
+        unless ref $metadata eq 'HASH';
+
+    my %out;
+
+    if (exists $metadata->{keyword_filter}) {
+        _automod_string_array($metadata->{keyword_filter}, 'keyword_filter', 1000, 60);
+        $out{keyword_filter} = [ @{ $metadata->{keyword_filter} } ];
+    }
+
+    if (exists $metadata->{regex_patterns}) {
+        _automod_string_array($metadata->{regex_patterns}, 'regex_patterns', 10, 260);
+        $out{regex_patterns} = [ @{ $metadata->{regex_patterns} } ];
+    }
+
+    if (exists $metadata->{allow_list}) {
+        my $max = (defined $trigger_type && $trigger_type == 4) ? 1000 : 100;
+        _automod_string_array($metadata->{allow_list}, 'allow_list', $max, 60);
+        $out{allow_list} = [ @{ $metadata->{allow_list} } ];
+    }
+
+    if (exists $metadata->{presets}) {
+        my $presets = $metadata->{presets};
+        die "presets must be a non-empty array reference\n"
+            unless ref $presets eq 'ARRAY' && @$presets;
+
+        my (%seen, @out);
+        for my $preset (@$presets) {
+            my $value = automod_preset_type($preset);
+            next if $seen{$value}++;
+            push @out, $value;
+        }
+        $out{presets} = \@out;
+    }
+
+    if (exists $metadata->{mention_total_limit}) {
+        my $limit = $metadata->{mention_total_limit};
+        die "mention_total_limit must be between 0 and 50\n"
+            unless !ref $limit && $limit =~ /^\d+\z/ && $limit <= 50;
+        $out{mention_total_limit} = $limit + 0;
+    }
+
+    if (exists $metadata->{mention_raid_protection_enabled}) {
+        $out{mention_raid_protection_enabled} =
+            $metadata->{mention_raid_protection_enabled}
+                ? JSON::PP::true
+                : JSON::PP::false;
+    }
+
+    if (defined $trigger_type) {
+        my $allowed = $AUTOMOD_TRIGGER_FIELDS{$trigger_type} || {};
+
+        for my $key (sort keys %out) {
+            die "trigger_metadata $key is not valid for trigger type "
+                . $trigger_type . "\n"
+                unless $allowed->{$key};
+        }
+
+        if ($trigger_type == 1 || $trigger_type == 6) {
+            die "keyword_filter or regex_patterns is required for trigger type "
+                . $trigger_type . "\n"
+                unless exists $out{keyword_filter} || exists $out{regex_patterns};
+        } elsif ($trigger_type == 4) {
+            die "presets is required for trigger type $trigger_type\n"
+                unless exists $out{presets};
+        } elsif ($trigger_type == 5) {
+            die "mention_total_limit is required for trigger type $trigger_type\n"
+                unless exists $out{mention_total_limit};
+        }
+    }
+
+    return \%out;
+}
+
+# 文字列の配列を検証する。
+sub _automod_string_array {
+    my ($values, $label, $max, $max_chars) = @_;
+
+    die "$label must be an array reference\n" unless ref $values eq 'ARRAY';
+    die "$label accepts at most $max entries\n" if @$values > $max;
+
+    for my $value (@$values) {
+        die "$label entries must be strings\n"
+            if ref $value || !defined $value || !length $value;
+        die "$label entries must be $max_chars characters or less\n"
+            if length($value) > $max_chars;
+    }
+}
+
+# アクションの配列を検証して正規化する。
+sub _automod_actions {
+    my ($self, $actions) = @_;
+
+    die "actions must be a non-empty array reference\n"
+        unless ref $actions eq 'ARRAY' && @$actions;
+    die "actions accepts at most 5 entries\n" if @$actions > 5;
+
+    my @out;
+
+    for my $action (@$actions) {
+        die "action must be a hash reference\n" unless ref $action eq 'HASH';
+
+        my $type = automod_action_type($action->{type});
+        my %entry = (type => $type);
+
+        if ($type == 1) {    # BLOCK_MESSAGE
+            if (exists $action->{metadata}) {
+                my $metadata = $action->{metadata};
+                die "BLOCK_MESSAGE metadata must be a hash reference\n"
+                    unless ref $metadata eq 'HASH';
+
+                if (exists $metadata->{custom_message}) {
+                    my $message = $metadata->{custom_message};
+                    if (defined $message) {
+                        die "custom_message must be a string\n" if ref $message;
+                        die "custom_message must be 150 characters or less\n"
+                            if length($message) > 150;
+                    }
+                    $entry{metadata} = { custom_message => $message };
+                }
+            }
+        } elsif ($type == 2) {    # SEND_ALERT_MESSAGE
+            my $metadata = $action->{metadata};
+            die "SEND_ALERT_MESSAGE requires metadata\n"
+                unless ref $metadata eq 'HASH';
+            my $channel_id = $metadata->{channel_id};
+            die "channel_id is required for SEND_ALERT_MESSAGE\n"
+                unless defined $channel_id && !ref $channel_id && length $channel_id;
+            $entry{metadata} = { channel_id => "$channel_id" };
+        } elsif ($type == 3) {    # TIMEOUT
+            my $metadata = $action->{metadata};
+            die "TIMEOUT requires metadata\n" unless ref $metadata eq 'HASH';
+            my $duration = $metadata->{duration_seconds};
+            die "duration_seconds must be between 1 and 2419200\n"
+                unless defined $duration && !ref $duration
+                    && $duration =~ /^\d+\z/
+                    && $duration >= 1 && $duration <= 2419200;
+            $entry{metadata} = { duration_seconds => $duration + 0 };
+        } elsif (exists $action->{metadata}) {
+            die "action type $type does not take metadata\n";
+        }
+
+        push @out, \%entry;
+    }
+
+    return \@out;
+}
+
+# 重複を除いた ID の配列にする。
+sub _automod_ids {
+    my ($values, $label) = @_;
+
+    die "$label must be an array reference\n" unless ref $values eq 'ARRAY';
+
+    my (%seen, @out);
+    for my $id (@$values) {
+        die "$label entries must be non-empty strings\n"
+            if ref $id || !defined $id || !length $id;
+        next if $seen{$id}++;
+        push @out, "$id";
+    }
+    return \@out;
 }
 
 # ---------------------------------------------------------------- channel management

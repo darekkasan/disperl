@@ -12,6 +12,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | `Disperl::Components` | ボタン / セレクトメニュー / モーダルのビルダー | `JSON::PP` |
 | `Disperl::Permissions` | 権限名とビットマスクの相互変換・実効権限の計算 | core のみ |
 | `Disperl::AuditLog` | 監査ログのイベント種別（名前と数値の変換） | core のみ |
+| `Disperl::AutoMod` | AutoMod のトリガー / アクション / プリセット種別 | core のみ |
 | `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が内部で使用） | `IO::Socket::SSL` |
 | `Disperl::Config` | `.env` ローダー | core のみ |
 
@@ -26,6 +27,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | [ロール管理](roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
 | [メンバー管理](members.md) | 一覧・検索・変更・ロール付与・キック / BAN・プルーン・実効権限 |
 | [監査ログ](audit-log.md) | 取得・絞り込み・ページング・イベント種別・変更内容 |
+| [AutoMod](automod.md) | ルールの作成・取得・変更・削除・トリガー・アクション |
 | [スケジュールイベント](events.md) | 作成・変更・削除・参加者・繰り返し |
 | [ギルド・ユーザー・招待](guilds.md) | ギルド情報・メンバー・DM・招待 |
 | [Webhook](webhooks.md) | 実行と管理、送信済みメッセージの操作 |
@@ -80,6 +82,7 @@ if ($message) {
 - メンバー: 一覧・検索・ニックネーム・ロール付与 / 剥奪・タイムアウト・キック / BAN / プルーン
 - 権限: 名前とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）
 - 監査ログ: 取得・実行者 / 種別 / 期間での絞り込み・イベント名の変換（`Disperl::AuditLog`）
+- AutoMod: ルールの作成・取得・変更・削除・トリガー / アクションの検証（`Disperl::AutoMod`）
 - スケジュールイベント: 一覧・取得・作成・変更・削除・参加者
 - DM・ギルド情報・招待
 - Webhook: 実行・管理・送信済みメッセージの取得 / 編集 / 削除
@@ -92,7 +95,6 @@ if ($message) {
 
 - 音声（Voice）
 - OAuth2
-- AutoMod
 - ギルド設定の変更
 - フォーラム / メディアチャンネルの投稿（チャンネル自体の作成は可）
 - 課金・Entitlements・SKU

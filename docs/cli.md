@@ -13,6 +13,7 @@
 - [ロール管理](#ロール管理)
 - [メンバー管理](#メンバー管理)
 - [監査ログ](#監査ログ)
+- [AutoMod](#automod)
 - [スケジュールイベント](#スケジュールイベント)
 - [ギルド・Webhook](#ギルドwebhook)
 - [コマンド登録](#コマンド登録)
@@ -233,6 +234,54 @@ perl test.pl audit-log --guild <ギルドID>
 - `VIEW_AUDIT_LOG` 権限が必要です
 - `--before` は新しい順、`--after` は古い順になります
 - `--actions` はネットワークを使わず、全 71 種類を表示します
+
+## AutoMod
+
+```sh
+perl test.pl automod                           # ルール一覧
+perl test.pl automod-rule <ID>                 # 詳細
+
+# キーワード（ブロック + 通報）
+perl test.pl automod-create "スパム対策" --trigger KEYWORD \
+    --keyword spam --keyword crypto --regex "https?://" \
+    --allow example.com --block --custom-message "宣伝は禁止です" \
+    --alert-channel <チャンネルID>
+
+# メンション制限（5 回まで、超えたら 600 秒タイムアウト）
+perl test.pl automod-create "メンション制限" --trigger MENTION_SPAM \
+    --mention-limit 5 --timeout 600 --block
+
+# 組み込みワードセット
+perl test.pl automod-create "不適切ワード" --trigger KEYWORD_PRESET \
+    --preset PROFANITY --preset SLURS --block-interaction
+
+perl test.pl automod-edit <ID> --disable
+perl test.pl automod-edit <ID> --enable
+perl test.pl automod-edit <ID> --name "新しい名前"
+perl test.pl automod-edit <ID> --trigger KEYWORD --keyword 更新 --block
+perl test.pl automod-delete <ID> --reason "不要"
+```
+
+| オプション | 説明 |
+|---|---|
+| `--guild <ID>` | 対象ギルド（省略時は `.env` のチャンネルのギルド） |
+| `--trigger <種別>` | トリガー種別（`automod-create` では必須） |
+| `--event <種別>` | イベント種別（既定 `MESSAGE_SEND`） |
+| `--keyword` / `--regex` / `--preset` / `--allow` | `trigger_metadata`（繰り返し可） |
+| `--mention-limit <N>` / `--raid-protection` | `MENTION_SPAM` 用 |
+| `--block` / `--custom-message <文>` | メッセージをブロック |
+| `--alert-channel <ID>` | 通報先チャンネル |
+| `--timeout <秒>` | タイムアウト |
+| `--block-interaction` | インタラクションをブロック |
+| `--exempt-role` / `--exempt-channel` | 除外するロール / チャンネル（繰り返し可） |
+| `--disabled` | 作成時に無効で作る（既定は有効） |
+| `--enable` / `--disable` | 変更時に有効化 / 無効化 |
+| `--reason <理由>` | 監査ログの理由 |
+
+- `MANAGE_GUILD` 権限が必要です（`--timeout` は `MODERATE_MEMBERS` も必要）
+- `automod-create` は既定で有効（`enabled => 1`）で作ります
+- `--custom-message` は `--block` と一緒に指定します
+- `automod-edit` で `--block` などを指定すると `actions` は置き換わります
 
 ## スケジュールイベント
 
