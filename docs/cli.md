@@ -9,6 +9,8 @@
 - [メッセージ操作](#メッセージ操作)
 - [投票](#投票)
 - [スレッド](#スレッド)
+- [チャンネル管理](#チャンネル管理)
+- [スケジュールイベント](#スケジュールイベント)
 - [ギルド・Webhook](#ギルドwebhook)
 - [コマンド登録](#コマンド登録)
 - [watch](#watch)
@@ -74,6 +76,88 @@ perl test.pl thread-archive <ID>      # --unarchive / --lock / --unlock
 perl test.pl thread-members <ID>
 perl test.pl thread-delete <ID>
 ```
+
+## チャンネル管理
+
+```sh
+perl test.pl channel-create "雑談"                       # テキストチャンネル
+perl test.pl channel-create "告知" --type announcement --topic "お知らせ"
+perl test.pl channel-create "ボイス" --type voice --parent <カテゴリID>
+perl test.pl channel-edit <ID> --name "新しい名前"
+perl test.pl channel-edit <ID> --topic "新しい話題" --slowmode 10
+perl test.pl channel-edit <ID> --parent none              # カテゴリから外す
+perl test.pl channel-edit <ID> --nsfw 1
+perl test.pl channel-move <ID> 3 --parent <カテゴリID>
+perl test.pl channel-delete <ID> --reason "不要"
+perl test.pl channel-invites [ID]
+```
+
+| コマンド | 説明 |
+|---|---|
+| `channel-create <名前>` | `--type` / `--parent` / `--topic` / `--slowmode` / `--guild` / `--reason` |
+| `channel-edit <ID>` | `--name` / `--topic` / `--parent` / `--slowmode` / `--nsfw` / `--reason` |
+| `channel-move <ID> <位置>` | `--parent` / `--guild` |
+| `channel-delete <ID>` | `--reason`（**取り消せません**） |
+| `channel-invites [ID]` | 省略時は `.env` のチャンネル |
+
+`--type` は `text` / `voice` / `category` / `announcement` / `stage` / `forum` / `media`。
+`--guild` を省略すると `.env` のチャンネルが属するギルドを使います。
+
+### 権限上書き
+
+```sh
+perl test.pl channel-perms <チャンネルID> <ロールID> --deny VIEW_CHANNEL
+perl test.pl channel-perms <チャンネルID> <ロールID> \
+    --allow VIEW_CHANNEL,SEND_MESSAGES --deny MANAGE_MESSAGES
+perl test.pl channel-perms <チャンネルID> <ユーザーID> --member --allow VIEW_CHANNEL
+perl test.pl channel-perm-delete <チャンネルID> <ロールID>
+```
+
+- 既定はロール。`--member` でメンバー（ユーザー）宛てになります
+- `--allow` / `--deny` は繰り返し指定も可（`--allow A --allow B`）
+- 省略した側は `0` として送信されます（既存の許可は消えます）
+
+```sh
+perl test.pl permissions VIEW_CHANNEL SEND_MESSAGES   # => 3072 (3072)
+perl test.pl permissions --names 3072                 # => VIEW_CHANNEL / SEND_MESSAGES
+perl test.pl permissions                              # 全 53 個の一覧
+```
+
+## スケジュールイベント
+
+```sh
+perl test.pl events                       # 一覧（現在のギルド）
+perl test.pl events --users               # 参加者数つき
+perl test.pl event <イベントID>
+perl test.pl event-users <イベントID> --with-member
+
+# 外部イベント（--end と --location が必須）
+perl test.pl event-create "定例会" --start 2026-12-01T20:00:00Z \
+    --end 2026-12-01T22:00:00Z --location "Discord"
+
+# ボイス / ステージイベント（--channel が必須）
+perl test.pl event-create "作業会" --type voice --channel <ボイスID> \
+    --start 2026-12-01T20:00:00Z
+
+perl test.pl event-edit <イベントID> --name "新しい名前"
+perl test.pl event-edit <イベントID> --status active    # 開始
+perl test.pl event-edit <イベントID> --status completed # 終了
+perl test.pl event-delete <イベントID> --reason "中止"
+```
+
+| コマンド | 説明 |
+|---|---|
+| `events` | `--guild` / `--users` |
+| `event <ID>` | `--guild` / `--users` |
+| `event-create <名前>` | `--start`（必須）/ `--end` / `--type` / `--channel` / `--location` / `--description` / `--guild` / `--reason` |
+| `event-edit <ID>` | `--name` / `--description` / `--start` / `--end` / `--location` / `--status` / `--guild` / `--reason` |
+| `event-delete <ID>` | `--guild` / `--reason` |
+| `event-users <ID>` | `--limit` / `--with-member` / `--guild` |
+
+- `--type` は `external`（既定）/ `voice` / `stage`
+- `--status` は `scheduled` / `active` / `completed` / `canceled`
+- 時刻は ISO8601（`2026-12-01T20:00:00Z` / `+09:00` 可）
+- `--description ""` で説明を消去できます
 
 ## ギルド・Webhook
 
@@ -168,4 +252,6 @@ perl test.pl history
 
 - [Client](client.md)
 - [Gateway](gateway.md)
+- [チャンネル管理](channels.md)
+- [スケジュールイベント](events.md)
 - [トラブルシューティング](troubleshooting.md)

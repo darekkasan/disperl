@@ -16,6 +16,9 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - ネイティブ投票（Poll）の作成・終了・投票者取得
 - ピン留め、一括削除、スレッド、DM、招待、Webhook
 - スレッドの一覧・参加・退出・メンバー管理・アーカイブ
+- チャンネルの作成・編集・並び替え・権限上書き・削除
+- スケジュールイベント（ボイス / ステージ / 外部）の作成・変更・削除・参加者取得
+- 権限名とビットマスクの相互変換（`Disperl::Permissions`）
 - レート制限（バケット単位・429）対応と事前スロットリング
 - Gateway（WebSocket）でイベントを受信。Identify / Resume / Heartbeat / 自動再接続
 - ステータス（online / idle / dnd / invisible）とアクティビティの変更
@@ -100,9 +103,10 @@ if ($message) {
 
 | モジュール | 役割 |
 |---|---|
-| `Disperl::Client` | REST API。送信・取得・スレッド・添付・インタラクション応答・コマンド登録 |
+| `Disperl::Client` | REST API。送信・取得・スレッド・チャンネル・イベント・添付・インタラクション応答・コマンド登録 |
 | `Disperl::Gateway` | Gateway（WebSocket）。イベント受信・プレゼンス・インタラクション配送 |
 | `Disperl::Components` | ボタン／セレクト／モーダルのビルダー |
+| `Disperl::Permissions` | 権限名とビットマスクの相互変換 |
 | `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が使用） |
 | `Disperl::Config` | `.env` ローダー |
 
@@ -113,6 +117,8 @@ if ($message) {
 | [Client](docs/client.md) | コンストラクタ・戻り値・エラー・レート制限 |
 | [メッセージ](docs/messages.md) | embed・コンポーネント・添付ファイル・投票 |
 | [スレッド](docs/threads.md) | 作成・一覧・参加・メンバー・アーカイブ |
+| [チャンネル管理](docs/channels.md) | 作成・編集・並び替え・権限上書き・削除 |
+| [スケジュールイベント](docs/events.md) | 作成・変更・削除・参加者 |
 | [ギルド・ユーザー・招待](docs/guilds.md) | ギルド情報・メンバー・DM・招待 |
 | [Webhook](docs/webhooks.md) | 実行・管理・送信済みメッセージ |
 | [インタラクション](docs/interactions.md) | ボタン・モーダル・オートコンプリート・コマンド登録 |
@@ -155,6 +161,28 @@ my $ended = $client->end_poll($channel, $poll->{id});
 my $thread = $client->create_thread($channel, name => '議題', type => 'public');
 $client->send_message($thread->{id}, '最初の書き込み');
 ```
+
+### チャンネルとスケジュールイベント
+
+```perl
+my $channel = $client->create_guild_channel(
+    $guild_id, name => '雑談', type => 'text', topic => '気軽にどうぞ',
+);
+$client->edit_channel_permissions($channel->{id}, $role_id,
+    deny => ['SEND_MESSAGES'],
+);
+
+my $event = $client->create_scheduled_event(
+    $guild_id,
+    name                 => '定例会',
+    entity_type          => 'external',
+    scheduled_start_time => '2026-12-01T20:00:00Z',
+    scheduled_end_time   => '2026-12-01T22:00:00Z',
+    location             => 'Discord',
+);
+```
+
+詳細は [チャンネル管理](docs/channels.md) と [スケジュールイベント](docs/events.md) を参照してください。
 
 ### Webhook
 
@@ -207,6 +235,8 @@ perl test.pl upload memo.txt "本文"
 perl test.pl poll "質問" --answer はい --answer いいえ
 perl test.pl thread --private "相談"
 perl test.pl threads
+perl test.pl channel-create "告知" --type announcement
+perl test.pl event-create "定例会" --start 2026-12-01T20:00:00Z --end 2026-12-01T22:00:00Z --location Discord
 perl test.pl commands              # /ping /echo /poll /form を登録
 perl test.pl watch                 # Gateway で受信
 ```
@@ -257,6 +287,9 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - ファイル添付（最大 10 個をまとめて送信）
 - ネイティブ投票（作成・終了・投票者取得）
 - スレッド: 作成・一覧・参加・退出・メンバー・アーカイブ・削除
+- チャンネル: 作成・編集・並び替え・権限上書き・削除・招待一覧
+- 権限: 名前とビットマスクの相互変換（`Disperl::Permissions`）
+- スケジュールイベント: 一覧・取得・作成・変更・削除・参加者
 - DM・ギルド情報の取得・招待・Webhook 実行（ファイル添付可）
 - Webhook の管理と送信済みメッセージの取得・編集・削除
 - Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス
@@ -268,8 +301,8 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 
 - 音声（Voice）
 - OAuth2
-- AutoMod・監査ログ・スケジュールイベント
-- チャンネル / ギルドの作成・編集・権限管理
-- フォーラム / メディアチャンネル
+- AutoMod・監査ログ
+- ギルド設定の変更・ロールの作成 / 編集・キック / BAN
+- フォーラム / メディアチャンネルへの投稿（チャンネル自体の作成は可）
 - 課金・Entitlements・SKU
 - ユーザーアプリ / 埋め込みアプリ

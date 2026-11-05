@@ -18,6 +18,7 @@ use Disperl::Config qw(load_dotenv);
 use Disperl::Client;
 use Disperl::Components qw(action_row button label modal text_input);
 use Disperl::Gateway;
+use Disperl::Permissions qw(permission_bits permission_names permission_map);
 
 load_dotenv("$FindBin::Bin/.env");
 
@@ -213,6 +214,37 @@ disperl 動作確認 CLI
   perl test.pl thread-members <ID>    スレッドメンバー一覧
   perl test.pl thread-delete <ID>     スレッドを削除する
   perl test.pl channels [ギルドID]     チャンネル一覧（省略時は現在のギルド）
+  perl test.pl channel-create <名前> [--type text|voice|category|announcement|stage|forum|media]
+      [--parent ID] [--topic 話題] [--slowmode 秒] [--guild ID] [--reason 理由]
+                                       チャンネルを作る
+  perl test.pl channel-edit <ID> [--name 名前] [--topic 話題] [--parent ID|none]
+      [--slowmode 秒] [--nsfw 0|1] [--reason 理由]
+                                       チャンネルを編集する
+  perl test.pl channel-delete <ID> [--reason 理由]
+                                       チャンネルを削除する
+  perl test.pl channel-move <ID> <位置> [--parent ID] [--guild ID]
+                                       チャンネルの並び順を変える
+  perl test.pl channel-perms <ID> <対象ID> [--member] [--allow 権限,権限] [--deny 権限,権限]
+      [--reason 理由]                  権限上書きを設定する（既定はロール）
+  perl test.pl channel-perm-delete <ID> <対象ID> [--reason 理由]
+                                       権限上書きを削除する
+  perl test.pl channel-invites [ID]    チャンネルの招待一覧
+  perl test.pl permissions [権限名 ...] 権限名からビットマスクを計算する（--names BITS で逆引き）
+  perl test.pl events [--guild ID] [--users]
+                                       スケジュールイベント一覧
+  perl test.pl event <ID> [--guild ID] [--users]
+                                       スケジュールイベントを表示する
+  perl test.pl event-create <名前> --start ISO8601 [--end ISO8601]
+      [--type external|voice|stage] [--channel ID] [--location 場所]
+      [--description 説明] [--guild ID] [--reason 理由]
+                                       スケジュールイベントを作る
+  perl test.pl event-edit <ID> [--name 名前] [--description 説明] [--start ISO8601]
+      [--end ISO8601] [--location 場所] [--status scheduled|active|completed|canceled]
+      [--guild ID] [--reason 理由]     スケジュールイベントを編集する
+  perl test.pl event-delete <ID> [--guild ID] [--reason 理由]
+                                       スケジュールイベントを削除する
+  perl test.pl event-users <ID> [--guild ID] [--limit N] [--with-member]
+                                       イベント参加者一覧
   perl test.pl invite                 招待リンクを作る（24 時間有効）
   perl test.pl user <ユーザーID>       ユーザー情報を表示する
   perl test.pl webhook <ID> <トークン> <本文>  Webhook で送信する
@@ -255,6 +287,14 @@ disperl 動作確認 CLI
   perl test.pl react 123456789012345678 check
   perl test.pl pins
   perl test.pl channels
+  perl test.pl channel-create "告知" --type announcement --topic "お知らせ"
+  perl test.pl channel-edit 123456789012345678 --slowmode 10
+  perl test.pl channel-perms 123456789012345678 123456789012345678 --deny VIEW_CHANNEL
+  perl test.pl permissions VIEW_CHANNEL SEND_MESSAGES
+  perl test.pl events
+  perl test.pl event-create "定例会" --start 2026-12-01T20:00:00Z --end 2026-12-01T22:00:00Z --location "Discord"
+  perl test.pl event-edit 123456789012345678 --status active
+  perl test.pl event-users 123456789012345678 --with-member
   perl test.pl upload memo.txt "ログです"
   perl test.pl webhook-create "通知" --avatar icon.png
   perl test.pl webhooks
@@ -765,13 +805,419 @@ sub cmd_webhook {
     return 0;
 }
 
+# ---------------------------------------------------------------- チャンネル管理
+
+sub cmd_channel_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(guild type parent topic slowmode reason)]);
+
+    my $name = join ' ', @$pos;
+    _fatal('使い方: perl test.pl channel-create <名前> [--type text|voice|category|announcement|stage|forum|media] [--parent ID] [--topic 話題] [--slowmode 秒] [--guild ID] [--reason 理由]')
+        unless length $name;
+
+    my %opts = (
+        name => $name,
+        type => $opt->{type} // 'text',
+    );
+    $opts{topic}                = $opt->{topic}    if defined $opt->{topic};
+    $opts{parent_id}            = $opt->{parent}   if defined $opt->{parent};
+    $opts{rate_limit_per_user}  = $opt->{slowmode} if defined $opt->{slowmode};
+    $opts{reason}               = $opt->{reason}   if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+
+    my $channel = client()->create_guild_channel($guild_id, %opts)
+        or _api_fail('チャンネルの作成');
+
+    out sprintf "チャンネルを作成しました: %s #%s (type: %s)\n",
+        $channel->{id} // '?',
+        $channel->{name} // '',
+        _channel_type_name($channel->{type});
+    return 0;
+}
+
+sub cmd_channel_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(name topic parent slowmode nsfw reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl channel-edit <チャンネルID> [--name 名前] [--topic 話題] [--parent ID|none] [--slowmode 秒] [--nsfw 0|1] [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my %opts;
+    $opts{name} = $opt->{name} if defined $opt->{name};
+
+    if (exists $opt->{topic}) {
+        $opts{topic} = length $opt->{topic} ? $opt->{topic} : undef;
+    }
+
+    if (exists $opt->{parent}) {
+        $opts{parent_id} = (!length $opt->{parent} || lc $opt->{parent} eq 'none')
+            ? undef : $opt->{parent};
+    }
+
+    $opts{rate_limit_per_user} = $opt->{slowmode} if defined $opt->{slowmode};
+    $opts{nsfw} = $opt->{nsfw} ? 1 : 0 if defined $opt->{nsfw};
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    _fatal('変更する項目がありません（--name / --topic / --parent / --slowmode / --nsfw）')
+        unless grep { $_ ne 'reason' } keys %opts;
+
+    my $channel = client()->update_channel($id, %opts)
+        or _api_fail('チャンネルの更新');
+
+    out sprintf "チャンネルを更新しました: %s #%s\n",
+        $channel->{id} // $id, $channel->{name} // '';
+    return 0;
+}
+
+sub cmd_channel_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl channel-delete <チャンネルID> [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    client()->delete_channel($id, reason => $opt->{reason})
+        or _api_fail('チャンネルの削除');
+
+    out "チャンネルを削除しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_channel_move {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(parent guild)]);
+
+    my ($id, $position) = @$pos;
+    _fatal('使い方: perl test.pl channel-move <チャンネルID> <位置> [--parent ID] [--guild ID]')
+        unless defined $id && defined $position;
+    _fatal("不明な引数: $pos->[2]") if @$pos > 2;
+
+    my %entry = (id => $id, position => $position);
+    $entry{parent_id} = $opt->{parent} if defined $opt->{parent};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+
+    client()->modify_channel_positions($guild_id, [\%entry])
+        or _api_fail('チャンネルの並び替え');
+
+    out sprintf "チャンネルを移動しました: id=%s position=%s\n", $id, $position;
+    return 0;
+}
+
+sub cmd_channel_perms {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(allow deny reason)], [qw(allow deny)], [qw(member)]);
+
+    my ($id, $target) = @$pos;
+    _fatal('使い方: perl test.pl channel-perms <チャンネルID> <ロール/ユーザーID> [--member] [--allow 権限,権限] [--deny 権限,権限] [--reason 理由]')
+        unless defined $id && defined $target;
+    _fatal("不明な引数: $pos->[2]") if @$pos > 2;
+
+    my %opts = (
+        type  => $opt->{member} ? 'member' : 'role',
+        allow => _permission_list(@{ $opt->{allow} || [] }),
+        deny  => _permission_list(@{ $opt->{deny} || [] }),
+    );
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    client()->edit_channel_permissions($id, $target, %opts)
+        or _api_fail('権限の設定');
+
+    out sprintf "権限を設定しました: channel=%s %s=%s allow=%s deny=%s\n",
+        $id,
+        $opts{type},
+        $target,
+        join(',', @{ $opts{allow} }) || '0',
+        join(',', @{ $opts{deny} })  || '0';
+    return 0;
+}
+
+sub cmd_channel_perm_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(reason)]);
+
+    my ($id, $target) = @$pos;
+    _fatal('使い方: perl test.pl channel-perm-delete <チャンネルID> <ロール/ユーザーID> [--reason 理由]')
+        unless defined $id && defined $target;
+    _fatal("不明な引数: $pos->[2]") if @$pos > 2;
+
+    client()->delete_channel_permission($id, $target, reason => $opt->{reason})
+        or _api_fail('権限の削除');
+
+    out "権限を削除しました: channel=$id target=$target\n";
+    return 0;
+}
+
+sub cmd_channel_invites {
+    my ($id) = map { _decode_arg($_) } @_;
+
+    $id //= channel_id();
+
+    my $invites = client()->get_channel_invites($id)
+        or _api_fail('チャンネルの招待一覧');
+
+    if (!@$invites) {
+        out "招待はありません\n";
+        return 0;
+    }
+
+    for my $invite (@$invites) {
+        out sprintf "  %-12s 作成者: %-20s 使用: %s/%s\n",
+            $invite->{code} // '?',
+            $invite->{inviter}{username} // '?',
+            $invite->{uses} // 0,
+            $invite->{max_uses} // 0;
+    }
+    out sprintf "(%d 件)\n", scalar @$invites;
+    return 0;
+}
+
+# 権限名の指定（--allow の繰り返し / カンマ区切り）を配列にする。
+sub _permission_list {
+    my (@values) = @_;
+
+    my @names;
+    for my $value (@values) {
+        push @names, grep { length } split /\s*,\s*/, $value;
+    }
+    return \@names;
+}
+
+sub cmd_permissions {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(names)]);
+
+    if (defined $opt->{names}) {
+        my @names = permission_names($opt->{names});
+        if (!@names) {
+            out "該当する権限はありません\n";
+        } else {
+            out "$_\n" for @names;
+        }
+        return 0;
+    }
+
+    if (!@$pos) {
+        my $map = permission_map();
+        for my $name (sort { $map->{$a} <=> $map->{$b} } keys %$map) {
+            out sprintf "  %-40s %2d\n", $name, $map->{$name};
+        }
+        out "\n使い方: perl test.pl permissions VIEW_CHANNEL SEND_MESSAGES\n";
+        out "        perl test.pl permissions --names 1024\n";
+        return 0;
+    }
+
+    my $bits = permission_bits(@$pos);
+    out sprintf "%s (%d)\n", $bits, $bits;
+    return 0;
+}
+
+# ---------------------------------------------------------------- スケジュールイベント
+
+my %EVENT_ENTITY_NAME = (1 => 'stage', 2 => 'voice', 3 => 'external');
+my %EVENT_STATUS_NAME = (
+    1 => 'scheduled', 2 => 'active', 3 => 'completed', 4 => 'canceled',
+);
+
+sub _print_event {
+    my ($event) = @_;
+
+    out sprintf "  id:       %s\n", $event->{id} // '?';
+    out sprintf "  name:     %s\n", $event->{name} // '';
+    out sprintf "  status:   %s\n",
+        $EVENT_STATUS_NAME{ $event->{status} // 0 } // $event->{status} // '?';
+    out sprintf "  entity:   %s\n",
+        $EVENT_ENTITY_NAME{ $event->{entity_type} // 0 } // $event->{entity_type} // '?';
+    out sprintf "  start:    %s\n", $event->{scheduled_start_time} // '?';
+    out sprintf "  end:      %s\n", $event->{scheduled_end_time} // '-';
+    out sprintf "  channel:  %s\n", $event->{channel_id} // '-'
+        if defined $event->{channel_id};
+    out sprintf "  location: %s\n", $event->{entity_metadata}{location}
+        if ref $event->{entity_metadata} eq 'HASH'
+            && defined $event->{entity_metadata}{location};
+    out sprintf "  users:    %s\n", $event->{user_count}
+        if defined $event->{user_count};
+    return;
+}
+
+sub cmd_events {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)], [], [qw(users)]);
+
+    _fatal("不明な引数: $pos->[0]") if @$pos;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $events = client()->get_scheduled_events(
+        $guild_id, with_user_count => $opt->{users},
+    ) or _api_fail('スケジュールイベントの取得');
+
+    if (!@$events) {
+        out "スケジュールイベントはありません\n";
+        return 0;
+    }
+
+    for my $event (@$events) {
+        out sprintf "%s  %-12s %s  %s\n",
+            $event->{id} // '?',
+            $EVENT_STATUS_NAME{ $event->{status} // 0 } // '?',
+            $event->{scheduled_start_time} // '?',
+            $event->{name} // '';
+    }
+    out sprintf "(%d 件)\n", scalar @$events;
+    return 0;
+}
+
+sub cmd_event {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)], [], [qw(users)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl event <イベントID> [--guild ID] [--users]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $event = client()->get_scheduled_event(
+        $guild_id, $id, with_user_count => $opt->{users},
+    ) or _api_fail('スケジュールイベントの取得');
+
+    _print_event($event);
+    return 0;
+}
+
+sub cmd_event_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(guild type channel location start end description reason)]);
+
+    my $name = join ' ', @$pos;
+    _fatal('使い方: perl test.pl event-create <名前> --start ISO8601 [--end ISO8601] [--type external|voice|stage] [--channel ID] [--location 場所] [--description 説明] [--guild ID] [--reason 理由]')
+        unless length $name;
+
+    my %opts = (
+        name        => $name,
+        entity_type => $opt->{type} // 'external',
+    );
+    $opts{scheduled_start_time} = $opt->{start}       if defined $opt->{start};
+    $opts{scheduled_end_time}   = $opt->{end}         if defined $opt->{end};
+    $opts{location}             = $opt->{location}    if defined $opt->{location};
+    $opts{description}          = $opt->{description} if defined $opt->{description};
+    $opts{channel_id}           = $opt->{channel}     if defined $opt->{channel};
+    $opts{reason}               = $opt->{reason}      if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+
+    my $event = client()->create_scheduled_event($guild_id, %opts)
+        or _api_fail('スケジュールイベントの作成');
+
+    out "スケジュールイベントを作成しました:\n";
+    _print_event($event);
+    return 0;
+}
+
+sub cmd_event_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(guild name description start end location status reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl event-edit <イベントID> [--name 名前] [--description 説明] [--start ISO8601] [--end ISO8601] [--location 場所] [--status scheduled|active|completed|canceled] [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my %opts;
+    $opts{name} = $opt->{name} if defined $opt->{name};
+
+    if (exists $opt->{description}) {
+        $opts{description} = length $opt->{description} ? $opt->{description} : undef;
+    }
+
+    $opts{scheduled_start_time} = $opt->{start}    if defined $opt->{start};
+    $opts{scheduled_end_time}   = $opt->{end}      if defined $opt->{end};
+    $opts{location}             = $opt->{location} if defined $opt->{location};
+    $opts{status}               = $opt->{status}   if defined $opt->{status};
+    $opts{reason}               = $opt->{reason}   if defined $opt->{reason};
+
+    _fatal('変更する項目がありません（--name / --description / --start / --end / --location / --status）')
+        unless grep { $_ ne 'reason' } keys %opts;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+
+    my $event = client()->update_scheduled_event($guild_id, $id, %opts)
+        or _api_fail('スケジュールイベントの更新');
+
+    out "スケジュールイベントを更新しました:\n";
+    _print_event($event);
+    return 0;
+}
+
+sub cmd_event_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl event-delete <イベントID> [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+
+    client()->delete_scheduled_event($guild_id, $id, reason => $opt->{reason})
+        or _api_fail('スケジュールイベントの削除');
+
+    out "スケジュールイベントを削除しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_event_users {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(guild limit)], [], [qw(with-member)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl event-users <イベントID> [--guild ID] [--limit N] [--with-member]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $users = client()->get_scheduled_event_users(
+        $guild_id, $id,
+        limit       => $opt->{limit},
+        with_member => $opt->{'with-member'},
+    ) or _api_fail('イベント参加者の取得');
+
+    if (!@$users) {
+        out "参加者はいません\n";
+        return 0;
+    }
+
+    for my $entry (@$users) {
+        my $user = $entry->{user} || {};
+        out sprintf "  %s  %s\n",
+            $user->{id} // $entry->{user_id} // '?',
+            $user->{global_name} // $user->{username} // '';
+    }
+    out sprintf "(%d 件)\n", scalar @$users;
+    return 0;
+}
+
 # --name 値 / --name=値 形式のオプションと位置引数を分ける。
 # $repeatable に挙げたオプションは配列で受け取る。
+# $flags に挙げたオプションは値を取らない（--member など）。
 sub _parse_options {
-    my ($args, $valued, $repeatable) = @_;
+    my ($args, $valued, $repeatable, $flags) = @_;
 
     my %is_valued   = map { $_ => 1 } @{ $valued || [] };
     my %is_repeatable = map { $_ => 1 } @{ $repeatable || [] };
+    my %is_flag = map { $_ => 1 } @{ $flags || [] };
     my (%opt, @pos);
 
     while (@$args) {
@@ -787,6 +1233,10 @@ sub _parse_options {
             ($name, $value) = ($1, $2);
         } elsif ($arg =~ /^--([a-z][a-z0-9-]*)\z/) {
             $name = $1;
+            if ($is_flag{$name}) {
+                $opt{$name} = 1;
+                next;
+            }
             _fatal("--$name には値が必要です") unless @$args;
             $value = shift @$args;
         } else {
@@ -794,7 +1244,8 @@ sub _parse_options {
             next;
         }
 
-        _fatal("不明なオプション: --$name") unless $is_valued{$name};
+        _fatal("不明なオプション: --$name")
+            unless $is_valued{$name} || $is_flag{$name};
 
         if ($is_repeatable{$name}) {
             push @{ $opt{$name} }, $value;
@@ -1896,6 +2347,20 @@ my %COMMANDS = (
     'thread-members' => \&cmd_thread_members,
     'thread-delete'  => \&cmd_thread_delete,
     channels  => \&cmd_channels,
+    'channel-create'      => \&cmd_channel_create,
+    'channel-edit'        => \&cmd_channel_edit,
+    'channel-delete'      => \&cmd_channel_delete,
+    'channel-move'        => \&cmd_channel_move,
+    'channel-perms'       => \&cmd_channel_perms,
+    'channel-perm-delete' => \&cmd_channel_perm_delete,
+    'channel-invites'     => \&cmd_channel_invites,
+    permissions => \&cmd_permissions,
+    events      => \&cmd_events,
+    event       => \&cmd_event,
+    'event-create' => \&cmd_event_create,
+    'event-edit'   => \&cmd_event_edit,
+    'event-delete' => \&cmd_event_delete,
+    'event-users'  => \&cmd_event_users,
     invite    => \&cmd_invite,
     user      => \&cmd_user,
     webhook   => \&cmd_webhook,
@@ -1923,6 +2388,10 @@ $command = 'help' if $command eq '-h' || $command eq '--help';
 my $handler = $COMMANDS{lc $command}
     or _fatal("不明なコマンド: $command（perl test.pl help を参照）");
 
-my $status = $handler->(@ARGV);
+my $status = eval { $handler->(@ARGV) };
+if (my $error = $@) {
+    chomp $error;
+    _fatal($error);
+}
 $status //= 0;
 exit $status;

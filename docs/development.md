@@ -18,6 +18,7 @@
 lib/Disperl/Client.pm        REST API
 lib/Disperl/Gateway.pm       Gateway（WebSocket）
 lib/Disperl/Components.pm    ボタン / セレクト / モーダル
+lib/Disperl/Permissions.pm   権限ビットの相互変換
 lib/Disperl/WebSocket.pm     RFC 6455 クライアント
 lib/Disperl/Config.pm        .env ローダー
 
@@ -84,7 +85,7 @@ prove -l t
 - **ネットワークを使いません**。`ua` と WebSocket を偽オブジェクトに差し替えます
 - `t/` から `.env` は読みません（実トークンを使わない）
 
-現在のテスト（23 ファイル / 188 件）:
+現在のテスト（26 ファイル / 230 件）:
 
 | ファイル | 内容 |
 |---|---|
@@ -111,6 +112,9 @@ prove -l t
 | `t/20_followups.t` | フォローアップの作成・編集・削除 / 添付 |
 | `t/21_polls.t` | 投票（正規化・上限・終了・投票者取得） |
 | `t/22_webhooks.t` | Webhook の管理 / メッセージ操作 / 入力検証 |
+| `t/23_permissions.t` | 権限名とビットマスクの相互変換 |
+| `t/24_channels.t` | チャンネル作成 / 編集 / 並び替え / 権限上書き |
+| `t/25_scheduled_events.t` | スケジュールイベントの作成・変更・削除・参加者 |
 
 ### テストを書くとき
 

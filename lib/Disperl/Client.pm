@@ -6,6 +6,7 @@ use JSON::PP;
 use Encode ();
 use Time::HiRes qw(time);
 use Time::Local qw(timegm);
+use Disperl::Permissions qw(permission_bits);
 
 my $API_BASE    = 'https://discord.com/api/v10';
 my $MAX_CONTENT = 2000;
@@ -565,10 +566,15 @@ sub unarchive_thread {
 # チャンネル / スレッドを削除する（成功時は 1）。
 # スレッドの削除もこのエンドポイントを使う。
 sub delete_channel {
-    my ($self, $channel_id) = @_;
+    my ($self, $channel_id, %opts) = @_;
 
     $self->{last_error} = undef;
-    my $res = $self->_request('DELETE', "$API_BASE/channels/$channel_id");
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/channels/$channel_id",
+        undef,
+        $self->_audit_opts(\%opts),
+    );
     return $self->_finish($res, 'none');
 }
 
@@ -666,6 +672,396 @@ sub get_guild_member {
     return $self->_finish($res, 'hash');
 }
 
+# ---------------------------------------------------------------- channel management
+
+my %CHANNEL_TYPE = (
+    text         => 0,
+    voice        => 2,
+    category     => 4,
+    announcement => 5,
+    stage        => 13,
+    forum        => 15,
+    media        => 16,
+);
+
+my %CREATABLE_CHANNEL_TYPE = map { $_ => 1 } (0, 2, 4, 5, 13, 15, 16);
+
+my %VIDEO_QUALITY = (auto => 1, full => 2);
+my %OVERWRITE_TYPE = (role => 0, member => 1, user => 1);
+
+# ギルドにチャンネルを作る（MANAGE_CHANNELS が必要）。
+#   create_guild_channel($guild_id, name => '雑談', type => 'text', topic => '...')
+#   create_guild_channel($guild_id, name => 'ボイス', type => 'voice', parent_id => $category_id)
+sub create_guild_channel {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $payload = $self->_channel_payload(\%opts, 1);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/guilds/$guild_id/channels",
+        $payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# チャンネル設定を変更する（MANAGE_CHANNELS / 権限上書きには MANAGE_ROLES）。
+#   update_channel($channel_id, name => '新しい名前', topic => '...')
+#   update_channel($channel_id, parent_id => undef)          # カテゴリから外す
+#   update_channel($channel_id, rate_limit_per_user => 5)    # スローモード
+sub update_channel {
+    my ($self, $channel_id, %opts) = @_;
+
+    die "channel id is required\n" unless defined $channel_id && length $channel_id;
+
+    my $payload = $self->_channel_payload(\%opts, 0);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH',
+        "$API_BASE/channels/$channel_id",
+        $payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# チャンネルの並び順をまとめて変更する。
+#   modify_channel_positions($guild_id, [
+#       { id => $channel_id, position => 1 },
+#       { id => $other_id,   position => 2, parent_id => $category_id },
+#   ])
+sub modify_channel_positions {
+    my ($self, $guild_id, $positions) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "positions must be a non-empty array reference\n"
+        unless ref $positions eq 'ARRAY' && @$positions;
+
+    my @payload;
+    for my $entry (@$positions) {
+        die "position entry must be a hash reference\n"
+            unless ref $entry eq 'HASH';
+
+        my $id = $entry->{id};
+        die "position entry id is required\n"
+            unless defined $id && !ref $id && length $id;
+
+        my $position = $entry->{position};
+        die "position entry position is required\n"
+            unless defined $position && !ref $position && $position =~ /^\d+\z/;
+
+        my %row = (id => "$id", position => $position + 0);
+
+        if (exists $entry->{parent_id}) {
+            my $parent = $entry->{parent_id};
+            die "position entry parent_id must be a string or undef\n"
+                if defined $parent && (ref $parent || !length $parent);
+            $row{parent_id} = defined $parent ? "$parent" : undef;
+        }
+
+        if (exists $entry->{lock_permissions}) {
+            $row{lock_permissions} = $entry->{lock_permissions}
+                ? JSON::PP::true : JSON::PP::false;
+        }
+
+        push @payload, \%row;
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH',
+        "$API_BASE/guilds/$guild_id/channels",
+        \@payload,
+    );
+    return $self->_finish($res, 'none');
+}
+
+# チャンネルの権限上書きを設定する（MANAGE_ROLES が必要）。
+#   edit_channel_permissions($channel_id, $role_id,
+#       type => 'role', deny => ['VIEW_CHANNEL'])
+#   edit_channel_permissions($channel_id, $user_id,
+#       type => 'member', allow => ['VIEW_CHANNEL', 'SEND_MESSAGES'])
+# allow / deny は数値（ビットマスク）でも、権限名の配列でもよい。
+sub edit_channel_permissions {
+    my ($self, $channel_id, $overwrite_id, %opts) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+    die "overwrite id is required\n"
+        unless defined $overwrite_id && length $overwrite_id;
+
+    my $type = exists $opts{type} ? $opts{type} : 'role';
+    if (!ref $type && $type =~ /\D/) {
+        die "Unknown overwrite type: $type (expected role or member)\n"
+            unless exists $OVERWRITE_TYPE{lc $type};
+        $type = $OVERWRITE_TYPE{lc $type};
+    }
+    die "overwrite type must be 0 (role) or 1 (member)\n"
+        unless defined $type && !ref $type && $type =~ /^\d+\z/
+            && ($type == 0 || $type == 1);
+
+    my %payload = (
+        type  => $type + 0,
+        allow => _permission_value($opts{allow}, 'allow'),
+        deny  => _permission_value($opts{deny},  'deny'),
+    );
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT',
+        "$API_BASE/channels/$channel_id/permissions/" . _uri_escape($overwrite_id),
+        \%payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# チャンネルの権限上書きを削除する。
+sub delete_channel_permission {
+    my ($self, $channel_id, $overwrite_id, %opts) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+    die "overwrite id is required\n"
+        unless defined $overwrite_id && length $overwrite_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/channels/$channel_id/permissions/" . _uri_escape($overwrite_id),
+        undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# チャンネルの招待一覧。
+sub get_channel_invites {
+    my ($self, $channel_id) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/channels/$channel_id/invites");
+    return $self->_finish($res, 'array');
+}
+
+# チャンネルの作成 / 更新の JSON を作る。
+sub _channel_payload {
+    my ($self, $opts, $creating) = @_;
+
+    my %payload;
+
+    my $name = $opts->{name};
+    if ($creating) {
+        die "channel name is required\n"
+            unless defined $name && !ref $name && length $name;
+    }
+    if (defined $name) {
+        die "channel name must be 1-100 characters (got "
+            . (ref $name ? 'reference' : length $name) . ")\n"
+            if ref $name || !length($name) || length($name) > 100;
+        $payload{name} = $name;
+    }
+
+    if ($creating || exists $opts->{type}) {
+        my $type = exists $opts->{type} ? $opts->{type} : 'text';
+        if (!ref $type && $type =~ /\D/) {
+            die "Unknown channel type: $type "
+                . "(expected text, voice, category, announcement, stage, forum or media)\n"
+                unless exists $CHANNEL_TYPE{lc $type};
+            $type = $CHANNEL_TYPE{lc $type};
+        }
+        die "channel type must be 0-16\n"
+            unless defined $type && !ref $type && $type =~ /^\d+\z/ && $type <= 16;
+        die "channel type $type cannot be created\n"
+            if $creating && !$CREATABLE_CHANNEL_TYPE{$type};
+        $payload{type} = $type + 0;
+    }
+
+    if (exists $opts->{topic}) {
+        my $topic = $opts->{topic};
+        if (defined $topic) {
+            die "topic must be a string\n" if ref $topic;
+            die "topic must be 4096 characters or less (got " . length($topic) . ")\n"
+                if length($topic) > 4096;
+        }
+        $payload{topic} = $topic;    # undef でクリア
+    }
+
+    if (exists $opts->{nsfw}) {
+        $payload{nsfw} = $opts->{nsfw} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    if (defined $opts->{position}) {
+        my $position = $opts->{position};
+        die "position must be a non-negative integer\n"
+            unless !ref $position && $position =~ /^\d+\z/;
+        $payload{position} = $position + 0;
+    }
+
+    for my $key (qw(rate_limit_per_user default_thread_rate_limit_per_user)) {
+        next unless defined $opts->{$key};
+        my $value = $opts->{$key};
+        die "$key must be between 0 and 21600\n"
+            unless !ref $value && $value =~ /^\d+\z/ && $value <= 21600;
+        $payload{$key} = $value + 0;
+    }
+
+    if (defined $opts->{bitrate}) {
+        my $bitrate = $opts->{bitrate};
+        die "bitrate must be 8000 or more\n"
+            unless !ref $bitrate && $bitrate =~ /^\d+\z/ && $bitrate >= 8000;
+        $payload{bitrate} = $bitrate + 0;
+    }
+
+    if (defined $opts->{user_limit}) {
+        my $limit = $opts->{user_limit};
+        die "user_limit must be between 0 and 10000\n"
+            unless !ref $limit && $limit =~ /^\d+\z/ && $limit <= 10000;
+        $payload{user_limit} = $limit + 0;
+    }
+
+    for my $key (qw(parent_id rtc_region)) {
+        next unless exists $opts->{$key};
+        my $value = $opts->{$key};
+        die "$key must be a string or undef\n"
+            if defined $value && (ref $value || !length $value);
+        $payload{$key} = defined $value ? "$value" : undef;
+    }
+
+    if (defined $opts->{video_quality_mode}) {
+        my $mode = $opts->{video_quality_mode};
+        if (!ref $mode && $mode =~ /\D/) {
+            die "Unknown video quality mode: $mode (expected auto or full)\n"
+                unless exists $VIDEO_QUALITY{lc $mode};
+            $mode = $VIDEO_QUALITY{lc $mode};
+        }
+        die "video_quality_mode must be 1 (auto) or 2 (full)\n"
+            unless defined $mode && !ref $mode && $mode =~ /^\d+\z/
+                && ($mode == 1 || $mode == 2);
+        $payload{video_quality_mode} = $mode + 0;
+    }
+
+    if (defined $opts->{default_auto_archive_duration}) {
+        my $duration = $opts->{default_auto_archive_duration};
+        die "default_auto_archive_duration must be 60, 1440, 4320 or 10080\n"
+            unless !ref $duration && $duration =~ /^\d+\z/
+                && ($duration == 60 || $duration == 1440
+                    || $duration == 4320 || $duration == 10080);
+        $payload{default_auto_archive_duration} = $duration + 0;
+    }
+
+    if (defined $opts->{flags}) {
+        my $flags = $opts->{flags};
+        die "flags must be an integer\n"
+            unless !ref $flags && $flags =~ /^\d+\z/;
+        $payload{flags} = $flags + 0;
+    }
+
+    if (defined $opts->{default_sort_order}) {
+        my $order = $opts->{default_sort_order};
+        die "default_sort_order must be 0 or 1\n"
+            unless !ref $order && $order =~ /^\d+\z/ && ($order == 0 || $order == 1);
+        $payload{default_sort_order} = $order + 0;
+    }
+
+    if (defined $opts->{default_forum_layout}) {
+        my $layout = $opts->{default_forum_layout};
+        die "default_forum_layout must be 0, 1 or 2\n"
+            unless !ref $layout && $layout =~ /^\d+\z/ && $layout <= 2;
+        $payload{default_forum_layout} = $layout + 0;
+    }
+
+    if (exists $opts->{permission_overwrites}) {
+        $payload{permission_overwrites} =
+            $self->_normalize_overwrites($opts->{permission_overwrites});
+    }
+
+    if (defined $opts->{available_tags}) {
+        my $tags = $opts->{available_tags};
+        die "available_tags must be an array reference\n"
+            unless ref $tags eq 'ARRAY';
+        die "available_tags accepts at most 20 tags\n" if @$tags > 20;
+
+        my @out;
+        for my $tag (@$tags) {
+            die "tag must be a hash reference\n" unless ref $tag eq 'HASH';
+            my $tag_name = $tag->{name};
+            die "tag name is required\n"
+                unless defined $tag_name && !ref $tag_name && length $tag_name;
+            die "tag name must be 20 characters or less\n"
+                if length($tag_name) > 20;
+            push @out, { %$tag, name => $tag_name };
+        }
+        $payload{available_tags} = \@out;
+    }
+
+    if (defined $opts->{default_reaction_emoji}) {
+        die "default_reaction_emoji must be a hash reference\n"
+            unless ref $opts->{default_reaction_emoji} eq 'HASH';
+        $payload{default_reaction_emoji} = $opts->{default_reaction_emoji};
+    }
+
+    die "no channel fields to update\n" unless $creating || keys %payload;
+
+    return \%payload;
+}
+
+sub _normalize_overwrites {
+    my ($self, $list) = @_;
+
+    die "permission_overwrites must be an array reference\n"
+        unless ref $list eq 'ARRAY';
+
+    my @out;
+    for my $overwrite (@$list) {
+        die "permission overwrite must be a hash reference\n"
+            unless ref $overwrite eq 'HASH';
+
+        my $id = $overwrite->{id};
+        die "permission overwrite id is required\n"
+            unless defined $id && !ref $id && length $id;
+
+        my $type = exists $overwrite->{type} ? $overwrite->{type} : 'role';
+        if (!ref $type && $type =~ /\D/) {
+            die "Unknown overwrite type: $type (expected role or member)\n"
+                unless exists $OVERWRITE_TYPE{lc $type};
+            $type = $OVERWRITE_TYPE{lc $type};
+        }
+        die "permission overwrite type must be 0 (role) or 1 (member)\n"
+            unless defined $type && !ref $type && $type =~ /^\d+\z/
+                && ($type == 0 || $type == 1);
+
+        my %row = (id => "$id", type => $type + 0);
+        for my $key (qw(allow deny)) {
+            next unless exists $overwrite->{$key};
+            $row{$key} = _permission_value($overwrite->{$key}, $key);
+        }
+        push @out, \%row;
+    }
+
+    return \@out;
+}
+
+# 権限の指定（数値 or 権限名の配列）を API 用の文字列にする。
+sub _permission_value {
+    my ($value, $label) = @_;
+    $label //= 'permissions';
+
+    return '0' unless defined $value;
+    return '' . permission_bits(@$value) if ref $value eq 'ARRAY';
+    return "$value" if !ref $value && $value =~ /^\d+\z/;
+
+    die "$label must be an integer or an array of permission names\n";
+}
+
 # ---------------------------------------------------------------- invites
 
 # 招待を作る。成功時は招待オブジェクト（code を含む）。
@@ -730,6 +1126,343 @@ sub delete_invite {
     $self->{last_error} = undef;
     my $res = $self->_request('DELETE', "$API_BASE/invites/" . _uri_escape($code));
     return $self->_finish($res, 'none');
+}
+
+# ---------------------------------------------------------------- scheduled events
+
+my %EVENT_ENTITY = (stage => 1, voice => 2, external => 3);
+my %EVENT_STATUS = (
+    scheduled => 1,
+    active    => 2,
+    completed => 3,
+    canceled  => 4,
+    cancelled => 4,
+);
+
+my $ISO8601_RE = qr/\A(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})
+                    (?::(\d{2}))?(?:\.\d+)?
+                    (Z|[+-]\d{2}:?\d{2})\z/x;
+
+# ギルドのスケジュールイベント一覧。
+#   get_scheduled_events($guild_id, with_user_count => 1)
+sub get_scheduled_events {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $url = "$API_BASE/guilds/$guild_id/scheduled-events";
+    $url .= '?with_user_count=true' if $opts{with_user_count};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'array');
+}
+
+sub get_scheduled_event {
+    my ($self, $guild_id, $event_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "event id is required\n" unless defined $event_id && length $event_id;
+
+    my $url = "$API_BASE/guilds/$guild_id/scheduled-events/$event_id";
+    $url .= '?with_user_count=true' if $opts{with_user_count};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'hash');
+}
+
+# スケジュールイベントを作る（CREATE_EVENTS が必要）。
+#   create_scheduled_event($guild_id,
+#       name                 => '定例会',
+#       entity_type          => 'external',
+#       scheduled_start_time => '2026-12-01T20:00:00Z',
+#       scheduled_end_time   => '2026-12-01T22:00:00Z',
+#       location             => 'Discord ボイスチャンネル',
+#   )
+#   create_scheduled_event($guild_id,
+#       name                 => '作業会',
+#       entity_type          => 'voice',
+#       channel_id           => $voice_channel_id,
+#       scheduled_start_time => '2026-12-01T20:00:00Z',
+#   )
+sub create_scheduled_event {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $payload = $self->_scheduled_event_payload(\%opts, 1);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/guilds/$guild_id/scheduled-events",
+        $payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# スケジュールイベントを変更する。status で開始・終了・中止もできる。
+#   update_scheduled_event($guild_id, $event_id, name => '新しい名前')
+#   update_scheduled_event($guild_id, $event_id, status => 'active')
+#   update_scheduled_event($guild_id, $event_id, status => 'completed')
+#   update_scheduled_event($guild_id, $event_id, channel_id => undef,
+#       entity_type => 'external', location => '...',
+#       scheduled_end_time => '2026-12-01T22:00:00Z')
+sub update_scheduled_event {
+    my ($self, $guild_id, $event_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "event id is required\n" unless defined $event_id && length $event_id;
+
+    my $payload = $self->_scheduled_event_payload(\%opts, 0);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH',
+        "$API_BASE/guilds/$guild_id/scheduled-events/$event_id",
+        $payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub delete_scheduled_event {
+    my ($self, $guild_id, $event_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "event id is required\n" unless defined $event_id && length $event_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/guilds/$guild_id/scheduled-events/$event_id",
+        undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# イベントに登録しているユーザー一覧。
+#   get_scheduled_event_users($guild_id, $event_id, limit => 100, with_member => 1)
+sub get_scheduled_event_users {
+    my ($self, $guild_id, $event_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "event id is required\n" unless defined $event_id && length $event_id;
+
+    my @query;
+    push @query, 'with_member=true' if $opts{with_member};
+    push @query, 'before=' . _uri_escape($opts{before}) if defined $opts{before};
+    push @query, 'after=' . _uri_escape($opts{after})   if defined $opts{after};
+
+    if (defined $opts{limit}) {
+        die "limit must be between 1 and 100\n"
+            unless !ref $opts{limit} && $opts{limit} =~ /^\d+\z/
+                && $opts{limit} >= 1 && $opts{limit} <= 100;
+        push @query, 'limit=' . ($opts{limit} + 0);
+    }
+
+    my $url = "$API_BASE/guilds/$guild_id/scheduled-events/$event_id/users";
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'array');
+}
+
+# スケジュールイベントの作成 / 更新の JSON を作る。
+sub _scheduled_event_payload {
+    my ($self, $opts, $creating) = @_;
+
+    my %payload;
+
+    if (defined $opts->{name}) {
+        my $name = $opts->{name};
+        die "event name must be 1-100 characters\n"
+            if ref $name || !length($name) || length($name) > 100;
+        $payload{name} = $name;
+    } elsif ($creating) {
+        die "event name is required\n";
+    }
+
+    if (exists $opts->{description}) {
+        my $description = $opts->{description};
+        if (defined $description) {
+            die "description must be a string\n" if ref $description;
+            die "description must be 1000 characters or less (got "
+                . length($description) . ")\n"
+                if length($description) > 1000;
+        }
+        $payload{description} = $description;    # undef でクリア
+    }
+
+    my $entity_type;
+    if (defined $opts->{entity_type}) {
+        $entity_type = _event_entity_type($opts->{entity_type});
+        $payload{entity_type} = $entity_type;
+    } elsif ($creating) {
+        die "entity_type is required (stage, voice or external)\n";
+    }
+
+    my $start = $opts->{scheduled_start_time};
+    if (defined $start) {
+        $payload{scheduled_start_time} =
+            _iso8601_time($start, 'scheduled_start_time');
+    } elsif ($creating) {
+        die "scheduled_start_time is required "
+            . "(e.g. 2026-12-01T20:00:00Z)\n";
+    }
+
+    if (defined $opts->{scheduled_end_time}) {
+        $payload{scheduled_end_time} =
+            _iso8601_time($opts->{scheduled_end_time}, 'scheduled_end_time');
+    } elsif ($creating && defined $entity_type && $entity_type == 3) {
+        die "scheduled_end_time is required for external events\n";
+    }
+
+    if (defined $payload{scheduled_start_time}
+        && defined $payload{scheduled_end_time}) {
+        my $start_epoch = _iso8601_epoch($payload{scheduled_start_time});
+        my $end_epoch   = _iso8601_epoch($payload{scheduled_end_time});
+        die "scheduled_end_time must be after scheduled_start_time\n"
+            if defined $start_epoch && defined $end_epoch
+                && $end_epoch <= $start_epoch;
+    }
+
+    if (defined $opts->{privacy_level}) {
+        my $level = $opts->{privacy_level};
+        $level = 2
+            if !ref $level && $level =~ /\D/
+                && ($level eq 'guild_only' || $level eq 'guild-only');
+        die "privacy_level must be 2 (guild only)\n"
+            unless !ref $level && $level =~ /^\d+\z/ && $level == 2;
+        $payload{privacy_level} = 2;
+    } elsif ($creating) {
+        $payload{privacy_level} = 2;
+    }
+
+    if (defined $opts->{status}) {
+        my $status = $opts->{status};
+        if (!ref $status && $status =~ /\D/) {
+            die "Unknown event status: $status "
+                . "(expected scheduled, active, completed or canceled)\n"
+                unless exists $EVENT_STATUS{lc $status};
+            $status = $EVENT_STATUS{lc $status};
+        }
+        die "event status must be 1-4\n"
+            unless defined $status && !ref $status && $status =~ /^\d+\z/
+                && $status >= 1 && $status <= 4;
+        $payload{status} = $status + 0;
+    }
+
+    if (exists $opts->{channel_id}) {
+        my $channel_id = $opts->{channel_id};
+        die "channel id must be a string or undef\n"
+            if defined $channel_id && (ref $channel_id || !length $channel_id);
+        $payload{channel_id} = defined $channel_id ? "$channel_id" : undef;
+    }
+
+    if (exists $opts->{entity_metadata}) {
+        my $metadata = $opts->{entity_metadata};
+        if (defined $metadata) {
+            die "entity_metadata must be a hash reference\n"
+                unless ref $metadata eq 'HASH';
+            if (defined $metadata->{location}) {
+                die "entity_metadata location must be 1-100 characters\n"
+                    if ref $metadata->{location}
+                        || !length($metadata->{location})
+                        || length($metadata->{location}) > 100;
+            }
+            $metadata = { %$metadata };
+        }
+        $payload{entity_metadata} = $metadata;
+    } elsif (defined $opts->{location}) {
+        my $location = $opts->{location};
+        die "location must be 1-100 characters\n"
+            if ref $location || !length($location) || length($location) > 100;
+        $payload{entity_metadata} = { location => $location };
+    }
+
+    if (defined $opts->{image}) {
+        die "image must be a data URI (data:image/png;base64,...)\n"
+            unless !ref $opts->{image} && $opts->{image} =~ /\Adata:image\//;
+        $payload{image} = $opts->{image};
+    }
+
+    if (exists $opts->{recurrence_rule}) {
+        my $rule = $opts->{recurrence_rule};
+        die "recurrence_rule must be a hash reference or undef\n"
+            if defined $rule && ref $rule ne 'HASH';
+        $payload{recurrence_rule} = $rule;
+    }
+
+    # 作成時は種別ごとの必須項目を確認する（更新時は API に任せる）。
+    if ($creating && defined $entity_type) {
+        if ($entity_type == 3) {
+            die "entity_metadata location is required for external events\n"
+                unless ref $payload{entity_metadata} eq 'HASH'
+                    && defined $payload{entity_metadata}{location};
+            die "channel_id must not be set for external events\n"
+                if defined $payload{channel_id};
+        } else {
+            die "channel_id is required for stage/voice events\n"
+                unless defined $payload{channel_id};
+        }
+    }
+
+    die "no event fields to update\n" unless $creating || keys %payload;
+
+    return \%payload;
+}
+
+sub _event_entity_type {
+    my ($value) = @_;
+
+    if (!ref $value && defined $value && $value =~ /\D/) {
+        die "Unknown event entity type: $value "
+            . "(expected stage, voice or external)\n"
+            unless exists $EVENT_ENTITY{lc $value};
+        $value = $EVENT_ENTITY{lc $value};
+    }
+
+    die "event entity type must be 1 (stage), 2 (voice) or 3 (external)\n"
+        unless defined $value && !ref $value && $value =~ /^\d+\z/
+            && ($value == 1 || $value == 2 || $value == 3);
+
+    return $value + 0;
+}
+
+sub _iso8601_time {
+    my ($value, $label) = @_;
+
+    die "$label must be an ISO8601 string (e.g. 2026-12-01T20:00:00Z)\n"
+        unless defined $value && !ref $value && $value =~ $ISO8601_RE;
+
+    return $value;
+}
+
+# ISO8601 を epoch 秒に変換する（比較用。失敗したら undef）。
+sub _iso8601_epoch {
+    my ($value) = @_;
+    return undef unless defined $value && $value =~ $ISO8601_RE;
+
+    my ($year, $mon, $day, $hour, $min, $sec, $zone) =
+        ($1, $2, $3, $4, $5, $6, $7);
+    $sec //= 0;
+
+    my $epoch = eval { timegm($sec, $min, $hour, $day, $mon - 1, $year) };
+    return undef unless defined $epoch;
+
+    if ($zone ne 'Z') {
+        my ($sign, $zh, $zm) = $zone =~ /\A([+-])(\d{2}):?(\d{2})\z/;
+        my $offset = ($zh * 3600) + ($zm * 60);
+        $epoch -= $offset if $sign eq '+';
+        $epoch += $offset if $sign eq '-';
+    }
+
+    return $epoch;
 }
 
 # ---------------------------------------------------------------- webhooks
