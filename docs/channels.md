@@ -145,11 +145,18 @@ $client->edit_channel_permissions($channel_id, $role_id,
 `Disperl::Permissions` で名前とビットマスクを相互変換できます。
 
 ```perl
-use Disperl::Permissions qw(permission_bits permission_names permission_map);
+use Disperl::Permissions qw(
+    permission_bits permission_names permission_map
+    guild_permissions channel_permissions
+);
 
 my $bits = permission_bits(qw(VIEW_CHANNEL SEND_MESSAGES));    # 3072
 my @names = permission_names($member->{permissions});           # 名前の一覧
 my $map   = permission_map();                                   # 全一覧
+
+# ロールとチャンネル上書きを反映した実効権限
+my $guild_bits   = guild_permissions($guild, $member);
+my $channel_bits = channel_permissions($guild, $member, $channel);
 ```
 
 | 関数 | 説明 |
@@ -157,6 +164,8 @@ my $map   = permission_map();                                   # 全一覧
 | `permission_bits(@names)` | 権限名（配列参照も可）をビットマスクに変換 |
 | `permission_names($bits)` | ビットマスクに含まれる権限名を返す |
 | `permission_map()` | `{ 権限名 => ビット位置 }` の全一覧 |
+| `guild_permissions($guild, $member)` | ギルド全体の実効権限（`ADMINISTRATOR` は全権限） |
+| `channel_permissions($guild, $member, $channel)` | 上書きを適用したチャンネルでの実効権限 |
 
 代表的な権限:
 
@@ -200,6 +209,8 @@ for my $invite (@$invites) {
 - [Client](client.md)
 - [スレッド](threads.md)
 - [ギルド・ユーザー・招待](guilds.md)
+- [ロール管理](roles.md)
+- [メンバー管理](members.md)
 - [スケジュールイベント](events.md)
 - [制限値](limits.md)
 - [CLI](cli.md)

@@ -642,15 +642,222 @@ sub get_guild_channels {
 sub get_guild_roles {
     my ($self, $guild_id) = @_;
 
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
     $self->{last_error} = undef;
     my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/roles");
     return $self->_finish($res, 'array');
+}
+
+sub get_guild_role {
+    my ($self, $guild_id, $role_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "role id is required\n"  unless defined $role_id  && length $role_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/roles/$role_id");
+    return $self->_finish($res, 'hash');
+}
+
+# ロールを作る（MANAGE_ROLES が必要）。
+#   create_guild_role($guild_id,
+#       name        => 'モデレーター',
+#       permissions => ['VIEW_CHANNEL', 'MANAGE_MESSAGES'],
+#       color       => 0x5865F2,
+#       hoist       => 1,
+#       mentionable => 1,
+#   )
+sub create_guild_role {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $payload = $self->_role_payload(\%opts, 1);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/guilds/$guild_id/roles",
+        $payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ロールを変更する。permissions => [] で全権限を外す。
+#   update_guild_role($guild_id, $role_id, name => '新しい名前')
+#   update_guild_role($guild_id, $role_id, permissions => ['SEND_MESSAGES'])
+sub update_guild_role {
+    my ($self, $guild_id, $role_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "role id is required\n"  unless defined $role_id  && length $role_id;
+
+    my $payload = $self->_role_payload(\%opts, 0);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH',
+        "$API_BASE/guilds/$guild_id/roles/$role_id",
+        $payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ロールを削除する（成功時は 1）。
+sub delete_guild_role {
+    my ($self, $guild_id, $role_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "role id is required\n"  unless defined $role_id  && length $role_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/guilds/$guild_id/roles/$role_id",
+        undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# ロールの並び順をまとめて変更する。Discord は変更後のロール一覧を返す。
+#   modify_guild_role_positions($guild_id, [
+#       { id => $role_id, position => 3 },
+#       { id => $other_id, position => 4 },
+#   ], reason => '並び替え')
+sub modify_guild_role_positions {
+    my ($self, $guild_id, $positions, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "positions must be a non-empty array reference\n"
+        unless ref $positions eq 'ARRAY' && @$positions;
+
+    my @payload;
+    for my $entry (@$positions) {
+        die "position entry must be a hash reference\n"
+            unless ref $entry eq 'HASH';
+
+        my $id = $entry->{id};
+        die "position entry id is required\n"
+            unless defined $id && !ref $id && length $id;
+
+        my $position = $entry->{position};
+        die "position entry position is required\n"
+            unless defined $position && !ref $position
+                && $position =~ /^\d+\z/;
+
+        push @payload, { id => "$id", position => $position + 0 };
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH',
+        "$API_BASE/guilds/$guild_id/roles",
+        \@payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'array');
+}
+
+# ロールの作成 / 更新の JSON を作る。
+sub _role_payload {
+    my ($self, $opts, $creating) = @_;
+
+    my %payload;
+
+    if (defined $opts->{name}) {
+        my $name = $opts->{name};
+        die "role name must be 1-100 characters\n"
+            if ref $name || !length($name) || length($name) > 100;
+        $payload{name} = $name;
+    } elsif ($creating) {
+        die "role name is required\n";
+    }
+
+    if (exists $opts->{permissions}) {
+        $payload{permissions} = _permission_value($opts->{permissions}, 'permissions');
+    } elsif ($creating) {
+        $payload{permissions} = '0';
+    }
+
+    if (defined $opts->{color}) {
+        $payload{color} = _role_color($opts->{color}, 'color');
+    }
+
+    if (exists $opts->{colors}) {
+        my $colors = $opts->{colors};
+        die "colors must be a hash reference\n" unless ref $colors eq 'HASH';
+
+        my %out;
+        for my $key (qw(primary_color secondary_color tertiary_color)) {
+            next unless exists $colors->{$key};
+            my $value = $colors->{$key};
+            $out{$key} = defined $value
+                ? _role_color($value, $key)
+                : undef;
+        }
+        die "colors must include at least one color\n" unless keys %out;
+        $payload{colors} = \%out;
+    }
+
+    for my $key (qw(hoist mentionable)) {
+        next unless exists $opts->{$key};
+        $payload{$key} = $opts->{$key} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    if (exists $opts->{icon}) {
+        my $icon = $opts->{icon};
+        if (defined $icon) {
+            die "role icon must be a data URI (data:image/...;base64,...)\n"
+                unless !ref $icon && $icon =~ /^data:image\/[^;]+;base64,/;
+            $payload{icon} = $icon;
+        } else {
+            $payload{icon} = undef;    # null で削除
+        }
+    }
+
+    if (exists $opts->{unicode_emoji}) {
+        my $emoji = $opts->{unicode_emoji};
+        die "unicode_emoji must be a string\n"
+            if defined $emoji && ref $emoji;
+        $payload{unicode_emoji} = $emoji;    # undef でクリア
+    }
+
+    die "no role fields to update\n" unless $creating || keys %payload;
+
+    return \%payload;
+}
+
+# 色の指定（整数または #RRGGBB / 0xRRGGBB）を整数にする。
+sub _role_color {
+    my ($value, $label) = @_;
+    $label //= 'color';
+
+    return hex $1 if !ref $value && $value =~ /^#([0-9A-Fa-f]{6})$/;
+    return hex $1 if !ref $value && $value =~ /^0x([0-9A-Fa-f]{1,6})$/;
+
+    die "$label must be an integer between 0 and 16777215\n"
+        unless !ref $value && $value =~ /^\d+\z/ && $value <= 16777215;
+
+    return $value + 0;
 }
 
 # メンバー一覧。GUILD_MEMBERS（Privileged Intent）が有効な Bot だけ使える。
 #   get_guild_members($guild_id, limit => 100, after => $user_id)
 sub get_guild_members {
     my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    if (defined $opts{limit}) {
+        die "limit must be between 1 and 1000\n"
+            unless !ref $opts{limit} && $opts{limit} =~ /^\d+\z/
+                && $opts{limit} >= 1 && $opts{limit} <= 1000;
+    }
 
     my @query;
     push @query, 'limit=' . _uri_escape($opts{limit}) if defined $opts{limit};
@@ -664,12 +871,350 @@ sub get_guild_members {
     return $self->_finish($res, 'array');
 }
 
+# ユーザー名 / ニックネームでメンバーを検索する。
+#   search_guild_members($guild_id, 'kama', limit => 10)
+sub search_guild_members {
+    my ($self, $guild_id, $query, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "query is required\n"
+        unless defined $query && !ref $query && length $query;
+
+    if (defined $opts{limit}) {
+        die "limit must be between 1 and 1000\n"
+            unless !ref $opts{limit} && $opts{limit} =~ /^\d+\z/
+                && $opts{limit} >= 1 && $opts{limit} <= 1000;
+    }
+
+    my @query = ('query=' . _uri_escape($query));
+    push @query, 'limit=' . ($opts{limit} + 0) if defined $opts{limit};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET',
+        "$API_BASE/guilds/$guild_id/members/search?" . join('&', @query),
+    );
+    return $self->_finish($res, 'array');
+}
+
 sub get_guild_member {
     my ($self, $guild_id, $user_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
 
     $self->{last_error} = undef;
     my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/members/$user_id");
     return $self->_finish($res, 'hash');
+}
+
+# メンバーを変更する（MANAGE_NICKNAMES / MANAGE_ROLES / MODERATE_MEMBERS など）。
+#   modify_guild_member($guild_id, $user_id, nick => '新しい名前')
+#   modify_guild_member($guild_id, $user_id, roles => [$role_id])
+#   modify_guild_member($guild_id, $user_id, mute => 1, deaf => 1)
+#   modify_guild_member($guild_id, $user_id, channel_id => $voice_channel_id)
+#   modify_guild_member($guild_id, $user_id,
+#       communication_disabled_until => '2026-12-01T20:00:00Z')
+#   modify_guild_member($guild_id, $user_id, communication_disabled_until => undef)
+sub modify_guild_member {
+    my ($self, $guild_id, $user_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
+
+    my $payload = $self->_member_payload(\%opts);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH',
+        "$API_BASE/guilds/$guild_id/members/$user_id",
+        $payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 自分のニックネームを変更する（CHANGE_NICKNAME）。
+sub modify_current_member {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "nick is required\n" unless exists $opts{nick};
+
+    my $payload = $self->_member_payload({ nick => $opts{nick} });
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH',
+        "$API_BASE/guilds/$guild_id/members/\@me",
+        $payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# メンバーにロールを付ける（MANAGE_ROLES）。成功時は 1。
+sub add_guild_member_role {
+    my ($self, $guild_id, $user_id, $role_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
+    die "role id is required\n"  unless defined $role_id  && length $role_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT',
+        "$API_BASE/guilds/$guild_id/members/$user_id/roles/$role_id",
+        undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# メンバーからロールを外す（MANAGE_ROLES）。成功時は 1。
+sub remove_guild_member_role {
+    my ($self, $guild_id, $user_id, $role_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
+    die "role id is required\n"  unless defined $role_id  && length $role_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/guilds/$guild_id/members/$user_id/roles/$role_id",
+        undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# メンバーをキックする（KICK_MEMBERS）。成功時は 1。
+sub kick_guild_member {
+    my ($self, $guild_id, $user_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/guilds/$guild_id/members/$user_id",
+        undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# BAN 一覧。limit は 1〜1000。
+sub get_guild_bans {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    if (defined $opts{limit}) {
+        die "limit must be between 1 and 1000\n"
+            unless !ref $opts{limit} && $opts{limit} =~ /^\d+\z/
+                && $opts{limit} >= 1 && $opts{limit} <= 1000;
+    }
+
+    my @query;
+    push @query, 'limit=' . ($opts{limit} + 0) if defined $opts{limit};
+    push @query, 'before=' . _uri_escape($opts{before}) if defined $opts{before};
+    push @query, 'after=' . _uri_escape($opts{after})   if defined $opts{after};
+
+    my $url = "$API_BASE/guilds/$guild_id/bans";
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'array');
+}
+
+# 特定ユーザーの BAN 情報。BAN されていなければ undef（last_error が 404）。
+sub get_guild_ban {
+    my ($self, $guild_id, $user_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/bans/$user_id");
+    return $self->_finish($res, 'hash');
+}
+
+# メンバーを BAN する（BAN_MEMBERS）。成功時は 1。
+#   ban_guild_member($guild_id, $user_id, delete_message_seconds => 86400)
+sub ban_guild_member {
+    my ($self, $guild_id, $user_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
+
+    my %payload;
+    if (defined $opts{delete_message_seconds}) {
+        my $seconds = $opts{delete_message_seconds};
+        die "delete_message_seconds must be between 0 and 604800\n"
+            unless !ref $seconds && $seconds =~ /^\d+\z/ && $seconds <= 604800;
+        $payload{delete_message_seconds} = $seconds + 0;
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT',
+        "$API_BASE/guilds/$guild_id/bans/$user_id",
+        \%payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# BAN を解除する（BAN_MEMBERS）。成功時は 1。
+sub unban_guild_member {
+    my ($self, $guild_id, $user_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/guilds/$guild_id/bans/$user_id",
+        undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# プルーン対象の人数を取得する（KICK_MEMBERS）。
+#   get_guild_prune_count($guild_id, days => 7)
+sub get_guild_prune_count {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $days = defined $opts{days} ? $opts{days} : 7;
+    die "days must be between 1 and 30\n"
+        unless !ref $days && $days =~ /^\d+\z/ && $days >= 1 && $days <= 30;
+
+    my @query = ('days=' . ($days + 0));
+    if (defined $opts{include_roles}) {
+        die "include_roles must be an array reference\n"
+            unless ref $opts{include_roles} eq 'ARRAY';
+        my @roles = map {
+            die "role id must be a string\n"
+                if ref $_ || !defined $_ || !length $_;
+            _uri_escape("$_")
+        } @{ $opts{include_roles} };
+        push @query, 'include_roles=' . join(',', @roles) if @roles;
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/prune?" . join('&', @query));
+    return $self->_finish($res, 'hash');
+}
+
+# プルーンを実行する（KICK_MEMBERS）。成功時は { pruned => 人数 }。
+#   begin_guild_prune($guild_id, days => 7, compute_prune_count => 1)
+sub begin_guild_prune {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $days = defined $opts{days} ? $opts{days} : 7;
+    die "days must be between 1 and 30\n"
+        unless !ref $days && $days =~ /^\d+\z/ && $days >= 1 && $days <= 30;
+
+    my %payload = (days => $days + 0);
+
+    if (exists $opts{compute_prune_count}) {
+        $payload{compute_prune_count} =
+            $opts{compute_prune_count} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    if (defined $opts{include_roles}) {
+        die "include_roles must be an array reference\n"
+            unless ref $opts{include_roles} eq 'ARRAY';
+        my @roles = map {
+            die "role id must be a string\n"
+                if ref $_ || !defined $_ || !length $_;
+            "$_"
+        } @{ $opts{include_roles} };
+        $payload{include_roles} = \@roles;
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/guilds/$guild_id/prune",
+        \%payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# メンバー変更の JSON を作る。
+sub _member_payload {
+    my ($self, $opts) = @_;
+
+    my %payload;
+
+    if (exists $opts->{nick}) {
+        my $nick = $opts->{nick};
+        if (defined $nick) {
+            die "nick must be a string\n" if ref $nick;
+            die "nick must be 32 characters or less (got "
+                . length($nick) . ")\n"
+                if length($nick) > 32;
+        }
+        $payload{nick} = $nick;    # undef でニックネームを削除
+    }
+
+    if (exists $opts->{roles}) {
+        my $roles = $opts->{roles};
+        die "roles must be an array reference\n"
+            unless ref $roles eq 'ARRAY';
+
+        my (%seen, @out);
+        for my $role_id (@$roles) {
+            die "role id must be a string\n"
+                if !defined $role_id || ref $role_id || !length $role_id;
+            next if $seen{$role_id}++;
+            push @out, "$role_id";
+        }
+        $payload{roles} = \@out;
+    }
+
+    for my $key (qw(mute deaf)) {
+        next unless exists $opts->{$key};
+        $payload{$key} = $opts->{$key} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    if (exists $opts->{channel_id}) {
+        my $channel_id = $opts->{channel_id};
+        die "channel id must be a string or undef\n"
+            if defined $channel_id && (ref $channel_id || !length $channel_id);
+        $payload{channel_id} = defined $channel_id ? "$channel_id" : undef;
+    }
+
+    if (exists $opts->{communication_disabled_until}) {
+        my $until = $opts->{communication_disabled_until};
+        $payload{communication_disabled_until} = defined $until
+            ? _iso8601_time($until, 'communication_disabled_until')
+            : undef;
+    }
+
+    if (defined $opts->{flags}) {
+        my $flags = $opts->{flags};
+        die "flags must be an integer\n"
+            unless !ref $flags && $flags =~ /^\d+\z/;
+        $payload{flags} = $flags + 0;
+    }
+
+    die "no member fields to update\n" unless keys %payload;
+
+    return \%payload;
 }
 
 # ---------------------------------------------------------------- channel management

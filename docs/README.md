@@ -7,10 +7,10 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 
 | モジュール | 役割 | 主な依存 |
 |---|---|---|
-| `Disperl::Client` | REST API。メッセージ・添付・投票・スレッド・チャンネル・イベント・Webhook・インタラクション応答 | core のみ（`HTTP::Tiny` / `JSON::PP` / `Encode`） |
+| `Disperl::Client` | REST API。メッセージ・添付・投票・スレッド・チャンネル・ロール・メンバー・イベント・Webhook・インタラクション応答 | core のみ（`HTTP::Tiny` / `JSON::PP` / `Encode`） |
 | `Disperl::Gateway` | Gateway 接続。イベント受信・プレゼンス・再接続 | `IO::Socket::SSL` |
 | `Disperl::Components` | ボタン / セレクトメニュー / モーダルのビルダー | `JSON::PP` |
-| `Disperl::Permissions` | 権限名とビットマスクの相互変換 | core のみ |
+| `Disperl::Permissions` | 権限名とビットマスクの相互変換・実効権限の計算 | core のみ |
 | `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が内部で使用） | `IO::Socket::SSL` |
 | `Disperl::Config` | `.env` ローダー | core のみ |
 
@@ -22,6 +22,8 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | [メッセージ](messages.md) | 本文・embed・コンポーネント・添付ファイル・投票 |
 | [スレッド](threads.md) | 作成・一覧・参加・メンバー・アーカイブ |
 | [チャンネル管理](channels.md) | 作成・編集・並び替え・権限上書き・削除 |
+| [ロール管理](roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
+| [メンバー管理](members.md) | 一覧・検索・変更・ロール付与・キック / BAN・プルーン・実効権限 |
 | [スケジュールイベント](events.md) | 作成・変更・削除・参加者・繰り返し |
 | [ギルド・ユーザー・招待](guilds.md) | ギルド情報・メンバー・DM・招待 |
 | [Webhook](webhooks.md) | 実行と管理、送信済みメッセージの操作 |
@@ -72,7 +74,9 @@ if ($message) {
 - ネイティブ投票（作成・終了・投票者取得）
 - スレッド: 作成・一覧・参加・退出・メンバー・アーカイブ・削除
 - チャンネル: 作成・編集・並び替え・権限上書き・削除・招待一覧
-- 権限: 名前とビットマスクの相互変換（`Disperl::Permissions`）
+- ロール: 取得・作成・編集・並び替え・削除・色 / アイコン / Unicode 絵文字
+- メンバー: 一覧・検索・ニックネーム・ロール付与 / 剥奪・タイムアウト・キック / BAN / プルーン
+- 権限: 名前とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）
 - スケジュールイベント: 一覧・取得・作成・変更・削除・参加者
 - DM・ギルド情報・招待
 - Webhook: 実行・管理・送信済みメッセージの取得 / 編集 / 削除
@@ -86,7 +90,7 @@ if ($message) {
 - 音声（Voice）
 - OAuth2
 - AutoMod・監査ログ
-- ギルド設定の変更・ロールの作成 / 編集・キック / BAN
+- ギルド設定の変更
 - フォーラム / メディアチャンネルの投稿（チャンネル自体の作成は可）
 - 課金・Entitlements・SKU
 - ユーザーアプリ / 埋め込みアプリ

@@ -39,8 +39,8 @@ print "$me->{username} ($me->{id})\n";
 |---|---|---|
 | `get_guild($guild_id)` | ハッシュ | ギルド情報 |
 | `get_guild_channels($guild_id)` | 配列 | チャンネル一覧 |
-| `get_guild_roles($guild_id)` | 配列 | ロール一覧 |
-| `get_guild_members($guild_id, %opts)` | 配列 | メンバー一覧（`GUILD_MEMBERS` が必要） |
+| `get_guild_roles($guild_id)` | 配列 | ロール一覧（詳細は [ロール管理](roles.md)） |
+| `get_guild_members($guild_id, %opts)` | 配列 | メンバー一覧（`GUILD_MEMBERS` が必要。詳細は [メンバー管理](members.md)） |
 | `get_guild_member($guild_id, $user_id)` | ハッシュ | メンバー 1 人（`GUILD_MEMBERS` が必要） |
 
 ```perl
@@ -90,5 +90,7 @@ $client->delete_invite($code);       # 招待を削除
 ## 関連ページ
 
 - [Client](client.md)
+- [ロール管理](roles.md)
+- [メンバー管理](members.md)
 - [Webhook](webhooks.md)
 - [メッセージ](messages.md)

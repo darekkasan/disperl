@@ -3,7 +3,10 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use Test::More;
-use Disperl::Permissions qw(permission_bits permission_names permission_map);
+use Disperl::Permissions qw(
+    permission_bits permission_names permission_map
+    all_permissions guild_permissions channel_permissions
+);
 
 my $VIEW_CHANNEL    = 1 << 10;
 my $SEND_MESSAGES   = 1 << 11;
@@ -63,5 +66,95 @@ my $map = permission_map();
 is ref $map, 'HASH', 'permission_map returns a hash';
 is $map->{VIEW_CHANNEL}, 10, 'map holds bit positions';
 is $map->{BYPASS_SLOWMODE}, 52, 'map includes newer permissions';
+
+subtest 'all_permissions' => sub {
+    my $all = all_permissions();
+    ok $all & (1 << 3), 'includes ADMINISTRATOR';
+    ok $all & (1 << 52), 'includes the highest bit';
+    is scalar(permission_names($all)), scalar(keys %$map),
+        'contains every known permission';
+};
+
+subtest 'guild_permissions' => sub {
+    my $ADMIN = 1 << 3;
+    my $MANAGE_ROLES = 1 << 28;
+
+    my $guild = {
+        id    => '100',
+        roles => [
+            { id => '100', permissions => ($VIEW_CHANNEL | $SEND_MESSAGES) . '' },
+            { id => '200', permissions => ($MANAGE_CHANNELS | $MANAGE_ROLES) . '' },
+            { id => '300', permissions => $ADMIN . '' },
+        ],
+    };
+
+    my $plain = { user => { id => '900' }, roles => [] };
+    is guild_permissions($guild, $plain),
+        $VIEW_CHANNEL | $SEND_MESSAGES, '@everyone only';
+
+    my $mod = { user => { id => '901' }, roles => ['200'] };
+    is guild_permissions($guild, $mod),
+        $VIEW_CHANNEL | $SEND_MESSAGES | $MANAGE_CHANNELS | $MANAGE_ROLES,
+        'role permissions are OR-ed';
+
+    my $admin = { user => { id => '902' }, roles => ['300'] };
+    is guild_permissions($guild, $admin), all_permissions(),
+        'ADMINISTRATOR grants everything';
+
+    is guild_permissions({ id => '100' }, $plain), 0, 'no roles is 0';
+
+    eval { guild_permissions('x', $plain) };
+    like $@, qr/guild must be a hash reference/, 'guild hash required';
+
+    eval { guild_permissions($guild, 'x') };
+    like $@, qr/member must be a hash reference/, 'member hash required';
+};
+
+subtest 'channel_permissions' => sub {
+    my $ADMIN = 1 << 3;
+
+    my $guild = {
+        id    => '100',
+        roles => [
+            { id => '100', permissions => ($VIEW_CHANNEL | $SEND_MESSAGES) . '' },
+            { id => '200', permissions => $MANAGE_CHANNELS . '' },
+            { id => '300', permissions => $ADMIN . '' },
+        ],
+    };
+
+    my $channel = {
+        id => '500',
+        permission_overwrites => [
+            { id => '100', type => 0, allow => '0', deny => $VIEW_CHANNEL . '' },
+            { id => '200', type => 0, allow => $SEND_MESSAGES . '', deny => '0' },
+            { id => '900', type => 1, allow => '0', deny => $SEND_MESSAGES . '' },
+            { id => '901', type => 1, allow => $VIEW_CHANNEL . '', deny => '0' },
+        ],
+    };
+
+    my $member = { user => { id => '900' }, roles => ['200'] };
+    is channel_permissions($guild, $member, $channel), $MANAGE_CHANNELS,
+        'everyone deny -> role allow -> member deny';
+
+    my $other = { user => { id => '901' }, roles => [] };
+    is channel_permissions($guild, $other, $channel),
+        $VIEW_CHANNEL | $SEND_MESSAGES,
+        'member overwrite can restore a denied permission';
+
+    my $nobody = { user => { id => '999' }, roles => [] };
+    is channel_permissions($guild, $nobody, $channel), $SEND_MESSAGES,
+        'everyone deny applies to everyone';
+
+    my $admin = { user => { id => '902' }, roles => ['300'] };
+    is channel_permissions($guild, $admin, $channel), all_permissions(),
+        'ADMINISTRATOR bypasses overwrites';
+
+    is channel_permissions($guild, $nobody, { id => '501' }),
+        $VIEW_CHANNEL | $SEND_MESSAGES,
+        'no overwrites falls back to guild permissions';
+
+    eval { channel_permissions($guild, $nobody, 'x') };
+    like $@, qr/channel must be a hash reference/, 'channel hash required';
+};
 
 done_testing;

@@ -18,7 +18,10 @@ use Disperl::Config qw(load_dotenv);
 use Disperl::Client;
 use Disperl::Components qw(action_row button label modal text_input);
 use Disperl::Gateway;
-use Disperl::Permissions qw(permission_bits permission_names permission_map);
+use Disperl::Permissions qw(
+    permission_bits permission_names permission_map
+    guild_permissions channel_permissions
+);
 
 load_dotenv("$FindBin::Bin/.env");
 
@@ -229,6 +232,44 @@ disperl 動作確認 CLI
   perl test.pl channel-perm-delete <ID> <対象ID> [--reason 理由]
                                        権限上書きを削除する
   perl test.pl channel-invites [ID]    チャンネルの招待一覧
+  perl test.pl roles [--guild ID]      ロール一覧
+  perl test.pl role <ID> [--guild ID]  ロールを表示する
+  perl test.pl role-create <名前> [--permissions 権限,権限] [--color #RRGGBB]
+      [--hoist] [--mentionable] [--icon 画像] [--emoji 絵文字] [--guild ID] [--reason 理由]
+                                       ロールを作る
+  perl test.pl role-edit <ID> [--name 名前] [--permissions 権限,権限] [--color #RRGGBB]
+      [--hoist|--no-hoist] [--mentionable|--no-mentionable]
+      [--icon 画像|none] [--emoji 絵文字|none] [--guild ID] [--reason 理由]
+                                       ロールを編集する
+  perl test.pl role-delete <ID> [--guild ID] [--reason 理由]
+                                       ロールを削除する
+  perl test.pl role-move <ID> <位置> [--guild ID] [--reason 理由]
+                                       ロールの並び順を変える
+  perl test.pl members [--guild ID] [--limit N] [--after ID]
+                                       メンバー一覧（GUILD_MEMBERS が必要）
+  perl test.pl member <ユーザーID> [--guild ID]
+                                       メンバーを表示する
+  perl test.pl member-search <クエリ> [--guild ID] [--limit N]
+                                       メンバーを検索する
+  perl test.pl member-edit <ユーザーID> [--nick 名前|none] [--roles ID,ID|none]
+      [--mute 0|1] [--deaf 0|1] [--channel ID|none] [--timeout ISO8601|none]
+      [--guild ID] [--reason 理由]     メンバーを変更する
+  perl test.pl member-role-add <ユーザーID> <ロールID> [--guild ID] [--reason 理由]
+                                       ロールを付ける
+  perl test.pl member-role-remove <ユーザーID> <ロールID> [--guild ID] [--reason 理由]
+                                       ロールを外す
+  perl test.pl kick <ユーザーID> [--guild ID] [--reason 理由]
+                                       メンバーをキックする
+  perl test.pl ban <ユーザーID> [--delete-seconds N] [--guild ID] [--reason 理由]
+                                       BAN する
+  perl test.pl unban <ユーザーID> [--guild ID] [--reason 理由]
+                                       BAN を解除する
+  perl test.pl bans [--guild ID] [--limit N] [--before ID] [--after ID]
+                                       BAN 一覧
+  perl test.pl prune [--days N] [--include-role ID]... [--compute]
+      [--guild ID] [--reason 理由]    プルーン対象を数える（--compute で実行）
+  perl test.pl member-perms <ユーザーID> [--channel ID] [--guild ID]
+                                       実効権限を表示する
   perl test.pl permissions [権限名 ...] 権限名からビットマスクを計算する（--names BITS で逆引き）
   perl test.pl events [--guild ID] [--users]
                                        スケジュールイベント一覧
@@ -290,6 +331,14 @@ disperl 動作確認 CLI
   perl test.pl channel-create "告知" --type announcement --topic "お知らせ"
   perl test.pl channel-edit 123456789012345678 --slowmode 10
   perl test.pl channel-perms 123456789012345678 123456789012345678 --deny VIEW_CHANNEL
+  perl test.pl roles
+  perl test.pl role-create "モデレーター" --permissions VIEW_CHANNEL,MANAGE_MESSAGES --color "#5865F2" --hoist
+  perl test.pl role-move 123456789012345678 5
+  perl test.pl member-role-add 123456789012345678 123456789012345678
+  perl test.pl member-edit 123456789012345678 --timeout 2026-12-01T20:00:00Z
+  perl test.pl prune --days 7
+  perl test.pl prune --days 7 --compute --reason "定期整理"
+  perl test.pl member-perms 123456789012345678 --channel 123456789012345678
   perl test.pl permissions VIEW_CHANNEL SEND_MESSAGES
   perl test.pl events
   perl test.pl event-create "定例会" --start 2026-12-01T20:00:00Z --end 2026-12-01T22:00:00Z --location "Discord"
@@ -1017,6 +1066,536 @@ sub cmd_permissions {
 
     my $bits = permission_bits(@$pos);
     out sprintf "%s (%d)\n", $bits, $bits;
+    return 0;
+}
+
+# ---------------------------------------------------------------- ロール管理
+
+sub _print_role {
+    my ($role) = @_;
+
+    out sprintf "  id:          %s\n", $role->{id} // '?';
+    out sprintf "  name:        %s\n", $role->{name} // '';
+    out sprintf "  position:    %s\n", $role->{position} // 0;
+    out sprintf "  color:       #%06X\n", $role->{color} // 0;
+    out sprintf "  hoist:       %s\n", $role->{hoist} ? 'yes' : 'no';
+    out sprintf "  mentionable: %s\n", $role->{mentionable} ? 'yes' : 'no';
+    out sprintf "  managed:     %s\n", $role->{managed} ? 'yes' : 'no';
+
+    my @names = permission_names($role->{permissions} // 0);
+    out sprintf "  permissions: %s\n", @names ? join(', ', @names) : '(なし)';
+
+    if (ref $role->{colors} eq 'HASH') {
+        my $colors = $role->{colors};
+        my @parts;
+        for my $key (qw(primary_color secondary_color tertiary_color)) {
+            next unless defined $colors->{$key};
+            push @parts, sprintf '%s=#%06X', $key, $colors->{$key};
+        }
+        out sprintf "  colors:      %s\n", join(' ', @parts) if @parts;
+    }
+}
+
+sub cmd_roles {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)]);
+
+    _fatal("不明な引数: $pos->[0]") if @$pos;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $roles = client()->get_guild_roles($guild_id)
+        or _api_fail('ロール一覧の取得');
+
+    for my $role (sort { ($b->{position} // 0) <=> ($a->{position} // 0) } @$roles) {
+        out sprintf "%-20s %3s  #%06X  %s%s\n",
+            $role->{id} // '?',
+            $role->{position} // 0,
+            $role->{color} // 0,
+            $role->{name} // '',
+            $role->{managed} ? ' [managed]' : '';
+    }
+    out sprintf "(%d 件)\n", scalar @$roles;
+    return 0;
+}
+
+sub cmd_role {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl role <ロールID> [--guild ID]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $role = client()->get_guild_role($guild_id, $id)
+        or _api_fail('ロール取得');
+
+    _print_role($role);
+    return 0;
+}
+
+sub cmd_role_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(guild permissions color icon emoji reason)],
+        [qw(permissions)],
+        [qw(hoist mentionable)]);
+
+    my $name = join ' ', @$pos;
+    _fatal('使い方: perl test.pl role-create <名前> [--permissions 権限,権限] [--color #RRGGBB] [--hoist] [--mentionable] [--icon 画像] [--emoji 絵文字] [--guild ID] [--reason 理由]')
+        unless length $name;
+
+    my %opts = (name => $name);
+    $opts{permissions} = _permission_list(@{ $opt->{permissions} })
+        if defined $opt->{permissions};
+    $opts{color}         = $opt->{color} if defined $opt->{color};
+    $opts{hoist}         = 1 if $opt->{hoist};
+    $opts{mentionable}   = 1 if $opt->{mentionable};
+    $opts{icon}          = _avatar_data_uri($opt->{icon})
+        if defined $opt->{icon};
+    $opts{unicode_emoji} = $opt->{emoji} if defined $opt->{emoji};
+    $opts{reason}        = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $role = client()->create_guild_role($guild_id, %opts)
+        or _api_fail('ロールの作成');
+
+    out sprintf "ロールを作成しました: %s %s\n",
+        $role->{id} // '?', $role->{name} // '';
+    return 0;
+}
+
+sub cmd_role_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(guild name permissions color icon emoji reason)],
+        [qw(permissions)],
+        [qw(hoist no-hoist mentionable no-mentionable)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl role-edit <ロールID> [--name 名前] [--permissions 権限,権限] [--color #RRGGBB] [--hoist|--no-hoist] [--mentionable|--no-mentionable] [--icon 画像|none] [--emoji 絵文字|none] [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my %opts;
+    $opts{name} = $opt->{name} if defined $opt->{name};
+    $opts{permissions} = _permission_list(@{ $opt->{permissions} })
+        if defined $opt->{permissions};
+    $opts{color} = $opt->{color} if defined $opt->{color};
+
+    $opts{hoist} = 1 if $opt->{hoist};
+    $opts{hoist} = 0 if $opt->{'no-hoist'};
+    $opts{mentionable} = 1 if $opt->{mentionable};
+    $opts{mentionable} = 0 if $opt->{'no-mentionable'};
+
+    if (exists $opt->{icon}) {
+        $opts{icon} = $opt->{icon} eq 'none'
+            ? undef
+            : _avatar_data_uri($opt->{icon});
+    }
+
+    if (exists $opt->{emoji}) {
+        $opts{unicode_emoji} = $opt->{emoji} eq 'none'
+            ? undef
+            : $opt->{emoji};
+    }
+
+    _fatal('変更する項目がありません（--name などを指定してください）')
+        unless keys %opts;
+
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $role = client()->update_guild_role($guild_id, $id, %opts)
+        or _api_fail('ロールの変更');
+
+    out sprintf "ロールを変更しました: %s %s\n",
+        $role->{id} // $id, $role->{name} // '';
+    return 0;
+}
+
+sub cmd_role_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl role-delete <ロールID> [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my %opts;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    client()->delete_guild_role($guild_id, $id, %opts)
+        or _api_fail('ロールの削除');
+
+    out "ロールを削除しました: $id\n";
+    return 0;
+}
+
+sub cmd_role_move {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my ($id, $position) = @$pos;
+    _fatal('使い方: perl test.pl role-move <ロールID> <位置> [--guild ID] [--reason 理由]')
+        unless defined $id && length $id && defined $position;
+    _fatal("不明な引数: $pos->[2]") if @$pos > 2;
+
+    my %opts;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $roles = client()->modify_guild_role_positions(
+        $guild_id, [ { id => $id, position => $position } ], %opts)
+        or _api_fail('ロールの並び替え');
+
+    out sprintf "ロールの位置を変更しました: %s -> %s（全 %d 件）\n",
+        $id, $position, scalar @$roles;
+    return 0;
+}
+
+# ---------------------------------------------------------------- メンバー管理
+
+sub _print_member {
+    my ($member) = @_;
+
+    my $user = ref $member->{user} eq 'HASH' ? $member->{user} : {};
+
+    out sprintf "  user:    %s (%s)\n",
+        $user->{global_name} // $user->{username} // 'unknown',
+        $user->{id} // $member->{user_id} // '?';
+    out sprintf "  nick:    %s\n", defined $member->{nick}
+        ? $member->{nick} : '-';
+
+    my @roles = @{ $member->{roles} || [] };
+    out sprintf "  roles:   %s\n", @roles ? join(', ', @roles) : '(なし)';
+
+    out sprintf "  joined:  %s\n", $member->{joined_at} // '-';
+    out sprintf "  timeout: %s\n",
+        $member->{communication_disabled_until} // '-';
+    out sprintf "  mute:    %s\n", $member->{mute} ? 'yes' : 'no';
+    out sprintf "  deaf:    %s\n", $member->{deaf} ? 'yes' : 'no';
+}
+
+sub cmd_members {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild limit after)]);
+
+    _fatal("不明な引数: $pos->[0]") if @$pos;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $members = client()->get_guild_members($guild_id,
+        limit => $opt->{limit}, after => $opt->{after})
+        or _api_fail('メンバー一覧の取得');
+
+    for my $member (@$members) {
+        my $user = ref $member->{user} eq 'HASH' ? $member->{user} : {};
+        out sprintf "%-20s %-24s %s\n",
+            $user->{id} // '?',
+            $member->{nick} // $user->{username} // '',
+            @{ $member->{roles} || [] } ? '[roles]' : '';
+    }
+    out sprintf "(%d 件)\n", scalar @$members;
+    return 0;
+}
+
+sub cmd_member {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl member <ユーザーID> [--guild ID]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $member = client()->get_guild_member($guild_id, $id)
+        or _api_fail('メンバー取得');
+
+    _print_member($member);
+    return 0;
+}
+
+sub cmd_member_search {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild limit)]);
+
+    my $query = join ' ', @$pos;
+    _fatal('使い方: perl test.pl member-search <クエリ> [--guild ID] [--limit N]')
+        unless length $query;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $members = client()->search_guild_members($guild_id, $query,
+        limit => $opt->{limit})
+        or _api_fail('メンバー検索');
+
+    for my $member (@$members) {
+        my $user = ref $member->{user} eq 'HASH' ? $member->{user} : {};
+        out sprintf "%-20s %s%s\n",
+            $user->{id} // '?',
+            $user->{global_name} // $user->{username} // '',
+            defined $member->{nick} ? " ($member->{nick})" : '';
+    }
+    out sprintf "(%d 件)\n", scalar @$members;
+    return 0;
+}
+
+sub cmd_member_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(guild nick roles mute deaf channel timeout reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl member-edit <ユーザーID> [--nick 名前|none] [--roles ID,ID|none] [--mute 0|1] [--deaf 0|1] [--channel ID|none] [--timeout ISO8601|none] [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my %opts;
+    if (exists $opt->{nick}) {
+        $opts{nick} = $opt->{nick} eq 'none' ? undef : $opt->{nick};
+    }
+
+    if (exists $opt->{roles}) {
+        $opts{roles} = $opt->{roles} eq 'none'
+            ? []
+            : [ grep { length } split /\s*,\s*/, $opt->{roles} ];
+    }
+
+    for my $key (qw(mute deaf)) {
+        next unless exists $opt->{$key};
+        _fatal("--$key は 0 または 1 を指定してください")
+            unless $opt->{$key} =~ /^(?:0|1)$/;
+        $opts{$key} = $opt->{$key};
+    }
+
+    if (exists $opt->{channel}) {
+        $opts{channel_id} = $opt->{channel} eq 'none' ? undef : $opt->{channel};
+    }
+
+    if (exists $opt->{timeout}) {
+        $opts{communication_disabled_until} =
+            $opt->{timeout} eq 'none' ? undef : $opt->{timeout};
+    }
+
+    _fatal('変更する項目がありません（--nick などを指定してください）')
+        unless keys %opts;
+
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $member = client()->modify_guild_member($guild_id, $id, %opts)
+        or _api_fail('メンバーの変更');
+
+    out sprintf "メンバーを変更しました: %s\n",
+        ref $member->{user} eq 'HASH'
+            ? ($member->{user}{id} // $id)
+            : $id;
+    return 0;
+}
+
+sub cmd_member_role_add {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my ($user_id, $role_id) = @$pos;
+    _fatal('使い方: perl test.pl member-role-add <ユーザーID> <ロールID> [--guild ID] [--reason 理由]')
+        unless defined $user_id && length $user_id
+            && defined $role_id && length $role_id;
+    _fatal("不明な引数: $pos->[2]") if @$pos > 2;
+
+    my %opts;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    client()->add_guild_member_role($guild_id, $user_id, $role_id, %opts)
+        or _api_fail('ロールの付与');
+
+    out "ロールを付けました: $user_id <- $role_id\n";
+    return 0;
+}
+
+sub cmd_member_role_remove {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my ($user_id, $role_id) = @$pos;
+    _fatal('使い方: perl test.pl member-role-remove <ユーザーID> <ロールID> [--guild ID] [--reason 理由]')
+        unless defined $user_id && length $user_id
+            && defined $role_id && length $role_id;
+    _fatal("不明な引数: $pos->[2]") if @$pos > 2;
+
+    my %opts;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    client()->remove_guild_member_role($guild_id, $user_id, $role_id, %opts)
+        or _api_fail('ロールの剥奪');
+
+    out "ロールを外しました: $user_id -/-> $role_id\n";
+    return 0;
+}
+
+sub cmd_kick {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl kick <ユーザーID> [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my %opts;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    client()->kick_guild_member($guild_id, $id, %opts)
+        or _api_fail('キック');
+
+    out "キックしました: $id\n";
+    return 0;
+}
+
+sub cmd_ban {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(guild delete-seconds reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl ban <ユーザーID> [--delete-seconds N] [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my %opts;
+    $opts{delete_message_seconds} = $opt->{'delete-seconds'}
+        if defined $opt->{'delete-seconds'};
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    client()->ban_guild_member($guild_id, $id, %opts)
+        or _api_fail('BAN');
+
+    out "BAN しました: $id\n";
+    return 0;
+}
+
+sub cmd_unban {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl unban <ユーザーID> [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my %opts;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    client()->unban_guild_member($guild_id, $id, %opts)
+        or _api_fail('BAN 解除');
+
+    out "BAN を解除しました: $id\n";
+    return 0;
+}
+
+sub cmd_bans {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(guild limit before after)]);
+
+    _fatal("不明な引数: $pos->[0]") if @$pos;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $bans = client()->get_guild_bans($guild_id,
+        limit  => $opt->{limit},
+        before => $opt->{before},
+        after  => $opt->{after})
+        or _api_fail('BAN 一覧の取得');
+
+    for my $ban (@$bans) {
+        my $user = ref $ban->{user} eq 'HASH' ? $ban->{user} : {};
+        out sprintf "%-20s %-24s %s\n",
+            $user->{id} // '?',
+            $user->{global_name} // $user->{username} // '',
+            $ban->{reason} // '';
+    }
+    out sprintf "(%d 件)\n", scalar @$bans;
+    return 0;
+}
+
+sub cmd_prune {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(guild days include-role reason)],
+        [qw(include-role)],
+        [qw(compute)]);
+
+    _fatal("不明な引数: $pos->[0]") if @$pos;
+
+    my @include_roles;
+    for my $value (@{ $opt->{'include-role'} || [] }) {
+        push @include_roles, grep { length } split /\s*,\s*/, $value;
+    }
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+
+    if (!$opt->{compute}) {
+        my $result = client()->get_guild_prune_count($guild_id,
+            days          => $opt->{days},
+            include_roles => @include_roles ? \@include_roles : undef,
+        ) or _api_fail('プルーン対象の取得');
+
+        out sprintf "プルーン対象: %s 人（実行するには --compute を付けてください）\n",
+            $result->{pruned} // '?';
+        return 0;
+    }
+
+    my %opts;
+    $opts{days} = $opt->{days} if defined $opt->{days};
+    $opts{include_roles} = \@include_roles if @include_roles;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $result = client()->begin_guild_prune($guild_id, %opts)
+        or _api_fail('プルーン');
+
+    out sprintf "プルーンしました: %s 人\n", $result->{pruned} // '?';
+    return 0;
+}
+
+sub cmd_member_perms {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild channel)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl member-perms <ユーザーID> [--channel ID] [--guild ID]')
+        unless defined $id && length $id;
+    _fatal("不明な引数: $pos->[1]") if @$pos > 1;
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $guild = client()->get_guild($guild_id)
+        or _api_fail('ギルド取得');
+    my $member = client()->get_guild_member($guild_id, $id)
+        or _api_fail('メンバー取得');
+
+    my $bits;
+    my $label;
+    if (defined $opt->{channel}) {
+        my $channel = client()->get_channel($opt->{channel})
+            or _api_fail('チャンネル取得');
+        $bits  = channel_permissions($guild, $member, $channel);
+        $label = "チャンネル $opt->{channel}";
+    } else {
+        $bits  = guild_permissions($guild, $member);
+        $label = 'ギルド全体';
+    }
+
+    my @names = permission_names($bits);
+    out sprintf "%s での実効権限 (%d)\n", $label, $bits;
+    out "$_\n" for @names;
+    out "(なし)\n" unless @names;
     return 0;
 }
 
@@ -2354,6 +2933,24 @@ my %COMMANDS = (
     'channel-perms'       => \&cmd_channel_perms,
     'channel-perm-delete' => \&cmd_channel_perm_delete,
     'channel-invites'     => \&cmd_channel_invites,
+    roles     => \&cmd_roles,
+    role      => \&cmd_role,
+    'role-create' => \&cmd_role_create,
+    'role-edit'   => \&cmd_role_edit,
+    'role-delete' => \&cmd_role_delete,
+    'role-move'   => \&cmd_role_move,
+    members       => \&cmd_members,
+    member        => \&cmd_member,
+    'member-search' => \&cmd_member_search,
+    'member-edit'   => \&cmd_member_edit,
+    'member-role-add'    => \&cmd_member_role_add,
+    'member-role-remove' => \&cmd_member_role_remove,
+    kick       => \&cmd_kick,
+    ban        => \&cmd_ban,
+    unban      => \&cmd_unban,
+    bans       => \&cmd_bans,
+    prune      => \&cmd_prune,
+    'member-perms' => \&cmd_member_perms,
     permissions => \&cmd_permissions,
     events      => \&cmd_events,
     event       => \&cmd_event,

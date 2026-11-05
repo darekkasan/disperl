@@ -10,6 +10,8 @@
 - [投票](#投票)
 - [スレッド](#スレッド)
 - [チャンネル管理](#チャンネル管理)
+- [ロール管理](#ロール管理)
+- [メンバー管理](#メンバー管理)
 - [スケジュールイベント](#スケジュールイベント)
 - [ギルド・Webhook](#ギルドwebhook)
 - [コマンド登録](#コマンド登録)
@@ -122,6 +124,87 @@ perl test.pl permissions VIEW_CHANNEL SEND_MESSAGES   # => 3072 (3072)
 perl test.pl permissions --names 3072                 # => VIEW_CHANNEL / SEND_MESSAGES
 perl test.pl permissions                              # 全 53 個の一覧
 ```
+
+## ロール管理
+
+```sh
+perl test.pl roles                        # 一覧（現在のギルド）
+perl test.pl roles --guild <ギルドID>
+perl test.pl role <ロールID>              # 詳細
+perl test.pl role-create "モデレーター" \
+    --permissions VIEW_CHANNEL,MANAGE_MESSAGES --color "#5865F2" --hoist --mentionable
+perl test.pl role-edit <ロールID> --name "新しい名前"
+perl test.pl role-edit <ロールID> --permissions VIEW_CHANNEL,SEND_MESSAGES
+perl test.pl role-edit <ロールID> --no-hoist --mentionable
+perl test.pl role-edit <ロールID> --icon icon.png
+perl test.pl role-edit <ロールID> --icon none          # アイコンを消す
+perl test.pl role-edit <ロールID> --emoji 🔧
+perl test.pl role-move <ロールID> 5
+perl test.pl role-delete <ロールID> --reason "不要"
+```
+
+| コマンド | 説明 |
+|---|---|
+| `roles` | `--guild` |
+| `role <ID>` | `--guild` |
+| `role-create <名前>` | `--permissions` / `--color` / `--hoist` / `--mentionable` / `--icon` / `--emoji` / `--guild` / `--reason` |
+| `role-edit <ID>` | `--name` / `--permissions` / `--color` / `--hoist` / `--no-hoist` / `--mentionable` / `--no-mentionable` / `--icon` / `--emoji` / `--guild` / `--reason` |
+| `role-move <ID> <位置>` | `--guild` / `--reason` |
+| `role-delete <ID>` | `--guild` / `--reason`（**取り消せません**） |
+
+- `--permissions` はカンマ区切りと繰り返しの両方に対応
+- `--color` は `#RRGGBB` / `0xRRGGBB` / 整数
+- `--icon` は PNG / JPG / GIF / WebP。`none` で削除
+- `--emoji none` で Unicode 絵文字を削除
+
+## メンバー管理
+
+```sh
+perl test.pl members                      # 一覧（現在のギルド）
+perl test.pl members --limit 100 --after <ユーザーID>
+perl test.pl member <ユーザーID>
+perl test.pl member-search kama --limit 10
+
+perl test.pl member-edit <ユーザーID> --nick "新しい名前"
+perl test.pl member-edit <ユーザーID> --nick none            # ニックネームを戻す
+perl test.pl member-edit <ユーザーID> --roles <ロールID>,<ロールID>
+perl test.pl member-edit <ユーザーID> --roles none           # 全ロールを外す
+perl test.pl member-edit <ユーザーID> --mute 1 --deaf 1
+perl test.pl member-edit <ユーザーID> --channel none          # ボイスから切断
+perl test.pl member-edit <ユーザーID> --timeout 2026-12-01T20:00:00Z
+perl test.pl member-edit <ユーザーID> --timeout none          # タイムアウト解除
+
+perl test.pl member-role-add <ユーザーID> <ロールID>
+perl test.pl member-role-remove <ユーザーID> <ロールID>
+perl test.pl kick <ユーザーID> --reason "規約違反"
+perl test.pl ban <ユーザーID> --delete-seconds 86400 --reason "荒らし"
+perl test.pl unban <ユーザーID> --reason "解除"
+perl test.pl bans --limit 100
+perl test.pl prune --days 7                    # 対象人数を確認するだけ
+perl test.pl prune --days 7 --compute --reason "定期整理"
+perl test.pl member-perms <ユーザーID>
+perl test.pl member-perms <ユーザーID> --channel <チャンネルID>
+```
+
+| コマンド | 説明 |
+|---|---|
+| `members` | `--guild` / `--limit` / `--after` |
+| `member <ID>` | `--guild` |
+| `member-search <クエリ>` | `--guild` / `--limit` |
+| `member-edit <ID>` | `--nick` / `--roles` / `--mute` / `--deaf` / `--channel` / `--timeout` / `--guild` / `--reason` |
+| `member-role-add <ユーザーID> <ロールID>` | `--guild` / `--reason` |
+| `member-role-remove <ユーザーID> <ロールID>` | `--guild` / `--reason` |
+| `kick <ID>` | `--guild` / `--reason`（**取り消せません**） |
+| `ban <ID>` | `--delete-seconds` / `--guild` / `--reason`（**取り消せません**） |
+| `unban <ID>` | `--guild` / `--reason` |
+| `bans` | `--guild` / `--limit` / `--before` / `--after` |
+| `prune` | `--days` / `--include-role` / `--compute` / `--guild` / `--reason` |
+| `member-perms <ID>` | `--channel` / `--guild` |
+
+- `members` などの一覧系は `GUILD_MEMBERS`（Privileged Intent）が必要
+- `--roles` / `--timeout` / `--nick` / `--channel` は `none` で解除
+- `prune` は既定では**対象人数を数えるだけ**です。実行するには `--compute` を付けます
+- `--delete-seconds` は 0〜604800（既定 0 = メッセージを削除しない）
 
 ## スケジュールイベント
 
