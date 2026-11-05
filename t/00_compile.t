@@ -10,6 +10,7 @@ use_ok('Disperl::Components');
 use_ok('Disperl::Permissions');
 use_ok('Disperl::AuditLog');
 use_ok('Disperl::AutoMod');
+use_ok('Disperl::Forum');
 use_ok('Disperl::WebSocket');
 use_ok('Disperl::Gateway');
 

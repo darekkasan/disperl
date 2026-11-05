@@ -16,6 +16,7 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - ネイティブ投票（Poll）の作成・終了・投票者取得
 - ピン留め、一括削除、スレッド、DM、招待、Webhook
 - スレッドの一覧・参加・退出・メンバー管理・アーカイブ
+- フォーラム / メディアへの投稿（本文・embed・コンポーネント・添付・タグ・レイアウト設定）
 - チャンネルの作成・編集・並び替え・権限上書き・削除
 - ロールの取得・作成・編集・並び替え・削除（色 / アイコン / Unicode 絵文字）
 - メンバーの一覧・検索・ニックネーム変更・ロール付与 / 剥奪・タイムアウト
@@ -116,6 +117,7 @@ if ($message) {
 | `Disperl::Permissions` | 権限名とビットマスクの相互変換・実効権限の計算 |
 | `Disperl::AuditLog` | 監査ログのイベント種別（名前と数値の変換） |
 | `Disperl::AutoMod` | AutoMod のトリガー / アクション / プリセット種別 |
+| `Disperl::Forum` | フォーラム / メディアのレイアウト・並び順・タグの検証 |
 | `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が使用） |
 | `Disperl::Config` | `.env` ローダー |
 
@@ -126,6 +128,7 @@ if ($message) {
 | [Client](docs/client.md) | コンストラクタ・戻り値・エラー・レート制限 |
 | [メッセージ](docs/messages.md) | embed・コンポーネント・添付ファイル・投票 |
 | [スレッド](docs/threads.md) | 作成・一覧・参加・メンバー・アーカイブ |
+| [フォーラム / メディア](docs/forums.md) | 投稿の作成・本文・添付・タグ・レイアウト設定 |
 | [チャンネル管理](docs/channels.md) | 作成・編集・並び替え・権限上書き・削除 |
 | [ロール管理](docs/roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
 | [メンバー管理](docs/members.md) | 一覧・検索・変更・ロール付与・キック / BAN・プルーン・実効権限 |
@@ -174,6 +177,22 @@ my $ended = $client->end_poll($channel, $poll->{id});
 my $thread = $client->create_thread($channel, name => '議題', type => 'public');
 $client->send_message($thread->{id}, '最初の書き込み');
 ```
+
+### フォーラム / メディア
+
+```perl
+my $post = $client->create_forum_post(
+    $forum_id,
+    name         => 'はじめまして',
+    content      => '自己紹介します',
+    applied_tags => [ $tag_id ],
+);
+
+# メディアチャンネルは添付つきで
+$client->create_forum_post($media_id, name => 'スクリーンショット', files => ['shot.png']);
+```
+
+詳細は [フォーラム / メディア](docs/forums.md) を参照してください。
 
 ### チャンネルとスケジュールイベント
 
@@ -396,6 +415,7 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - ファイル添付（最大 10 個をまとめて送信）
 - ネイティブ投票（作成・終了・投票者取得）
 - スレッド: 作成・一覧・参加・退出・メンバー・アーカイブ・削除
+- フォーラム / メディア: 投稿・タグ・本文の埋め込み / コンポーネント / 添付・レイアウト設定（`Disperl::Forum`）
 - チャンネル: 作成・編集・並び替え・権限上書き・削除・招待一覧
 - ロール: 取得・作成・編集・並び替え・削除・色 / アイコン / Unicode 絵文字
 - メンバー: 一覧・検索・ニックネーム・ロール付与 / 剥奪・タイムアウト・キック / BAN / プルーン
@@ -416,6 +436,5 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - 音声（Voice）
 - OAuth2
 - ギルド設定の変更
-- フォーラム / メディアチャンネルへの投稿（チャンネル自体の作成は可）
 - 課金・Entitlements・SKU
 - ユーザーアプリ / 埋め込みアプリ

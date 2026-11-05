@@ -9,6 +9,7 @@
 - [メッセージ操作](#メッセージ操作)
 - [投票](#投票)
 - [スレッド](#スレッド)
+- [フォーラム](#フォーラム)
 - [チャンネル管理](#チャンネル管理)
 - [ロール管理](#ロール管理)
 - [メンバー管理](#メンバー管理)
@@ -80,6 +81,29 @@ perl test.pl thread-archive <ID>      # --unarchive / --lock / --unlock
 perl test.pl thread-members <ID>
 perl test.pl thread-delete <ID>
 ```
+
+## フォーラム
+
+フォーラム / メディアチャンネルに投稿（スレッド）を作ります。
+
+```sh
+perl test.pl forum-tags <フォーラムID>            # タグの一覧（ID と名前）
+perl test.pl forum-post <タイトル> "本文"          # 基本
+perl test.pl forum-post "自己紹介" "はじめまして" --tag-name "自己紹介"
+perl test.pl forum-post "スクリーンショット" --file shot.png --tag 111111111111111111
+perl test.pl forum-post "相談" "本文" --channel <フォーラムID> --reason "新規投稿"
+```
+
+| オプション | 説明 |
+|---|---|
+| `--tag <ID>` | 付けるタグの ID（繰り返し可、最大 5 個） |
+| `--tag-name <名前>` | 名前からタグを解決して付ける（繰り返し可） |
+| `--file <パス>` | 添付ファイル（繰り返し可、最大 10 個） |
+| `--channel <ID>` | 投稿先。省略時は `.env` のチャンネル |
+| `--reason <理由>` | 監査ログの理由 |
+
+- 本文を省略して `--file` だけでも投稿できます（メディアチャンネル向け）
+- 投稿はスレッドなので、以後は `DISCORD_CHANNEL_ID=<投稿ID>` で `send` できます
 
 ## チャンネル管理
 
@@ -415,5 +439,6 @@ perl test.pl history
 - [Client](client.md)
 - [Gateway](gateway.md)
 - [チャンネル管理](channels.md)
+- [フォーラム / メディア](forums.md)
 - [スケジュールイベント](events.md)
 - [トラブルシューティング](troubleshooting.md)

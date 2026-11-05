@@ -44,6 +44,19 @@
 | 一覧の `limit` | 1〜100 |
 | メンバー一覧の `limit` | 1〜100 |
 
+## フォーラム / メディア
+
+| 項目 | 上限 | 対象メソッド |
+|---|---|---|
+| 投稿の `name` | 1〜100 文字 | `create_forum_post` |
+| 本文 | 2,000 文字 | `create_forum_post` |
+| `applied_tags` | 5 個 | `create_forum_post` |
+| 添付ファイル数 | 10 | `create_forum_post` |
+| `auto_archive_duration` | 60 / 1440 / 4320 / 10080 | `create_forum_post` |
+| `rate_limit_per_user` | 0〜21,600 | `create_forum_post` |
+| `available_tags` | 20 個、タグ名は 20 文字まで | `update_channel` |
+| `default_forum_layout` / `default_sort_order` | 既知の名前または数値 | `update_channel` |
+
 ## チャンネル
 
 | 項目 | 上限 |
@@ -175,6 +188,7 @@
 
 - [メッセージ](messages.md)
 - [スレッド](threads.md)
+- [フォーラム / メディア](forums.md)
 - [チャンネル管理](channels.md)
 - [ロール管理](roles.md)
 - [メンバー管理](members.md)

@@ -220,6 +220,10 @@ disperl 動作確認 CLI
                                       スレッドをアーカイブ / 解除する
   perl test.pl thread-members <ID>    スレッドメンバー一覧
   perl test.pl thread-delete <ID>     スレッドを削除する
+  perl test.pl forum-post <タイトル> [本文] [--tag ID]... [--tag-name 名前]...
+      [--file パス]... [--channel ID] [--reason 理由]
+                                       フォーラム / メディアチャンネルに投稿する
+  perl test.pl forum-tags [ID]        フォーラムのタグ一覧
   perl test.pl channels [ギルドID]     チャンネル一覧（省略時は現在のギルド）
   perl test.pl channel-create <名前> [--type text|voice|category|announcement|stage|forum|media]
       [--parent ID] [--topic 話題] [--slowmode 秒] [--guild ID] [--reason 理由]
@@ -388,6 +392,9 @@ disperl 動作確認 CLI
   perl test.pl threads
   perl test.pl threads --archived
   perl test.pl thread-archive 123456789012345678
+  perl test.pl forum-tags 123456789012345678
+  perl test.pl forum-post "自己紹介" "はじめまして" --tag-name "自己紹介"
+  perl test.pl forum-post "スクリーンショット" --file shot.png --tag 111111111111111111
   perl test.pl watch --status idle --activity "待機中"
   perl test.pl watch --status invisible
   perl test.pl watch --shard 0/2
@@ -803,6 +810,76 @@ sub cmd_thread_delete {
 
     client()->delete_channel($id) or _api_fail('スレッドの削除');
     out "スレッドを削除しました: id=$id\n";
+    return 0;
+}
+
+# ---------------------------------------------------------------- フォーラム
+
+sub cmd_forum_post {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(tag tag-name file channel reason)],
+        [qw(tag tag-name file)]);
+
+    my $title = shift @$pos;
+    _fatal('使い方: perl test.pl forum-post <タイトル> [本文] [--tag ID]... [--tag-name 名前]... [--file パス]... [--channel ID] [--reason 理由]')
+        unless defined $title && length $title;
+
+    my $content = join ' ', @$pos;
+    my @files   = @{ $opt->{file} || [] };
+
+    _fatal('本文か --file のどちらかが必要です')
+        unless length $content || @files;
+
+    my $channel = $opt->{channel} // channel_id();
+
+    my @tags = @{ $opt->{tag} || [] };
+
+    if (my @names = @{ $opt->{'tag-name'} || [] }) {
+        my $ch = client()->get_channel($channel) or _api_fail('チャンネル確認');
+        my %by_name = map { lc($_->{name}) => $_->{id} }
+            @{ $ch->{available_tags} || [] };
+
+        for my $name (@names) {
+            my $id = $by_name{ lc $name };
+            _fatal("タグが見つかりません: $name（perl test.pl forum-tags で確認できます）")
+                unless defined $id;
+            push @tags, $id;
+        }
+    }
+
+    my %opts = (
+        name    => $title,
+        content => length $content ? $content : undef,
+    );
+    $opts{applied_tags} = \@tags if @tags;
+    $opts{files}        = \@files if @files;
+    $opts{reason}       = $opt->{reason} if defined $opt->{reason};
+
+    my $post = client()->create_forum_post($channel, %opts)
+        or _api_fail('フォーラム投稿の作成');
+
+    out "フォーラムに投稿しました: #" . ($post->{name} // $title)
+        . " (id: " . ($post->{id} // '?') . ")\n";
+    out "  この投稿に送るには DISCORD_CHANNEL_ID=" . ($post->{id} // '?')
+        . " を指定してください\n";
+    return 0;
+}
+
+sub cmd_forum_tags {
+    my @args = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl forum-tags [チャンネルID]') if @args > 1;
+
+    my $channel = $args[0];
+    $channel = channel_id() unless defined $channel && length $channel;
+
+    my $ch = client()->get_channel($channel) or _api_fail('チャンネル確認');
+    my $tags = $ch->{available_tags} || [];
+
+    out sprintf "タグ %d 件 (チャンネル %s)\n", scalar @$tags, $channel;
+    for my $tag (@$tags) {
+        out sprintf "  %-18s %s\n", $tag->{id} // '?', $tag->{name} // '';
+    }
     return 0;
 }
 
@@ -3298,6 +3375,8 @@ my %COMMANDS = (
     'thread-archive' => \&cmd_thread_archive,
     'thread-members' => \&cmd_thread_members,
     'thread-delete'  => \&cmd_thread_delete,
+    'forum-post'     => \&cmd_forum_post,
+    'forum-tags'     => \&cmd_forum_tags,
     channels  => \&cmd_channels,
     'channel-create'      => \&cmd_channel_create,
     'channel-edit'        => \&cmd_channel_edit,

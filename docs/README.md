@@ -13,6 +13,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | `Disperl::Permissions` | 権限名とビットマスクの相互変換・実効権限の計算 | core のみ |
 | `Disperl::AuditLog` | 監査ログのイベント種別（名前と数値の変換） | core のみ |
 | `Disperl::AutoMod` | AutoMod のトリガー / アクション / プリセット種別 | core のみ |
+| `Disperl::Forum` | フォーラム / メディアのレイアウト・並び順・タグの検証 | core のみ |
 | `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が内部で使用） | `IO::Socket::SSL` |
 | `Disperl::Config` | `.env` ローダー | core のみ |
 
@@ -23,6 +24,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | [Client](client.md) | コンストラクタ・戻り値・エラー・レート制限・基本操作 |
 | [メッセージ](messages.md) | 本文・embed・コンポーネント・添付ファイル・投票 |
 | [スレッド](threads.md) | 作成・一覧・参加・メンバー・アーカイブ |
+| [フォーラム / メディア](forums.md) | 投稿の作成・本文・添付・タグ・レイアウト設定 |
 | [チャンネル管理](channels.md) | 作成・編集・並び替え・権限上書き・削除 |
 | [ロール管理](roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
 | [メンバー管理](members.md) | 一覧・検索・変更・ロール付与・キック / BAN・プルーン・実効権限 |
@@ -77,6 +79,7 @@ if ($message) {
 - ファイル添付（最大 10 個をまとめて送信）
 - ネイティブ投票（作成・終了・投票者取得）
 - スレッド: 作成・一覧・参加・退出・メンバー・アーカイブ・削除
+- フォーラム / メディア: 投稿・タグ・本文の埋め込み / コンポーネント / 添付・レイアウト設定（`Disperl::Forum`）
 - チャンネル: 作成・編集・並び替え・権限上書き・削除・招待一覧
 - ロール: 取得・作成・編集・並び替え・削除・色 / アイコン / Unicode 絵文字
 - メンバー: 一覧・検索・ニックネーム・ロール付与 / 剥奪・タイムアウト・キック / BAN / プルーン
@@ -97,7 +100,6 @@ if ($message) {
 - 音声（Voice）
 - OAuth2
 - ギルド設定の変更
-- フォーラム / メディアチャンネルの投稿（チャンネル自体の作成は可）
 - 課金・Entitlements・SKU
 - ユーザーアプリ / 埋め込みアプリ
 

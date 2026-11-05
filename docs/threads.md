@@ -29,9 +29,14 @@ $client->create_thread_from_message($channel, $message_id, name => 'この件に
 | `type` | `public` | `public` (11) / `private` (12) |
 | `auto_archive_duration` | — | 60 / 1440 / 4320 / 10080（分） |
 | `rate_limit_per_user` | — | 1 人あたりの投稿間隔（秒） |
+| `applied_tags` | — | 付けるタグの ID 配列（最大 5 個、フォーラム用） |
+| `message` / `content` / `embeds` / `components` | — | 最初の書き込み（フォーラム / メディア用） |
 
 `create_thread_from_message` は `type` を受け付けません（既存メッセージのスレッドは公開のみ）。
 `auto_archive_duration` は 60 / 1440 / 4320 / 10080 以外を渡すと `die` します。
+
+> フォーラム / メディアチャンネルへの投稿は `create_thread` でも作れますが、
+> 本文やタグをまとめて扱うなら [`create_forum_post`](forums.md#投稿の作成) が便利です。
 
 ## 一覧
 
@@ -116,4 +121,5 @@ $client->delete_channel($thread_id);     # スレッドの削除もこの API
 
 - [Client](client.md)
 - [メッセージ](messages.md)
+- [フォーラム / メディア](forums.md)
 - [制限値の一覧](limits.md)

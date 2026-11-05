@@ -72,7 +72,8 @@ $client->update_channel($channel_id, rate_limit_per_user => 10); # スローモ�
 | `flags` | 整数 |
 | `available_tags` | フォーラムのタグ（最大 20 個、名前は 20 文字まで） |
 | `default_reaction_emoji` | フォーラムの既定リアクション |
-| `default_sort_order` / `default_forum_layout` | フォーラム / メディア用 |
+| `default_sort_order` | `latest_activity` (0) / `creation_date` (1) |
+| `default_forum_layout` | `not_set` (0) / `list` (1) / `gallery` (2) |
 | `permission_overwrites` | 配列。`[]` で全解除 |
 | `reason` | 監査ログの理由 |
 
@@ -208,6 +209,7 @@ for my $invite (@$invites) {
 
 - [Client](client.md)
 - [スレッド](threads.md)
+- [フォーラム / メディア](forums.md)
 - [ギルド・ユーザー・招待](guilds.md)
 - [ロール管理](roles.md)
 - [メンバー管理](members.md)

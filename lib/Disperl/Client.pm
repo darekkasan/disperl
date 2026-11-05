@@ -12,6 +12,10 @@ use Disperl::AutoMod qw(
     automod_trigger_type automod_event_type
     automod_action_type automod_preset_type
 );
+use Disperl::Forum qw(
+    forum_layout_value forum_sort_order_value
+    forum_applied_tags forum_available_tags
+);
 
 my $API_BASE    = 'https://discord.com/api/v10';
 my $MAX_CONTENT = 2000;
@@ -309,6 +313,84 @@ sub get_poll_answer_voters {
 
 my %THREAD_TYPE = (public => 11, private => 12);
 
+# スレッド作成時に message（フォーラム投稿の本文）へ回すキー。
+my @THREAD_MESSAGE_KEYS = qw(
+    embeds components attachments poll tts allowed_mentions flags
+);
+
+# フォーラム / メディアチャンネルに投稿（スレッド）を作る。
+# フォーラム投稿はスレッド作成と同じエンドポイントを使う。
+#   create_forum_post($channel_id, name => 'タイトル', content => '本文')
+#   create_forum_post($channel_id,
+#       name         => 'タイトル',
+#       content      => '本文',
+#       applied_tags => [ $tag_id ],
+#   )
+#   create_forum_post($channel_id,
+#       name    => 'タイトル',
+#       message => { content => '本文', embeds => [...] },
+#   )
+#   create_forum_post($channel_id,
+#       name    => 'タイトル',
+#       content => '画像つき',
+#       files   => ['photo.png'],           # メディアチャンネル向け
+#   )
+sub create_forum_post {
+    my ($self, $channel_id, %opts) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+
+    my $files = $self->_forum_files(\%opts);
+
+    # ファイルだけの投稿でも message を作る（メディアチャンネルの必須要件）。
+    my $payload = $self->_thread_payload(
+        %opts,
+        allow_empty   => $files ? 1 : 0,
+        force_message => $files ? 1 : 0,
+    );
+
+    die "forum post message is required (message, content, embeds or files)\n"
+        unless $payload->{message};
+
+    my %request_opts = %{ $self->_audit_opts(\%opts) };
+
+    $self->{last_error} = undef;
+
+    my $res;
+    my $url = "$API_BASE/channels/$channel_id/threads";
+
+    if ($files) {
+        my ($body, $boundary) = _multipart_body($payload, $files);
+        $res = $self->_request(
+            'POST', $url, undef,
+            {
+                %request_opts,
+                raw          => $body,
+                content_type => "multipart/form-data; boundary=$boundary",
+            },
+        );
+    } else {
+        $res = $self->_request('POST', $url, $payload, \%request_opts);
+    }
+
+    return $self->_finish($res, 'hash');
+}
+
+# 投稿に添付するファイルを内部形式に変換する。files / files_data は排他。
+sub _forum_files {
+    my ($self, $opts) = @_;
+
+    my ($paths, $data) = ($opts->{files}, $opts->{files_data});
+
+    die "files and files_data cannot be combined\n"
+        if defined $paths && defined $data;
+
+    return _normalize_files($data) if defined $data;
+    return $self->_path_files($paths) if defined $paths;
+    return undef;
+}
+
 # スレッドを作る（既存チャンネルから）。
 #   create_thread($channel_id, name => '議題', type => 'public', auto_archive_duration => 1440)
 sub create_thread {
@@ -367,7 +449,37 @@ sub _thread_payload {
     $payload{rate_limit_per_user} = $opts{rate_limit_per_user} + 0
         if defined $opts{rate_limit_per_user};
 
+    $payload{applied_tags} = forum_applied_tags($opts{applied_tags})
+        if defined $opts{applied_tags};
+
+    # フォーラム / メディア投稿の本文（通常の message パラメータ）。
+    my $message = $self->_thread_message(%opts);
+    $payload{message} = $message if $message;
+
     return \%payload;
+}
+
+# スレッド作成時の message を組み立てる。無ければ undef。
+# message => {...} を渡すか、content / embeds などを直接渡せる。
+sub _thread_message {
+    my ($self, %opts) = @_;
+
+    if (defined $opts{message}) {
+        my $message = $opts{message};
+        die "message must be a hash reference\n"
+            unless ref $message eq 'HASH';
+        return $self->_message_payload($message->{content}, $message);
+    }
+
+    my $has = exists $opts{content}
+        || grep { exists $opts{$_} } @THREAD_MESSAGE_KEYS;
+    return undef unless $has || $opts{force_message};
+
+    my %message = map { $_ => $opts{$_} }
+        grep { exists $opts{$_} } @THREAD_MESSAGE_KEYS;
+    $message{allow_empty} = $opts{allow_empty};
+
+    return $self->_message_payload($opts{content}, \%message);
 }
 
 # ---------------------------------------------------------------- threads (list / members)
@@ -1925,6 +2037,8 @@ sub _channel_payload {
 
     if (defined $opts->{default_sort_order}) {
         my $order = $opts->{default_sort_order};
+        $order = forum_sort_order_value($order)
+            if !ref $order && $order =~ /\D/;
         die "default_sort_order must be 0 or 1\n"
             unless !ref $order && $order =~ /^\d+\z/ && ($order == 0 || $order == 1);
         $payload{default_sort_order} = $order + 0;
@@ -1932,6 +2046,8 @@ sub _channel_payload {
 
     if (defined $opts->{default_forum_layout}) {
         my $layout = $opts->{default_forum_layout};
+        $layout = forum_layout_value($layout)
+            if !ref $layout && $layout =~ /\D/;
         die "default_forum_layout must be 0, 1 or 2\n"
             unless !ref $layout && $layout =~ /^\d+\z/ && $layout <= 2;
         $payload{default_forum_layout} = $layout + 0;
@@ -1943,22 +2059,7 @@ sub _channel_payload {
     }
 
     if (defined $opts->{available_tags}) {
-        my $tags = $opts->{available_tags};
-        die "available_tags must be an array reference\n"
-            unless ref $tags eq 'ARRAY';
-        die "available_tags accepts at most 20 tags\n" if @$tags > 20;
-
-        my @out;
-        for my $tag (@$tags) {
-            die "tag must be a hash reference\n" unless ref $tag eq 'HASH';
-            my $tag_name = $tag->{name};
-            die "tag name is required\n"
-                unless defined $tag_name && !ref $tag_name && length $tag_name;
-            die "tag name must be 20 characters or less\n"
-                if length($tag_name) > 20;
-            push @out, { %$tag, name => $tag_name };
-        }
-        $payload{available_tags} = \@out;
+        $payload{available_tags} = forum_available_tags($opts->{available_tags});
     }
 
     if (defined $opts->{default_reaction_emoji}) {
@@ -2817,6 +2918,18 @@ sub send_file_data {
 sub send_files {
     my ($self, $channel_id, $paths, %opts) = @_;
 
+    my $files = $self->_path_files($paths);
+
+    my %message_opts = %opts;
+    delete @message_opts{qw(filename content_type)};
+
+    return $self->_upload($channel_id, $files, \%message_opts);
+}
+
+# パス（または { path, filename, content_type }）の配列を内部形式に変換する。
+sub _path_files {
+    my ($self, $paths) = @_;
+
     die "file paths must be an array reference\n"
         unless ref $paths eq 'ARRAY';
     die "at least one file is required\n" unless @$paths;
@@ -2846,10 +2959,7 @@ sub send_files {
         };
     }
 
-    my %message_opts = %opts;
-    delete @message_opts{qw(filename content_type)};
-
-    return $self->_upload($channel_id, \@files, \%message_opts);
+    return \@files;
 }
 
 # メモリ上の複数データを添付して送る（最大 10 個）。
