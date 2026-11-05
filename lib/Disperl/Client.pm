@@ -3299,6 +3299,20 @@ sub _message_payload {
 
     $payload{components} = $opts->{components} if $opts->{components};
 
+    if (defined $opts->{flags}) {
+        my $flags = $opts->{flags};
+        die "flags must be an integer\n"
+            unless !ref $flags && $flags =~ /^\d+\z/;
+        $payload{flags} = $flags + 0;
+    }
+
+    # IS_COMPONENTS_V2 では content / embeds が無視されるため、指定を拒否する。
+    if (($payload{flags} // 0) & (1 << 15)) {
+        die "content and embeds cannot be used with components_v2_flag()\n"
+            if (defined $payload{content} && length $payload{content})
+                || $payload{embeds};
+    }
+
     # 編集時に既存の添付を保持するためのパススルー（[] で削除）
     if (exists $opts->{attachments}) {
         die "attachments must be an array reference\n"

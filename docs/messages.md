@@ -22,7 +22,8 @@ $client->edit_message($channel_id, $message_id, $content, \%opts);
 | キー | 例 | 説明 |
 |---|---|---|
 | `embeds` | `[{ title => '...', description => '...' }]` | 埋め込み。`content` は省略可 |
-| `components` | `[ action_row(button(...)) ]` | ボタン / セレクトメニュー（[components.md](components.md)） |
+| `components` | `[ action_row(button(...)) ]` | ボタン / セレクトメニュー / Components V2（[components.md](components.md)） |
+| `flags` | `components_v2_flag()` | メッセージフラグ。V2 では必須 |
 | `reply_to` | `'123456789012345678'` | 返信先メッセージ ID |
 | `tts` | `1` | 読み上げメッセージ |
 | `poll` | `{ question => '...', answers => [...] }` | ネイティブ投票。`content` は省略可 |
@@ -30,6 +31,7 @@ $client->edit_message($channel_id, $message_id, $content, \%opts);
 | `allowed_mentions` | `{ parse => ['users'] }` | この呼び出しだけメンション設定を変える |
 
 送信内容は「`content` / `embeds` / `components` / `poll` のいずれか」が必須です。
+Components V2（`flags => components_v2_flag()`）を使うときは `content` / `embeds` を併用できません（`die`）。
 どれも無い場合は送信前に `die` します（添付ファイル系メソッドは例外で、添付だけ送れます）。
 
 > `attachments` は**編集用**です。既存の添付を残す場合は `[{ id => ... }]`、消す場合は `[]` を渡します。

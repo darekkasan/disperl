@@ -28,6 +28,7 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - Gateway（WebSocket）でイベントを受信。Identify / Resume / Heartbeat / 自動再接続
 - ステータス（online / idle / dnd / invisible）とアクティビティの変更
 - ボタン／セレクトメニュー（`Disperl::Components`）とインタラクション応答
+- Components V2（Container / Section / Text Display / Media Gallery / File / モーダル V2）
 - モーダル（入力フォーム）とオートコンプリート
 - スラッシュコマンドの登録と受信
 
@@ -110,7 +111,7 @@ if ($message) {
 |---|---|
 | `Disperl::Client` | REST API。送信・取得・スレッド・チャンネル・ロール・メンバー・イベント・添付・インタラクション応答・コマンド登録 |
 | `Disperl::Gateway` | Gateway（WebSocket）。イベント受信・プレゼンス・インタラクション配送 |
-| `Disperl::Components` | ボタン／セレクト／モーダルのビルダー |
+| `Disperl::Components` | ボタン／セレクト／Components V2／モーダルのビルダー |
 | `Disperl::Permissions` | 権限名とビットマスクの相互変換・実効権限の計算 |
 | `Disperl::AuditLog` | 監査ログのイベント種別（名前と数値の変換） |
 | `Disperl::AutoMod` | AutoMod のトリガー / アクション / プリセット種別 |
@@ -405,6 +406,7 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - Webhook の管理と送信済みメッセージの取得・編集・削除
 - Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス
 - インタラクション: ボタン・セレクト・モーダル・オートコンプリート・フォローアップ
+- Components V2: Container / Section / Text Display / Media Gallery / File / Separator / モーダル V2
 - スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）
 - レート制限: バケット単位・major parameter・429 / 5xx リトライ
 

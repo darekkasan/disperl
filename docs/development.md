@@ -17,7 +17,7 @@
 ```
 lib/Disperl/Client.pm        REST API
 lib/Disperl/Gateway.pm       Gateway（WebSocket）
-lib/Disperl/Components.pm    ボタン / セレクト / モーダル
+lib/Disperl/Components.pm    ボタン / セレクト / Components V2 / モーダル
 lib/Disperl/Permissions.pm   権限ビットの相互変換・実効権限
 lib/Disperl/AuditLog.pm      監査ログのイベント種別
 lib/Disperl/AutoMod.pm       AutoMod のトリガー / アクション種別
@@ -87,7 +87,7 @@ prove -l t
 - **ネットワークを使いません**。`ua` と WebSocket を偽オブジェクトに差し替えます
 - `t/` から `.env` は読みません（実トークンを使わない）
 
-現在のテスト（30 ファイル / 264 件）:
+現在のテスト（31 ファイル / 276 件）:
 
 | ファイル | 内容 |
 |---|---|
@@ -121,6 +121,7 @@ prove -l t
 | `t/27_members.t` | メンバー変更 / ロール付与 / キック / BAN / プルーン / 検索 |
 | `t/28_audit_log.t` | 監査ログの取得 / 絞り込み / イベント名の変換 |
 | `t/29_automod.t` | AutoMod ルールの CRUD / トリガー / アクションの検証 |
+| `t/30_components_v2.t` | Components V2（レイアウト / メディア / モーダル V2） |
 
 ### テストを書くとき
 

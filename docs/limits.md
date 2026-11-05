@@ -137,6 +137,16 @@
 |---|---|
 | Action Row の要素数 | 1〜5 |
 | `text_input` の `min_length` / `max_length` | 0〜4,000（`min <= max`） |
+| `label` | 45 文字、`description` は 100 文字 |
+| `text_display` の `content` | 4,000 文字 |
+| `thumbnail` / メディアの `description` | 1,024 文字 |
+| `media_gallery` の `items` | 1〜10 |
+| `section` の `components` | 1〜3 |
+| `file_upload` の `min_values` / `max_values` / `file_types` | 0〜10 / 1〜10 / 最大 10 |
+| `radio_group` の `options` | 2〜10 |
+| `checkbox_group` の `options` | 1〜10 |
+| 選択肢の `value` / `label` / `description` | 各 100 文字 |
+| Container の `accent_color` | 0〜16,777,215 |
 
 ## Discord 側の上限（ローカル検証なし）
 

@@ -9,7 +9,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 |---|---|---|
 | `Disperl::Client` | REST API。メッセージ・添付・投票・スレッド・チャンネル・ロール・メンバー・イベント・Webhook・インタラクション応答 | core のみ（`HTTP::Tiny` / `JSON::PP` / `Encode`） |
 | `Disperl::Gateway` | Gateway 接続。イベント受信・プレゼンス・再接続 | `IO::Socket::SSL` |
-| `Disperl::Components` | ボタン / セレクトメニュー / モーダルのビルダー | `JSON::PP` |
+| `Disperl::Components` | ボタン / セレクトメニュー / Components V2 / モーダルのビルダー | `JSON::PP` |
 | `Disperl::Permissions` | 権限名とビットマスクの相互変換・実効権限の計算 | core のみ |
 | `Disperl::AuditLog` | 監査ログのイベント種別（名前と数値の変換） | core のみ |
 | `Disperl::AutoMod` | AutoMod のトリガー / アクション / プリセット種別 | core のみ |
@@ -88,6 +88,7 @@ if ($message) {
 - Webhook: 実行・管理・送信済みメッセージの取得 / 編集 / 削除
 - Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス
 - インタラクション: ボタン・セレクト・モーダル・オートコンプリート・フォローアップ
+- Components V2: Container / Section / Text Display / Media Gallery / File / Separator / モーダル V2
 - スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）
 - レート制限: バケット単位・major parameter・429 / 5xx リトライ
 

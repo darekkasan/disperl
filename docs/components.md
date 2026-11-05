@@ -1,6 +1,6 @@
 # コンポーネント
 
-ボタン・セレクトメニュー・モーダルを組み立てるビルダーです。
+ボタン・セレクトメニュー・メッセージのレイアウト・モーダルを組み立てるビルダーです。
 返り値は Discord API にそのまま渡せるハッシュリファレンスです。
 
 ```perl
@@ -8,6 +8,9 @@ use Disperl::Components qw(
     action_row button string_select
     user_select role_select mentionable_select channel_select
     text_input label modal
+    components_v2_flag
+    container section text_display thumbnail media_gallery file separator
+    file_upload radio_group checkbox_group checkbox
 );
 ```
 
@@ -16,7 +19,11 @@ use Disperl::Components qw(
 - [Action Row](#action-row)
 - [ボタン](#ボタン)
 - [セレクトメニュー](#セレクトメニュー)
+- [Components V2](#components-v2)
+- [メディア](#メディア)
+- [Section と Container](#section-と-container)
 - [モーダル](#モーダル)
+- [モーダル V2](#モーダル-v2)
 - [関連ページ](#関連ページ)
 
 ## Action Row
@@ -98,6 +105,115 @@ string_select(
 | `emoji` | `{ name, id }` |
 | `default` | 初期選択にするか |
 
+## Components V2
+
+Components V2 を使うと、テキスト・画像・ファイル・ボタンを自由にレイアウトできます。
+メッセージに `components_v2_flag()`（`1 << 15`）を付けて送ります。
+
+```perl
+use Disperl::Components qw(components_v2_flag container text_display separator);
+
+$client->send_message($channel_id, undef, {
+    flags      => components_v2_flag(),
+    components => [
+        container(
+            accent_color => '#5865F2',
+            components   => [
+                text_display(content => '# お知らせ'),
+                separator(),
+                text_display(content => '本文です'),
+            ],
+        ),
+    ],
+});
+```
+
+> **注意**: V2 フラグ付きメッセージでは `content` と `embeds` が使えません
+> （`send_message` がローカルで `die` します）。テキストは `text_display` を使ってください。
+
+### `text_display(%args)`（type 10）
+
+| 引数 | 説明 |
+|---|---|
+| `content` | （必須）マークダウン可・4000 文字まで |
+| `id` | 任意の識別子 |
+
+メンションや絵文字も使えます。
+
+### `separator(%args)`（type 14）
+
+| 引数 | 説明 |
+|---|---|
+| `divider` | 区切り線を出すか（既定は true） |
+| `spacing` | `1`（小）/ `2`（大）。既定は 1 |
+
+## メディア
+
+メディアは `url`（または `media => { url => ... }`）で指定します。
+外部 URL か、アップロードした添付を `attachment://ファイル名` で参照できます。
+
+### `thumbnail(%args)`（type 11）
+
+Section の accessory として使う小さい画像です。
+
+| 引数 | 説明 |
+|---|---|
+| `url` / `media` | （必須）画像の URL |
+| `description` | alt テキスト（1024 文字まで） |
+| `spoiler` | スポイラーにするか |
+
+### `media_gallery(%args)`（type 12）
+
+1〜10 個のメディアを並べます。
+
+```perl
+media_gallery(
+    items => [
+        { url => 'https://example.com/1.png', description => '1 枚目' },
+        { url => 'https://example.com/2.png', spoiler => 1 },
+    ],
+)
+```
+
+### `file(%args)`（type 13）
+
+添付ファイルを表示します。`attachment://` だけが使えます。
+
+```perl
+file(url => 'attachment://manual.pdf', spoiler => 1)
+```
+
+## Section と Container
+
+### `section(%args)`（type 9）
+
+テキスト表示 1〜3 個に、ボタンかサムネイルを添えます。
+
+```perl
+section(
+    components => [
+        text_display(content => '# タイトル'),
+        text_display(content => '説明文'),
+    ],
+    accessory => thumbnail(url => 'https://example.com/a.png'),
+);
+```
+
+| 引数 | 説明 |
+|---|---|
+| `components` | （必須）`text_display` を 1〜3 個 |
+| `accessory` | （必須）`button` か `thumbnail` |
+
+### `container(%args)`（type 17）
+
+要素をまとめて、アクセントカラーの帯を付けられます。
+
+| 引数 | 説明 |
+|---|---|
+| `components` | （必須）`action_row` / `text_display` / `section` / `media_gallery` / `file` / `separator` |
+| `accent_color` | `#RRGGBB` / `0xRRGGBB` / 整数（0〜16777215） |
+| `spoiler` | スポイラーにするか |
+
 ## モーダル
 
 モーダルは `label`（type 18）で入力欄を包みます。テキスト入力は `label` の中に置いてください
@@ -139,9 +255,12 @@ my $form = modal(
 
 | 引数 | 説明 |
 |---|---|
-| `label` | （必須）項目名 |
+| `label` | （必須）項目名。45 文字まで |
 | `component` | （必須）包むコンポーネント（ハッシュ） |
-| `description` | 補足説明 |
+| `description` | 補足説明。100 文字まで |
+
+`component` に置けるのは Text Input / 各セレクト / File Upload / Radio Group /
+Checkbox Group / Checkbox です。
 
 ### `modal(%args)`
 
@@ -149,10 +268,88 @@ my $form = modal(
 |---|---|
 | `title` | （必須）モーダルのタイトル |
 | `custom_id` | （必須）送信時に返る ID |
-| `components` | （必須）`label` の非空配列 |
+| `components` | （必須）`label` などの非空配列（`text_display` も置ける） |
 
 送信は `reply_modal($id, $token, $form)` で行います。
 詳細は[インタラクション](interactions.md)を参照してください。
+
+## モーダル V2
+
+モーダルでもファイルアップロードや選択式の入力が使えます。いずれも `label` の中に置きます。
+
+### `file_upload(%args)`（type 19）
+
+```perl
+label(
+    label     => '添付ファイル',
+    component => file_upload(
+        custom_id  => 'files',
+        min_values => 1,
+        max_values => 3,
+        file_types => [ 'image', '.pdf' ],
+    ),
+)
+```
+
+| 引数 | 説明 |
+|---|---|
+| `custom_id` | （必須）入力欄の ID |
+| `min_values` | 0〜10（既定 1。`required` を残すなら 1 以上） |
+| `max_values` | 1〜10 |
+| `required` | 必須にするか（既定 true） |
+| `file_types` | `image` / `video` / `audio` / `.pdf` など。最大 10 個 |
+
+### `radio_group(%args)`（type 21）
+
+1 つだけ選ぶ選択肢です。
+
+```perl
+label(
+    label     => 'クラス',
+    component => radio_group(
+        custom_id => 'class',
+        options   => [
+            { value => 'warrior', label => 'Warrior', description => '強い' },
+            { value => 'rogue',   label => 'Rogue',   default   => 1 },
+        ],
+    ),
+)
+```
+
+| 引数 | 説明 |
+|---|---|
+| `custom_id` | （必須）入力欄の ID |
+| `options` | （必須）2〜10 個の選択肢 |
+| `required` | 必須にするか（既定 true） |
+
+### `checkbox_group(%args)`（type 22）
+
+複数選べるチェックボックスです。
+
+| 引数 | 説明 |
+|---|---|
+| `custom_id` | （必須）入力欄の ID |
+| `options` | （必須）1〜10 個の選択肢 |
+| `min_values` / `max_values` | 選択数の範囲（0〜10 / 1〜10） |
+| `required` | 必須にするか（既定 true） |
+
+### `checkbox(%args)`（type 23）
+
+はい / いいえ の単一チェックボックスです。
+
+| 引数 | 説明 |
+|---|---|
+| `custom_id` | （必須）入力欄の ID |
+| `default` | 初期状態でチェックするか |
+
+選択肢（Radio / Checkbox Group 共通）の要素:
+
+| キー | 説明 |
+|---|---|
+| `value` | （必須）選択時に返る値。100 文字まで |
+| `label` | （必須）表示テキスト。100 文字まで |
+| `description` | 補足説明。100 文字まで |
+| `default` | 初期選択にするか |
 
 ## 関連ページ
 
