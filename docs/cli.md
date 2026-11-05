@@ -12,6 +12,7 @@
 - [チャンネル管理](#チャンネル管理)
 - [ロール管理](#ロール管理)
 - [メンバー管理](#メンバー管理)
+- [監査ログ](#監査ログ)
 - [スケジュールイベント](#スケジュールイベント)
 - [ギルド・Webhook](#ギルドwebhook)
 - [コマンド登録](#コマンド登録)
@@ -205,6 +206,33 @@ perl test.pl member-perms <ユーザーID> --channel <チャンネルID>
 - `--roles` / `--timeout` / `--nick` / `--channel` は `none` で解除
 - `prune` は既定では**対象人数を数えるだけ**です。実行するには `--compute` を付けます
 - `--delete-seconds` は 0〜604800（既定 0 = メッセージを削除しない）
+
+## 監査ログ
+
+```sh
+perl test.pl audit-log                          # 最新 50 件
+perl test.pl audit-log --limit 20
+perl test.pl audit-log --action MEMBER_KICK
+perl test.pl audit-log --action 25              # 数値でも可
+perl test.pl audit-log --user <ユーザーID>
+perl test.pl audit-log --before <エントリID>
+perl test.pl audit-log --after 0                # 最古から
+perl test.pl audit-log --actions                # イベント種別の一覧
+perl test.pl audit-log --guild <ギルドID>
+```
+
+| オプション | 説明 |
+|---|---|
+| `--guild <ID>` | 対象ギルド（省略時は `.env` のチャンネルのギルド） |
+| `--user <ID>` | 実行者で絞り込む |
+| `--action <種別>` | イベント種別（名前 / 数値） |
+| `--before <ID>` / `--after <ID>` | ページング |
+| `--limit <N>` | 1〜100（既定 50） |
+| `--actions` | イベント種別の一覧を表示する（API は呼ばない） |
+
+- `VIEW_AUDIT_LOG` 権限が必要です
+- `--before` は新しい順、`--after` は古い順になります
+- `--actions` はネットワークを使わず、全 71 種類を表示します
 
 ## スケジュールイベント
 

@@ -7,6 +7,7 @@ use Encode ();
 use Time::HiRes qw(time);
 use Time::Local qw(timegm);
 use Disperl::Permissions qw(permission_bits);
+use Disperl::AuditLog qw(audit_action_type);
 
 my $API_BASE    = 'https://discord.com/api/v10';
 my $MAX_CONTENT = 2000;
@@ -1215,6 +1216,51 @@ sub _member_payload {
     die "no member fields to update\n" unless keys %payload;
 
     return \%payload;
+}
+
+# ギルドの監査ログを取得する（VIEW_AUDIT_LOG が必要）。
+#   get_guild_audit_log($guild_id,
+#       user_id     => $user_id,
+#       action_type => 'MEMBER_KICK',
+#       before      => $entry_id,
+#       after       => $entry_id,
+#       limit       => 50,
+#   )
+# action_type は名前（MEMBER_KICK / member-kick）でも数値でもよい。
+# 戻り値は audit_log オブジェクト（audit_log_entries / users などを含むハッシュ）。
+sub get_guild_audit_log {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my @query;
+
+    for my $key (qw(user_id before after)) {
+        next unless defined $opts{$key};
+        die "$key must be a string\n"
+            if ref $opts{$key} || !length $opts{$key};
+        push @query, "$key=" . _uri_escape($opts{$key});
+    }
+
+    if (defined $opts{action_type}) {
+        my $type = audit_action_type($opts{action_type});
+        push @query, 'action_type=' . $type;
+    }
+
+    if (defined $opts{limit}) {
+        my $limit = $opts{limit};
+        die "limit must be between 1 and 100\n"
+            unless !ref $limit && $limit =~ /^\d+\z/
+                && $limit >= 1 && $limit <= 100;
+        push @query, 'limit=' . ($limit + 0);
+    }
+
+    my $url = "$API_BASE/guilds/$guild_id/audit-logs";
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'hash');
 }
 
 # ---------------------------------------------------------------- channel management

@@ -20,6 +20,7 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - ロールの取得・作成・編集・並び替え・削除（色 / アイコン / Unicode 絵文字）
 - メンバーの一覧・検索・ニックネーム変更・ロール付与 / 剥奪・タイムアウト
 - キック・BAN / BAN 解除・BAN 一覧・プルーン
+- 監査ログの取得（実行者 / 種別 / 期間で絞り込み）とイベント名の変換
 - スケジュールイベント（ボイス / ステージ / 外部）の作成・変更・削除・参加者取得
 - 権限名とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）
 - レート制限（バケット単位・429）対応と事前スロットリング
@@ -110,6 +111,7 @@ if ($message) {
 | `Disperl::Gateway` | Gateway（WebSocket）。イベント受信・プレゼンス・インタラクション配送 |
 | `Disperl::Components` | ボタン／セレクト／モーダルのビルダー |
 | `Disperl::Permissions` | 権限名とビットマスクの相互変換・実効権限の計算 |
+| `Disperl::AuditLog` | 監査ログのイベント種別（名前と数値の変換） |
 | `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が使用） |
 | `Disperl::Config` | `.env` ローダー |
 
@@ -123,6 +125,7 @@ if ($message) {
 | [チャンネル管理](docs/channels.md) | 作成・編集・並び替え・権限上書き・削除 |
 | [ロール管理](docs/roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
 | [メンバー管理](docs/members.md) | 一覧・検索・変更・ロール付与・キック / BAN・プルーン・実効権限 |
+| [監査ログ](docs/audit-log.md) | 取得・絞り込み・ページング・イベント種別・変更内容 |
 | [スケジュールイベント](docs/events.md) | 作成・変更・削除・参加者 |
 | [ギルド・ユーザー・招待](docs/guilds.md) | ギルド情報・メンバー・DM・招待 |
 | [Webhook](docs/webhooks.md) | 実行・管理・送信済みメッセージ |
@@ -228,6 +231,29 @@ print "$_\n" for permission_names($bits);
 
 詳細は [ロール管理](docs/roles.md) と [メンバー管理](docs/members.md) を参照してください。
 
+### 監査ログ
+
+```perl
+use Disperl::AuditLog qw(audit_action_name);
+
+my $log = $client->get_guild_audit_log(
+    $guild_id,
+    action_type => 'MEMBER_KICK',
+    limit       => 20,
+);
+
+my %users = map { $_->{id} => $_ } @{ $log->{users} || [] };
+for my $entry (@{ $log->{audit_log_entries} || [] }) {
+    my $user = $users{ $entry->{user_id} // '' } || {};
+    printf "%s: %s -> %s\n",
+        audit_action_name($entry->{action_type}) // $entry->{action_type},
+        $user->{username} // $entry->{user_id} // '?',
+        $entry->{target_id} // '-';
+}
+```
+
+`before` / `after` でページングできます。詳細は [監査ログ](docs/audit-log.md) を参照してください。
+
 ### Webhook
 
 ```perl
@@ -284,6 +310,8 @@ perl test.pl role-create "モデレーター" --permissions VIEW_CHANNEL,MANAGE_
 perl test.pl member-role-add <ユーザーID> <ロールID>
 perl test.pl prune --days 7                  # 対象人数を確認
 perl test.pl member-perms <ユーザーID> --channel <チャンネルID>
+perl test.pl audit-log --action MEMBER_KICK --limit 20
+perl test.pl audit-log --actions              # イベント種別の一覧
 perl test.pl event-create "定例会" --start 2026-12-01T20:00:00Z --end 2026-12-01T22:00:00Z --location Discord
 perl test.pl commands              # /ping /echo /poll /form を登録
 perl test.pl watch                 # Gateway で受信
@@ -339,6 +367,7 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - ロール: 取得・作成・編集・並び替え・削除・色 / アイコン / Unicode 絵文字
 - メンバー: 一覧・検索・ニックネーム・ロール付与 / 剥奪・タイムアウト・キック / BAN / プルーン
 - 権限: 名前とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）
+- 監査ログ: 取得・実行者 / 種別 / 期間での絞り込み・イベント名の変換（`Disperl::AuditLog`）
 - スケジュールイベント: 一覧・取得・作成・変更・削除・参加者
 - DM・ギルド情報の取得・招待・Webhook 実行（ファイル添付可）
 - Webhook の管理と送信済みメッセージの取得・編集・削除
@@ -351,7 +380,7 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 
 - 音声（Voice）
 - OAuth2
-- AutoMod・監査ログ
+- AutoMod
 - ギルド設定の変更
 - フォーラム / メディアチャンネルへの投稿（チャンネル自体の作成は可）
 - 課金・Entitlements・SKU

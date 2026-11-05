@@ -81,6 +81,14 @@
 | `communication_disabled_until` | ISO8601（例: `2026-12-01T20:00:00Z`） |
 | `reason`（監査ログ） | 512 文字 |
 
+## 監査ログ
+
+| 項目 | 上限 |
+|---|---|
+| 取得件数の `limit` | 1〜100（既定 50） |
+| `action_type` | 既知のイベント名または数値 |
+| `user_id` / `before` / `after` | 空でない文字列 |
+
 ## スケジュールイベント
 
 | 項目 | 上限 |
@@ -142,6 +150,7 @@
 - [チャンネル管理](channels.md)
 - [ロール管理](roles.md)
 - [メンバー管理](members.md)
+- [監査ログ](audit-log.md)
 - [スケジュールイベント](events.md)
 - [Webhook](webhooks.md)
 - [インタラクション](interactions.md)

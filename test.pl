@@ -22,6 +22,7 @@ use Disperl::Permissions qw(
     permission_bits permission_names permission_map
     guild_permissions channel_permissions
 );
+use Disperl::AuditLog qw(audit_action_map audit_action_name);
 
 load_dotenv("$FindBin::Bin/.env");
 
@@ -270,6 +271,9 @@ disperl 動作確認 CLI
       [--guild ID] [--reason 理由]    プルーン対象を数える（--compute で実行）
   perl test.pl member-perms <ユーザーID> [--channel ID] [--guild ID]
                                        実効権限を表示する
+  perl test.pl audit-log [--guild ID] [--user ID] [--action 種別]
+      [--before ID] [--after ID] [--limit N] [--actions]
+                                       監査ログを表示する（VIEW_AUDIT_LOG が必要）
   perl test.pl permissions [権限名 ...] 権限名からビットマスクを計算する（--names BITS で逆引き）
   perl test.pl events [--guild ID] [--users]
                                        スケジュールイベント一覧
@@ -339,6 +343,10 @@ disperl 動作確認 CLI
   perl test.pl prune --days 7
   perl test.pl prune --days 7 --compute --reason "定期整理"
   perl test.pl member-perms 123456789012345678 --channel 123456789012345678
+  perl test.pl audit-log --limit 20
+  perl test.pl audit-log --action MEMBER_KICK --limit 50
+  perl test.pl audit-log --user 123456789012345678 --after 0
+  perl test.pl audit-log --actions
   perl test.pl permissions VIEW_CHANNEL SEND_MESSAGES
   perl test.pl events
   perl test.pl event-create "定例会" --start 2026-12-01T20:00:00Z --end 2026-12-01T22:00:00Z --location "Discord"
@@ -1596,6 +1604,95 @@ sub cmd_member_perms {
     out sprintf "%s での実効権限 (%d)\n", $label, $bits;
     out "$_\n" for @names;
     out "(なし)\n" unless @names;
+    return 0;
+}
+
+# ---------------------------------------------------------------- 監査ログ
+
+sub _audit_value {
+    my ($value) = @_;
+    return '(なし)' unless defined $value;
+    return $value unless ref $value;
+    return JSON::PP->new->canonical->encode($value);
+}
+
+sub _print_audit_entry {
+    my ($entry, $users) = @_;
+
+    my $action = $entry->{action_type};
+    my $name = defined $action
+        ? (audit_action_name($action) // "type$action")
+        : 'unknown';
+    my $user = $users->{ $entry->{user_id} // '' } || {};
+
+    out sprintf "[%s] %s (%s)\n",
+        _format_time(_snowflake_time($entry->{id})),
+        $name,
+        $action // '?';
+    out sprintf "  user:    %s (%s)\n",
+        $user->{global_name} // $user->{username} // 'unknown',
+        $entry->{user_id} // '?';
+    out sprintf "  target:  %s\n", $entry->{target_id} // '-';
+    out sprintf "  reason:  %s\n", $entry->{reason}
+        if defined $entry->{reason} && length $entry->{reason};
+
+    if (ref $entry->{options} eq 'HASH') {
+        for my $key (sort keys %{ $entry->{options} }) {
+            my $value = $entry->{options}{$key};
+            next unless defined $value;
+            out sprintf "  option:  %s=%s\n", $key, _audit_value($value);
+        }
+    }
+
+    for my $change (@{ $entry->{changes} || [] }) {
+        next unless ref $change eq 'HASH';
+        out sprintf "  change:  %s: %s -> %s\n",
+            $change->{key} // '?',
+            _audit_value($change->{old_value}),
+            _audit_value($change->{new_value});
+    }
+
+    out "\n";
+}
+
+sub cmd_audit_log {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(guild user action before after limit)],
+        [],
+        [qw(actions)]);
+
+    _fatal("不明な引数: $pos->[0]") if @$pos;
+
+    if ($opt->{actions}) {
+        my $map = audit_action_map();
+        for my $name (sort { $map->{$a} <=> $map->{$b} } keys %$map) {
+            out sprintf "  %-46s %3d\n", $name, $map->{$name};
+        }
+        return 0;
+    }
+
+    my $guild_id = $opt->{guild} // _current_guild_id();
+    my $log = client()->get_guild_audit_log($guild_id,
+        user_id     => $opt->{user},
+        action_type => $opt->{action},
+        before      => $opt->{before},
+        after       => $opt->{after},
+        limit       => $opt->{limit},
+    ) or _api_fail('監査ログの取得');
+
+    my %users = map { $_->{id} => $_ }
+        grep { ref $_ eq 'HASH' && defined $_->{id} }
+        @{ $log->{users} || [] };
+
+    my $entries = $log->{audit_log_entries} || [];
+    if (!@$entries) {
+        out "監査ログは空です\n";
+        return 0;
+    }
+
+    _print_audit_entry($_, \%users) for @$entries;
+    out sprintf "(%d 件)\n", scalar @$entries;
     return 0;
 }
 
@@ -2951,6 +3048,7 @@ my %COMMANDS = (
     bans       => \&cmd_bans,
     prune      => \&cmd_prune,
     'member-perms' => \&cmd_member_perms,
+    'audit-log'    => \&cmd_audit_log,
     permissions => \&cmd_permissions,
     events      => \&cmd_events,
     event       => \&cmd_event,

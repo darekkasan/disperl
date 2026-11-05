@@ -92,5 +92,6 @@ $client->delete_invite($code);       # 招待を削除
 - [Client](client.md)
 - [ロール管理](roles.md)
 - [メンバー管理](members.md)
+- [監査ログ](audit-log.md)
 - [Webhook](webhooks.md)
 - [メッセージ](messages.md)

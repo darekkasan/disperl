@@ -19,6 +19,7 @@ lib/Disperl/Client.pm        REST API
 lib/Disperl/Gateway.pm       Gateway（WebSocket）
 lib/Disperl/Components.pm    ボタン / セレクト / モーダル
 lib/Disperl/Permissions.pm   権限ビットの相互変換・実効権限
+lib/Disperl/AuditLog.pm      監査ログのイベント種別
 lib/Disperl/WebSocket.pm     RFC 6455 クライアント
 lib/Disperl/Config.pm        .env ローダー
 
@@ -85,7 +86,7 @@ prove -l t
 - **ネットワークを使いません**。`ua` と WebSocket を偽オブジェクトに差し替えます
 - `t/` から `.env` は読みません（実トークンを使わない）
 
-現在のテスト（28 ファイル / 250 件）:
+現在のテスト（29 ファイル / 256 件）:
 
 | ファイル | 内容 |
 |---|---|
@@ -117,6 +118,7 @@ prove -l t
 | `t/25_scheduled_events.t` | スケジュールイベントの作成・変更・削除・参加者 |
 | `t/26_roles.t` | ロールの取得・作成・編集・並び替え・削除 / 入力検証 |
 | `t/27_members.t` | メンバー変更 / ロール付与 / キック / BAN / プルーン / 検索 |
+| `t/28_audit_log.t` | 監査ログの取得 / 絞り込み / イベント名の変換 |
 
 ### テストを書くとき
 

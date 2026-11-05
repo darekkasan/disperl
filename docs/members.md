@@ -222,6 +222,7 @@ my $channel_bits = channel_permissions($guild, $member, $channel);
 
 - [ロール管理](roles.md)
 - [チャンネル管理](channels.md)
+- [監査ログ](audit-log.md)
 - [ギルド・ユーザー・招待](guilds.md)
 - [Gateway](gateway.md#intent)
 - [制限値](limits.md)

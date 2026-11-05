@@ -182,6 +182,7 @@ $client->create_guild_role($guild_id, name => '絵文字付き', unicode_emoji =
 
 - [メンバー管理](members.md)
 - [チャンネル管理](channels.md)
+- [監査ログ](audit-log.md)
 - [ギルド・ユーザー・招待](guilds.md)
 - [制限値](limits.md)
 - [CLI](cli.md)

@@ -211,6 +211,7 @@ for my $invite (@$invites) {
 - [ギルド・ユーザー・招待](guilds.md)
 - [ロール管理](roles.md)
 - [メンバー管理](members.md)
+- [監査ログ](audit-log.md)
 - [スケジュールイベント](events.md)
 - [制限値](limits.md)
 - [CLI](cli.md)
