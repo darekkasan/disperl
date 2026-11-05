@@ -43,6 +43,63 @@ my %ACTIVITY_TYPE = (
 # （Discord の Developer Portal で Privileged Intent を有効にする必要がある）。
 my $DEFAULT_INTENTS = $INTENTS{GUILDS} | $INTENTS{GUILD_MESSAGES};
 
+# 型付きコールバック（Gateway イベント名 => コンストラクタの引数名）。
+# 引数は ($data, $msg) で呼ばれる。INTERACTION_CREATE は種別ごとの
+# on_command などがあるため、ここには含めない。
+my %TYPED_CALLBACK = (
+    MESSAGE_CREATE                => 'on_message',
+    MESSAGE_UPDATE                => 'on_message_update',
+    MESSAGE_DELETE                => 'on_message_delete',
+    MESSAGE_DELETE_BULK           => 'on_message_delete_bulk',
+    MESSAGE_REACTION_ADD          => 'on_reaction_add',
+    MESSAGE_REACTION_REMOVE       => 'on_reaction_remove',
+    MESSAGE_REACTION_REMOVE_ALL   => 'on_reaction_remove_all',
+    MESSAGE_REACTION_REMOVE_EMOJI => 'on_reaction_remove_emoji',
+    MESSAGE_POLL_VOTE_ADD         => 'on_poll_vote_add',
+    MESSAGE_POLL_VOTE_REMOVE      => 'on_poll_vote_remove',
+    TYPING_START                  => 'on_typing_start',
+
+    GUILD_CREATE         => 'on_guild_create',
+    GUILD_UPDATE         => 'on_guild_update',
+    GUILD_DELETE         => 'on_guild_delete',
+    GUILD_MEMBER_ADD     => 'on_guild_member_add',
+    GUILD_MEMBER_UPDATE  => 'on_guild_member_update',
+    GUILD_MEMBER_REMOVE  => 'on_guild_member_remove',
+    GUILD_MEMBERS_CHUNK  => 'on_guild_members_chunk',
+    GUILD_BAN_ADD        => 'on_guild_ban_add',
+    GUILD_BAN_REMOVE     => 'on_guild_ban_remove',
+    GUILD_ROLE_CREATE    => 'on_guild_role_create',
+    GUILD_ROLE_UPDATE    => 'on_guild_role_update',
+    GUILD_ROLE_DELETE    => 'on_guild_role_delete',
+
+    CHANNEL_CREATE => 'on_channel_create',
+    CHANNEL_UPDATE => 'on_channel_update',
+    CHANNEL_DELETE => 'on_channel_delete',
+
+    THREAD_CREATE => 'on_thread_create',
+    THREAD_UPDATE => 'on_thread_update',
+    THREAD_DELETE => 'on_thread_delete',
+
+    INVITE_CREATE => 'on_invite_create',
+    INVITE_DELETE => 'on_invite_delete',
+
+    PRESENCE_UPDATE    => 'on_presence_update',
+    VOICE_STATE_UPDATE => 'on_voice_state_update',
+
+    GUILD_SCHEDULED_EVENT_CREATE      => 'on_scheduled_event_create',
+    GUILD_SCHEDULED_EVENT_UPDATE      => 'on_scheduled_event_update',
+    GUILD_SCHEDULED_EVENT_DELETE      => 'on_scheduled_event_delete',
+    GUILD_SCHEDULED_EVENT_USER_ADD    => 'on_scheduled_event_user_add',
+    GUILD_SCHEDULED_EVENT_USER_REMOVE => 'on_scheduled_event_user_remove',
+
+    AUTO_MODERATION_ACTION_EXECUTION => 'on_automod_action',
+    AUTO_MODERATION_RULE_CREATE      => 'on_automod_rule_create',
+    AUTO_MODERATION_RULE_UPDATE      => 'on_automod_rule_update',
+    AUTO_MODERATION_RULE_DELETE      => 'on_automod_rule_delete',
+
+    GUILD_AUDIT_LOG_ENTRY_CREATE => 'on_audit_log_entry_create',
+);
+
 sub new {
     my ($class, %args) = @_;
 
@@ -62,12 +119,41 @@ sub new {
         $presence = _make_presence(%args);
     }
 
+    # シャード [id, count]。省略時はシャーディングしない。
+    my $shard;
+    if (defined $args{shard}) {
+        my $value = $args{shard};
+        die "shard must be an array reference [id, count]\n"
+            unless ref $value eq 'ARRAY' && @$value == 2;
+
+        my ($id, $count) = @$value;
+        die "shard count must be at least 1\n"
+            unless defined $count && !ref $count
+                && $count =~ /^\d+\z/ && $count >= 1;
+        die "shard id must be between 0 and count - 1\n"
+            unless defined $id && !ref $id
+                && $id =~ /^\d+\z/ && $id < $count;
+
+        $shard = [ $id + 0, $count + 0 ];
+    }
+
+    # 型付きコールバックを引数から拾う（on_message など）
+    my %typed;
+    {
+        my %seen;
+        for my $key (values %TYPED_CALLBACK) {
+            next if $seen{$key}++;
+            $typed{$key} = $args{$key};
+        }
+    }
+
     return bless {
         token          => $args{token},
         intents        => $intents,
         url            => $args{url} // 'wss://gateway.discord.gg/?v=10&encoding=json',
+        shard          => $shard,
+        %typed,
         on_event       => $args{on_event},
-        on_message     => $args{on_message},
         on_interaction => $args{on_interaction},
         on_command     => $args{on_command},
         on_component   => $args{on_component},
@@ -114,6 +200,78 @@ sub is_running { $_[0]->{running} }
 
 # 現在のプレゼンス（正規化済みのハッシュ）。未設定なら undef。
 sub presence { $_[0]->{presence} }
+
+# シャード [id, count]。シャーディングしていなければ undef。
+sub shard { $_[0]->{shard} }
+
+# ギルドメンバーを要求する（op 8）。結果は on_guild_members_chunk で受け取る。
+# GUILD_MEMBERS（Privileged Intent）が必要。
+#   $gw->request_guild_members($guild_id);                    # 全件（limit 0）
+#   $gw->request_guild_members($guild_id, query => 'kama');
+#   $gw->request_guild_members($guild_id, limit => 10);
+#   $gw->request_guild_members($guild_id, presets => ['online']);
+#   $gw->request_guild_members($guild_id, user_ids => [ $id1, $id2 ]);  # 最大 100
+sub request_guild_members {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "not connected to the gateway\n" unless $self->{ws} && $self->{ready};
+
+    my %d = (guild_id => "$guild_id");
+
+    if (defined $opts{query}) {
+        die "query must be a string\n" if ref $opts{query};
+        $d{query} = $opts{query};
+    }
+
+    if (defined $opts{limit}) {
+        my $limit = $opts{limit};
+        die "limit must be between 0 and 100\n"
+            unless !ref $limit && $limit =~ /^\d+\z/ && $limit <= 100;
+        $d{limit} = $limit + 0;
+    }
+
+    if (defined $opts{user_ids}) {
+        my $user_ids = $opts{user_ids};
+        die "user_ids must be a non-empty array reference\n"
+            unless ref $user_ids eq 'ARRAY' && @$user_ids;
+        die "user_ids accepts at most 100 ids\n" if @$user_ids > 100;
+
+        $d{user_ids} = [
+            map {
+                die "user id must be a non-empty string\n"
+                    if ref $_ || !defined $_ || !length $_;
+                "$_"
+            } @$user_ids
+        ];
+    }
+
+    if (defined $opts{presets}) {
+        my $presets = $opts{presets};
+        die "presets must be an array reference\n"
+            unless ref $presets eq 'ARRAY';
+
+        my %VALID = (online => 1, offline => 1);
+        my @presets;
+        for my $preset (@$presets) {
+            die "Unknown preset: "
+                . (ref $preset ? 'reference' : (defined $preset ? $preset : 'undef'))
+                . " (expected online or offline)\n"
+                unless defined $preset && !ref $preset
+                    && $VALID{ lc $preset };
+            push @presets, lc $preset;
+        }
+        $d{presets} = \@presets;
+    }
+
+    $d{nonce} = "$opts{nonce}" if defined $opts{nonce};
+
+    # limit / user_ids を省略した場合は全件取得（limit 0）
+    $d{limit} = 0 unless exists $d{limit} || exists $d{user_ids};
+
+    $self->{ws}->send_text($JSON->encode({ op => 8, d => \%d }));
+    return 1;
+}
 
 # 接続中にステータスやアクティビティを変える。接続前なら次の接続で反映される。
 #   $gw->set_presence(status => 'idle');
@@ -447,8 +605,6 @@ sub _handle {
             $self->{failures} = 0;
             $self->{presence_pending} = 1 if $self->{presence};
             $self->_apply_presence;
-        } elsif ($type eq 'MESSAGE_CREATE') {
-            $self->{on_message}->($data) if $self->{on_message};
         } elsif ($type eq 'INTERACTION_CREATE') {
             $self->{on_interaction}->($data) if $self->{on_interaction};
 
@@ -463,6 +619,8 @@ sub _handle {
                 if $kind == 4 && $self->{on_autocomplete};
             $self->{on_modal}->($data)
                 if $kind == 5 && $self->{on_modal};
+        } elsif (my $callback = $TYPED_CALLBACK{$type}) {
+            $self->{$callback}->($data, $msg) if $self->{$callback};
         }
 
         $self->{on_event}->($type, $data, $msg) if $self->{on_event};
@@ -530,6 +688,7 @@ sub _identify {
         },
     };
     $d->{presence} = $self->{presence} if $self->{presence};
+    $d->{shard}    = $self->{shard}    if $self->{shard};
 
     $ws->send_text($JSON->encode({ op => 2, d => $d }));
 

@@ -86,7 +86,7 @@ if ($message) {
 - スケジュールイベント: 一覧・取得・作成・変更・削除・参加者
 - DM・ギルド情報・招待
 - Webhook: 実行・管理・送信済みメッセージの取得 / 編集 / 削除
-- Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス
+- Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス / 型付きコールバック / member chunking / シャーディング
 - インタラクション: ボタン・セレクト・モーダル・オートコンプリート・フォローアップ
 - Components V2: Container / Section / Text Display / Media Gallery / File / Separator / モーダル V2
 - スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）

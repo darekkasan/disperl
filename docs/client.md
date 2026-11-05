@@ -11,6 +11,7 @@ Discord REST API のクライアントです。追加モジュールは不要（
 - [リアクション・入力中](#リアクション入力中)
 - [ピン留め](#ピン留め)
 - [一括削除](#一括削除)
+- [Gateway 情報](#gateway-情報)
 - [関連ページ](#関連ページ)
 
 ## コンストラクタ
@@ -164,8 +165,33 @@ $client->bulk_delete_messages($channel, [ $id1, $id2, $id3 ]);
 - **14 日以内**のメッセージのみ削除できる（Discord の制限）
 - 成功時は `1`
 
+## Gateway 情報
+
+接続前に Gateway の URL や推奨シャード数を取得できます。
+
+| メソッド | 成功時 | 説明 |
+|---|---|---|
+| `get_gateway()` | ハッシュ | `GET /gateway`。`url` を含む |
+| `get_gateway_bot()` | ハッシュ | `GET /gateway/bot`。`shards` / `session_start_limit` を含む |
+
+```perl
+my $info = $client->get_gateway_bot;
+print "推奨シャード数: $info->{shards}\n";
+print "残りセッション: $info->{session_start_limit}{remaining}\n";
+
+my $gw = Disperl::Gateway->new(
+    token   => $ENV{DISCORD_TOKEN},
+    shard   => [ 0, $info->{shards} ],
+    url     => $info->{url},
+);
+```
+
+- `session_start_limit` は `total` / `remaining` / `reset_after`（ミリ秒）/ `max_concurrency`
+- シャードの使い方は [Gateway](gateway.md#シャーディング) を参照
+
 ## 関連ページ
 
+- [Gateway](gateway.md)
 - [メッセージ（embed / 添付 / 投票）](messages.md)
 - [インタラクション](interactions.md)
 - [Webhook](webhooks.md)

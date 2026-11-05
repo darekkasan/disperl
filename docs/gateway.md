@@ -1,13 +1,17 @@
 # Disperl::Gateway
 
 Discord Gateway（WebSocket）に接続してイベントを受信します。
-Identify / Resume / Heartbeat / 自動再接続 / プレゼンス変更に対応しています。
+Identify / Resume / Heartbeat / 自動再接続 / プレゼンス変更に加え、
+型付きコールバック・メンバー一括取得・シャーディングに対応しています。
 
 ## 目次
 
 - [基本的な受信](#基本的な受信)
 - [コンストラクタ](#コンストラクタ)
 - [コールバック](#コールバック)
+- [型付きコールバック](#型付きコールバック)
+- [メンバー一括取得](#メンバー一括取得)
+- [シャーディング](#シャーディング)
 - [Intent](#intent)
 - [再接続](#再接続)
 - [プレゼンス](#プレゼンス)
@@ -49,6 +53,8 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `on_modal` | — | type 5（モーダル送信）だけ |
 | `on_ready` | — | `READY` のときだけ |
 | `on_error` | 未指定なら `warn` | 接続エラー・再接続の通知 |
+| `shard` | — | `[id, count]`（[シャーディング](#シャーディング)） |
+| 型付き | — | `on_guild_create` / `on_message_update` など（[型付きコールバック](#型付きコールバック)） |
 | `reconnect` | `1` | 自動再接続するか |
 | `max_reconnects` | `5` | 連続エラーの上限（READY でリセット） |
 | `reconnect_delay` | `5` | 4008（レート制限）で再接続するまでの待ち秒 |
@@ -73,6 +79,7 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `$gw->user` | Bot 自身のユーザー情報（READY 後） |
 | `$gw->is_running` | `run` 中か |
 | `$gw->presence` | 現在のプレゼンス（未設定なら `undef`） |
+| `$gw->shard` | シャード `[id, count]`（未設定なら `undef`） |
 
 `stop()` でループを止められます。
 
@@ -94,6 +101,109 @@ my $gw = Disperl::Gateway->new(
 `INTERACTION_CREATE` では `on_interaction` が先に呼ばれ、その後 type に応じて
 `on_command` / `on_component` / `on_autocomplete` / `on_modal` が呼ばれます
 （同じイベントで複数のコールバックが動く点に注意）。
+
+## 型付きコールバック
+
+イベント名ごとのコールバックをコンストラクタに渡せます。
+引数は `($data, $raw)` です（`$raw` は `op` / `t` / `s` を含む生メッセージ）。
+
+```perl
+my $gw = Disperl::Gateway->new(
+    token          => $ENV{DISCORD_TOKEN},
+    intents        => [qw(GUILDS GUILD_MEMBERS GUILD_MESSAGES)],
+    on_message     => sub { ... },
+    on_message_update => sub {
+        my ($data, $raw) = @_;
+        print "edited: $data->{id}\n";
+    },
+    on_guild_member_add => sub {
+        my ($data) = @_;
+        print "joined: $data->{user}{username}\n";
+    },
+);
+```
+
+| コールバック | イベント |
+|---|---|
+| `on_message` / `on_message_update` / `on_message_delete` / `on_message_delete_bulk` | `MESSAGE_*` |
+| `on_reaction_add` / `on_reaction_remove` / `on_reaction_remove_all` / `on_reaction_remove_emoji` | `MESSAGE_REACTION_*` |
+| `on_poll_vote_add` / `on_poll_vote_remove` | `MESSAGE_POLL_VOTE_*` |
+| `on_typing_start` | `TYPING_START` |
+| `on_guild_create` / `on_guild_update` / `on_guild_delete` | `GUILD_*` |
+| `on_guild_member_add` / `on_guild_member_update` / `on_guild_member_remove` | `GUILD_MEMBER_*` |
+| `on_guild_members_chunk` | `GUILD_MEMBERS_CHUNK` |
+| `on_guild_ban_add` / `on_guild_ban_remove` | `GUILD_BAN_*` |
+| `on_guild_role_create` / `on_guild_role_update` / `on_guild_role_delete` | `GUILD_ROLE_*` |
+| `on_channel_create` / `on_channel_update` / `on_channel_delete` | `CHANNEL_*` |
+| `on_thread_create` / `on_thread_update` / `on_thread_delete` | `THREAD_*` |
+| `on_invite_create` / `on_invite_delete` | `INVITE_*` |
+| `on_presence_update` | `PRESENCE_UPDATE` |
+| `on_voice_state_update` | `VOICE_STATE_UPDATE` |
+| `on_scheduled_event_create` / `on_scheduled_event_update` / `on_scheduled_event_delete` | `GUILD_SCHEDULED_EVENT_*` |
+| `on_scheduled_event_user_add` / `on_scheduled_event_user_remove` | `GUILD_SCHEDULED_EVENT_USER_*` |
+| `on_automod_action` | `AUTO_MODERATION_ACTION_EXECUTION` |
+| `on_automod_rule_create` / `on_automod_rule_update` / `on_automod_rule_delete` | `AUTO_MODERATION_RULE_*` |
+| `on_audit_log_entry_create` | `GUILD_AUDIT_LOG_ENTRY_CREATE` |
+
+- 型付きコールバックを用意していないイベントは無視されます（`on_event` は全イベントで呼ばれます）
+- `READY` / `RESUMED` / `INTERACTION_CREATE` は専用のコールバック（`on_ready` など）が動きます
+- 型付きコールバックは `on_event` より先に呼ばれます
+
+## メンバー一括取得
+
+`GUILD_MEMBERS`（Privileged Intent）を有効にすると、メンバー一覧を要求できます。
+結果は `GUILD_MEMBERS_CHUNK` として `on_guild_members_chunk` に届きます。
+
+```perl
+my $gw = Disperl::Gateway->new(
+    token   => $ENV{DISCORD_TOKEN},
+    intents => [qw(GUILDS GUILD_MEMBERS)],
+    on_guild_members_chunk => sub {
+        my ($data) = @_;
+        print "$data->{guild_id}: ",
+            scalar(@{ $data->{members} || [] }), " members\n";
+    },
+    on_ready => sub {
+        $gw->request_guild_members($guild_id);                 # 全件（limit 0）
+        $gw->request_guild_members($guild_id, query => 'kama'); # 名前で検索
+        $gw->request_guild_members($guild_id, presets => ['online']);
+        $gw->request_guild_members($guild_id, user_ids => [$id1, $id2]);
+    },
+);
+
+$gw->run;
+```
+
+| キー | 説明 |
+|---|---|
+| （省略） | 全メンバーを要求（`limit => 0`） |
+| `query` | ユーザー名 / ニックネームで絞り込む |
+| `limit` | 0〜100。`0` は全件 |
+| `presets` | `online` / `offline` の配列 |
+| `user_ids` | 特定ユーザーの配列（最大 100） |
+| `nonce` | チャンクに付ける任意の文字列 |
+
+- 接続前や未 READY の状態で呼ぶと `die` します
+- 大量取得はレート制限の対象です。1 ギルド 1 回程度に留めてください
+
+## シャーディング
+
+大規模な Bot ではシャードを分けて接続します。`shard => [id, count]` を渡すと
+Identify に `shard` が含まれます。
+
+```perl
+my $gw = Disperl::Gateway->new(
+    token   => $ENV{DISCORD_TOKEN},
+    shard   => [ 0, 2 ],          # 2 シャード中の 0 番目
+    intents => [qw(GUILDS GUILD_MESSAGES)],
+);
+
+print @{ $gw->shard };            # 0 2
+```
+
+- `id` は `0` 以上 `count - 1` 以下。範囲外は `die`
+- 推奨シャード数は `$client->get_gateway_bot->{shards}` で確認できます
+- CLI では `perl test.pl watch --shard 0/2` で指定できます
 
 ## Intent
 
@@ -207,5 +317,6 @@ $gw->set_presence(activity => {
 ## 関連ページ
 
 - [インタラクション](interactions.md)
+- [メンバー管理](members.md)
 - [Client](client.md)
 - [トラブルシューティング](troubleshooting.md)

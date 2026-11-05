@@ -341,6 +341,7 @@ disperl 動作確認 CLI
       --status <状態>                  online / idle / dnd / invisible（オフライン表示）
       --activity <名前>                アクティビティ
       --type <種類>                    playing / streaming / listening / watching / competing / custom
+      --shard <ID/COUNT>               シャードを指定する（例: 0/2）
   perl test.pl help                  このヘルプ
 
 例:
@@ -389,6 +390,7 @@ disperl 動作確認 CLI
   perl test.pl thread-archive 123456789012345678
   perl test.pl watch --status idle --activity "待機中"
   perl test.pl watch --status invisible
+  perl test.pl watch --shard 0/2
 
 ステータスは Gateway に接続している間だけ有効（切断すると通常のオフラインに戻る）。
 watch 中は Discord から !status idle / !activity "作業中" でも変更できる。
@@ -2873,6 +2875,13 @@ sub cmd_watch {
 
     $gateway_args{status} = $opt{status} if defined $opt{status};
 
+    if (defined $opt{shard}) {
+        my ($id, $count) = split m{/}, $opt{shard}, 2;
+        _fatal('--shard は ID/COUNT の形式で指定してください（例: 0/2）')
+            unless defined $id && defined $count;
+        $gateway_args{shard} = [ $id, $count ];
+    }
+
     if (defined $opt{activity}) {
         my $type = lc($opt{type} // 'playing');
         $gateway_args{activity} = $type eq 'custom'
@@ -2903,9 +2912,9 @@ sub _parse_watch_options {
     while (@args) {
         my $arg = shift @args;
 
-        if ($arg =~ /^--(status|activity|type)=(.*)\z/s) {
+        if ($arg =~ /^--(status|activity|type|shard)=(.*)\z/s) {
             $opt{$1} = $2;
-        } elsif ($arg =~ /^--(status|activity|type)\z/) {
+        } elsif ($arg =~ /^--(status|activity|type|shard)\z/) {
             _fatal("--$1 には値が必要です") unless @args;
             $opt{$1} = shift @args;
         } else {

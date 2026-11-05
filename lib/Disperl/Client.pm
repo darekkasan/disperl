@@ -626,6 +626,29 @@ sub get_user {
     return $self->_finish($res, 'hash');
 }
 
+# ---------------------------------------------------------------- gateway
+
+# Gateway の URL を取得する（WSS URL を含むハッシュ）。
+sub get_gateway {
+    my ($self) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/gateway");
+    return $self->_finish($res, 'hash');
+}
+
+# Bot 用の Gateway 情報（推奨シャード数・セッション開始制限など）。
+#   my $info = $client->get_gateway_bot;
+#   $info->{shards};               # 推奨シャード数
+#   $info->{session_start_limit};  # { total, remaining, reset_after, max_concurrency }
+sub get_gateway_bot {
+    my ($self) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/gateway/bot");
+    return $self->_finish($res, 'hash');
+}
+
 # ---------------------------------------------------------------- guilds
 
 sub get_guild {

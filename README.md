@@ -26,6 +26,7 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - 権限名とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）
 - レート制限（バケット単位・429）対応と事前スロットリング
 - Gateway（WebSocket）でイベントを受信。Identify / Resume / Heartbeat / 自動再接続
+- イベント別コールバック（`on_guild_member_add` など）・member chunking・シャーディング
 - ステータス（online / idle / dnd / invisible）とアクティビティの変更
 - ボタン／セレクトメニュー（`Disperl::Components`）とインタラクション応答
 - Components V2（Container / Section / Text Display / Media Gallery / File / モーダル V2）
@@ -404,7 +405,7 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - スケジュールイベント: 一覧・取得・作成・変更・削除・参加者
 - DM・ギルド情報の取得・招待・Webhook 実行（ファイル添付可）
 - Webhook の管理と送信済みメッセージの取得・編集・削除
-- Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス
+- Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス / 型付きコールバック / member chunking / シャーディング
 - インタラクション: ボタン・セレクト・モーダル・オートコンプリート・フォローアップ
 - Components V2: Container / Section / Text Display / Media Gallery / File / Separator / モーダル V2
 - スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）

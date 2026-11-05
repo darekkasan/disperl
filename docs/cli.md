@@ -373,6 +373,7 @@ Gateway に接続してイベントを待ち受けます。
 perl test.pl watch
 perl test.pl watch --status idle --activity "待機中"
 perl test.pl watch --status invisible   # オフライン表示
+perl test.pl watch --shard 0/2          # シャーディング
 ```
 
 | オプション | 説明 |
@@ -380,6 +381,7 @@ perl test.pl watch --status invisible   # オフライン表示
 | `--status <状態>` | `online` / `idle` / `dnd` / `invisible` / `offline` |
 | `--activity <名前>` | アクティビティの表示名 |
 | `--type <種類>` | `playing` / `streaming` / `listening` / `watching` / `competing` / `custom` |
+| `--shard <ID/COUNT>` | シャードを指定（例: `0/2`） |
 
 `watch` 中に反応するもの:
 
