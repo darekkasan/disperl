@@ -22,6 +22,9 @@ lib/Disperl/Permissions.pm   権限ビットの相互変換・実効権限
 lib/Disperl/AuditLog.pm      監査ログのイベント種別
 lib/Disperl/AutoMod.pm       AutoMod のトリガー / アクション種別
 lib/Disperl/Forum.pm         フォーラム / メディアの種別・タグ検証
+lib/Disperl/Sticker.pm       ステッカーの種別・画像形式
+lib/Disperl/Stage.pm         ステージインスタンスの公開範囲
+lib/Disperl/Commands.pm      コマンド権限の対象種別
 lib/Disperl/WebSocket.pm     RFC 6455 クライアント
 lib/Disperl/Config.pm        .env ローダー
 
@@ -88,7 +91,7 @@ prove -l t
 - **ネットワークを使いません**。`ua` と WebSocket を偽オブジェクトに差し替えます
 - `t/` から `.env` は読みません（実トークンを使わない）
 
-現在のテスト（33 ファイル / 288 件）:
+現在のテスト（34 ファイル / 300 件）:
 
 | ファイル | 内容 |
 |---|---|
@@ -125,6 +128,7 @@ prove -l t
 | `t/30_components_v2.t` | Components V2（レイアウト / メディア / モーダル V2） |
 | `t/31_gateway_enhancements.t` | 型付きコールバック / member chunking / シャーディング |
 | `t/32_forum.t` | フォーラム投稿 / タグ / レイアウト / `Disperl::Forum` |
+| `t/33_small_apis.t` | 絵文字 / ステッカー / サウンド / ステージ / アプリ / 権限 / widget |
 
 ### テストを書くとき
 

@@ -16,6 +16,9 @@ use Disperl::Forum qw(
     forum_layout_value forum_sort_order_value
     forum_applied_tags forum_available_tags
 );
+use Disperl::Sticker qw(sticker_type_value sticker_format_value);
+use Disperl::Stage qw(stage_privacy_value);
+use Disperl::Commands qw(command_permission_value);
 
 my $API_BASE    = 'https://discord.com/api/v10';
 my $MAX_CONTENT = 2000;
@@ -202,6 +205,49 @@ sub delete_all_reactions {
         "$API_BASE/channels/$channel_id/messages/$message_id/reactions",
     );
     return $self->_finish($res, 'none');
+}
+
+# 特定のユーザーが付けたリアクションを外す（MANAGE_MESSAGES が必要な場合あり）。
+sub delete_user_reaction {
+    my ($self, $channel_id, $message_id, $emoji, $user_id) = @_;
+
+    die "user id is required\n" unless defined $user_id && length $user_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/channels/$channel_id/messages/$message_id/reactions/"
+            . _uri_escape($emoji) . "/$user_id",
+    );
+    return $self->_finish($res, 'none');
+}
+
+# 指定した絵文字のリアクションを全員分まとめて外す。
+sub delete_emoji_reactions {
+    my ($self, $channel_id, $message_id, $emoji) = @_;
+
+    die "emoji is required\n" unless defined $emoji && length $emoji;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/channels/$channel_id/messages/$message_id/reactions/"
+            . _uri_escape($emoji),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# アナウンスチャンネルのメッセージをフォロー中のチャンネルへ公開する。
+# 成功時は公開後のメッセージ。
+sub crosspost_message {
+    my ($self, $channel_id, $message_id) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/channels/$channel_id/messages/$message_id/crosspost",
+    );
+    return $self->_finish($res, 'hash');
 }
 
 # ---------------------------------------------------------------- pins / bulk
@@ -1727,7 +1773,9 @@ sub _automod_actions {
 }
 
 # 重複を除いた ID の配列にする。
-sub _automod_ids {
+sub _automod_ids { return _id_array(@_) }
+
+sub _id_array {
     my ($values, $label) = @_;
 
     die "$label must be an array reference\n" unless ref $values eq 'ARRAY';
@@ -1740,6 +1788,680 @@ sub _automod_ids {
         push @out, "$id";
     }
     return \@out;
+}
+
+# 画像 / 音声を data URI にする。
+#   'data:image/png;base64,...' はそのまま、既存のファイルパスは読み込んで変換する。
+sub _image_data_uri {
+    my ($value, $label) = @_;
+    $label //= 'image';
+
+    die "$label must be a string\n" if ref $value;
+    die "$label is required\n" unless defined $value && length $value;
+
+    return $value if $value =~ /^data:[^;,]+;base64,/i;
+
+    die "$label must be a data URI or an existing file path: $value\n"
+        unless -f $value;
+
+    my $bytes = _read_file($value);
+    my $type  = _content_type($value);
+
+    require MIME::Base64;
+    return "data:$type;base64," . MIME::Base64::encode_base64($bytes, '');
+}
+
+# ---------------------------------------------------------------- guild emojis
+
+# ギルドの絵文字一覧。
+sub get_guild_emojis {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/emojis");
+    return $self->_finish($res, 'array');
+}
+
+# 絵文字を 1 つ取得する。
+sub get_guild_emoji {
+    my ($self, $guild_id, $emoji_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "emoji id is required\n" unless defined $emoji_id && length $emoji_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/emojis/$emoji_id");
+    return $self->_finish($res, 'hash');
+}
+
+# 絵文字を作る（MANAGE_GUILD_EXPRESSIONS が必要）。
+#   create_guild_emoji($guild_id, name => 'party', image => 'party.png')
+#   create_guild_emoji($guild_id, name => 'party', image => 'data:image/png;base64,...',
+#       roles => [ $role_id ], reason => '追加')
+sub create_guild_emoji {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $name = $opts{name};
+    die "emoji name is required\n" unless defined $name && length $name;
+    die "emoji name must be 2-32 characters\n"
+        unless length($name) >= 2 && length($name) <= 32;
+
+    die "emoji image is required\n"
+        unless defined $opts{image} && length $opts{image};
+
+    my %payload = (
+        name  => $name,
+        image => _image_data_uri($opts{image}, 'emoji image'),
+    );
+    $payload{roles} = _id_array($opts{roles}, 'roles') if defined $opts{roles};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST', "$API_BASE/guilds/$guild_id/emojis", \%payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 絵文字の名前 / 利用ロールを変更する。
+#   update_guild_emoji($guild_id, $emoji_id, name => 'new')
+#   update_guild_emoji($guild_id, $emoji_id, roles => [])   # 制限を外す
+sub update_guild_emoji {
+    my ($self, $guild_id, $emoji_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "emoji id is required\n" unless defined $emoji_id && length $emoji_id;
+
+    my %payload;
+
+    if (defined $opts{name}) {
+        die "emoji name must be 2-32 characters\n"
+            unless length($opts{name}) >= 2 && length($opts{name}) <= 32;
+        $payload{name} = $opts{name};
+    }
+
+    $payload{roles} = _id_array($opts{roles}, 'roles') if exists $opts{roles};
+
+    die "no emoji fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/guilds/$guild_id/emojis/$emoji_id", \%payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 絵文字を削除する。成功時は 1。
+sub delete_guild_emoji {
+    my ($self, $guild_id, $emoji_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "emoji id is required\n" unless defined $emoji_id && length $emoji_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE', "$API_BASE/guilds/$guild_id/emojis/$emoji_id", undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# ---------------------------------------------------------------- stickers
+
+# 標準ステッカーを 1 つ取得する。
+sub get_sticker {
+    my ($self, $sticker_id) = @_;
+
+    die "sticker id is required\n" unless defined $sticker_id && length $sticker_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/stickers/$sticker_id");
+    return $self->_finish($res, 'hash');
+}
+
+# 標準ステッカーパック一覧（{ sticker_packs => [...] }）。
+sub get_sticker_packs {
+    my ($self) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/sticker-packs");
+    return $self->_finish($res, 'hash');
+}
+
+# ギルドのステッカー一覧。
+sub get_guild_stickers {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/stickers");
+    return $self->_finish($res, 'array');
+}
+
+sub get_guild_sticker {
+    my ($self, $guild_id, $sticker_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "sticker id is required\n" unless defined $sticker_id && length $sticker_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/stickers/$sticker_id",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ギルドステッカーを作る（multipart、MANAGE_GUILD_EXPRESSIONS が必要）。
+#   create_guild_sticker($guild_id, name => 'party', tags => 'party', file => 'party.png')
+#   create_guild_sticker($guild_id, name => 'party', tags => 'party',
+#       data => $bytes, filename => 'party.png', description => '説明')
+sub create_guild_sticker {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $name = $opts{name};
+    die "sticker name is required\n" unless defined $name && length $name;
+    die "sticker name must be 2-30 characters\n"
+        unless length($name) >= 2 && length($name) <= 30;
+
+    my $tags = $opts{tags};
+    die "sticker tags is required\n" unless defined $tags && length $tags;
+
+    my %payload = (name => $name, tags => $tags);
+    $payload{description} = $opts{description} if defined $opts{description};
+
+    my $files;
+    if (defined $opts{data}) {
+        $files = [ {
+            filename     => $opts{filename} // 'sticker.png',
+            bytes        => $opts{data},
+            content_type => $opts{content_type},
+        } ];
+    } elsif (defined $opts{file}) {
+        $files = $self->_path_files([ $opts{file} ]);
+    } else {
+        die "sticker file is required (file or data)\n";
+    }
+
+    my ($body, $boundary) = _multipart_body(\%payload, $files);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST', "$API_BASE/guilds/$guild_id/stickers", undef,
+        {
+            %{ $self->_audit_opts(\%opts) },
+            raw          => $body,
+            content_type => "multipart/form-data; boundary=$boundary",
+        },
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ギルドステッカーを変更する（name / tags / description）。
+sub update_guild_sticker {
+    my ($self, $guild_id, $sticker_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "sticker id is required\n" unless defined $sticker_id && length $sticker_id;
+
+    my %payload;
+
+    if (defined $opts{name}) {
+        die "sticker name must be 2-30 characters\n"
+            unless length($opts{name}) >= 2 && length($opts{name}) <= 30;
+        $payload{name} = $opts{name};
+    }
+
+    $payload{tags}        = $opts{tags}        if defined $opts{tags};
+    $payload{description} = $opts{description} if defined $opts{description};
+
+    die "no sticker fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/guilds/$guild_id/stickers/$sticker_id", \%payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub delete_guild_sticker {
+    my ($self, $guild_id, $sticker_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "sticker id is required\n" unless defined $sticker_id && length $sticker_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE', "$API_BASE/guilds/$guild_id/stickers/$sticker_id", undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# ---------------------------------------------------------------- soundboard
+
+# Discord 標準のサウンドボード音源一覧。
+sub get_default_soundboard_sounds {
+    my ($self) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/soundboard-default-sounds");
+    return $self->_finish($res, 'array');
+}
+
+# ギルドのサウンドボード一覧（{ items => [...] }）。
+sub get_guild_soundboard_sounds {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/soundboard-sounds");
+    return $self->_finish($res, 'hash');
+}
+
+sub get_guild_soundboard_sound {
+    my ($self, $guild_id, $sound_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "sound id is required\n" unless defined $sound_id && length $sound_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/soundboard-sounds/$sound_id",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# サウンドボードの音源を作る（CREATE_GUILD_EXPRESSIONS が必要）。
+#   create_guild_soundboard_sound($guild_id,
+#       name   => 'fanfare',
+#       sound  => 'fanfare.mp3',           # mp3 / ogg、512KB まで
+#       volume => 0.8,
+#       emoji_name => "\x{1F389}",
+#   )
+sub create_guild_soundboard_sound {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my %payload = _soundboard_payload(%opts, creating => 1);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST', "$API_BASE/guilds/$guild_id/soundboard-sounds", \%payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub update_guild_soundboard_sound {
+    my ($self, $guild_id, $sound_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "sound id is required\n" unless defined $sound_id && length $sound_id;
+
+    my %payload = _soundboard_payload(%opts);
+    die "no sound fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/guilds/$guild_id/soundboard-sounds/$sound_id", \%payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub delete_guild_soundboard_sound {
+    my ($self, $guild_id, $sound_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "sound id is required\n" unless defined $sound_id && length $sound_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE', "$API_BASE/guilds/$guild_id/soundboard-sounds/$sound_id", undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# サウンドボードの payload を組み立てる（create / update 共通）。
+sub _soundboard_payload {
+    my (%opts) = @_;
+    my $creating = delete $opts{creating};
+
+    my %payload;
+
+    if (defined $opts{name}) {
+        die "sound name must be 1-32 characters\n"
+            unless length($opts{name}) >= 1 && length($opts{name}) <= 32;
+        $payload{name} = $opts{name};
+    } elsif ($creating) {
+        die "sound name is required\n";
+    }
+
+    if (defined $opts{sound}) {
+        $payload{sound} = _image_data_uri($opts{sound}, 'sound');
+    } elsif ($creating) {
+        die "sound data is required\n";
+    }
+
+    if (defined $opts{volume}) {
+        my $volume = $opts{volume};
+        die "volume must be between 0 and 1\n"
+            unless !ref $volume && $volume =~ /^\d*\.?\d+\z/ && $volume <= 1;
+        $payload{volume} = $volume + 0;
+    }
+
+    # emoji_id / emoji_name は明示的に undef を渡すと null になり解除できる。
+    for my $key (qw(emoji_id emoji_name)) {
+        next unless exists $opts{$key};
+        $payload{$key} = $opts{$key};
+    }
+
+    return %payload;
+}
+
+# ---------------------------------------------------------------- stage instances
+
+# ステージインスタンスを作る（ステージチャンネルで MUTE_MEMBERS 等が必要）。
+#   create_stage_instance($channel_id, topic => '発表会', privacy_level => 'guild_only')
+sub create_stage_instance {
+    my ($self, $channel_id, %opts) = @_;
+
+    die "channel id is required\n" unless defined $channel_id && length $channel_id;
+
+    my $topic = $opts{topic};
+    die "stage topic is required\n" unless defined $topic && length $topic;
+    die "stage topic must be 120 characters or less\n" if length($topic) > 120;
+
+    my %payload = (channel_id => "$channel_id", topic => $topic);
+
+    $payload{privacy_level} = stage_privacy_value($opts{privacy_level})
+        if defined $opts{privacy_level};
+
+    if (exists $opts{send_start_notification}) {
+        $payload{send_start_notification} =
+            $opts{send_start_notification} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    $payload{guild_scheduled_event_id} = $opts{guild_scheduled_event_id}
+        if defined $opts{guild_scheduled_event_id};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('POST', "$API_BASE/stage-instances", \%payload);
+    return $self->_finish($res, 'hash');
+}
+
+# チャンネルのステージインスタンスを取得する。
+sub get_stage_instance {
+    my ($self, $channel_id) = @_;
+
+    die "channel id is required\n" unless defined $channel_id && length $channel_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/stage-instances/$channel_id");
+    return $self->_finish($res, 'hash');
+}
+
+# ステージインスタンスの topic / privacy_level を変更する。
+sub update_stage_instance {
+    my ($self, $channel_id, %opts) = @_;
+
+    die "channel id is required\n" unless defined $channel_id && length $channel_id;
+
+    my %payload;
+
+    if (defined $opts{topic}) {
+        die "stage topic must be 120 characters or less\n"
+            if length($opts{topic}) > 120;
+        $payload{topic} = $opts{topic};
+    }
+
+    $payload{privacy_level} = stage_privacy_value($opts{privacy_level})
+        if defined $opts{privacy_level};
+
+    die "no stage instance fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/stage-instances/$channel_id", \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ステージインスタンスを終了する。成功時は 1。
+sub delete_stage_instance {
+    my ($self, $channel_id) = @_;
+
+    die "channel id is required\n" unless defined $channel_id && length $channel_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('DELETE', "$API_BASE/stage-instances/$channel_id");
+    return $self->_finish($res, 'none');
+}
+
+# ---------------------------------------------------------------- applications
+
+# 現在のアプリケーション（Bot 自身）の情報。
+sub get_current_application {
+    my ($self) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/applications/\@me");
+    return $self->_finish($res, 'hash');
+}
+
+# アプリケーションの公開情報。
+sub get_application {
+    my ($self, $application_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/applications/$application_id");
+    return $self->_finish($res, 'hash');
+}
+
+# ---------------------------------------------------------------- command permissions
+
+# ギルドのコマンド権限上書きの一覧。
+sub get_guild_command_permissions {
+    my ($self, $application_id, $guild_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET',
+        "$API_BASE/applications/$application_id/guilds/$guild_id/commands/permissions",
+    );
+    return $self->_finish($res, 'array');
+}
+
+# 特定コマンドの権限上書きを取得する。
+sub get_application_command_permissions {
+    my ($self, $application_id, $guild_id, $command_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "command id is required\n" unless defined $command_id && length $command_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET',
+        "$API_BASE/applications/$application_id/guilds/$guild_id/commands/$command_id/permissions",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 特定コマンドの権限上書きを設定する（丸ごと置き換え）。
+#   edit_application_command_permissions($app_id, $guild_id, $command_id, [
+#       { id => $role_id,    type => 'role',    permission => 1 },
+#       { id => $user_id,    type => 'user',    permission => 0 },
+#       { id => $channel_id, type => 'channel', permission => 1 },
+#   ])
+sub edit_application_command_permissions {
+    my ($self, $application_id, $guild_id, $command_id, $permissions) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "command id is required\n" unless defined $command_id && length $command_id;
+
+    die "permissions must be an array reference\n"
+        unless ref $permissions eq 'ARRAY';
+
+    my @normalized;
+    for my $entry (@$permissions) {
+        die "permission entry must be a hash reference\n"
+            unless ref $entry eq 'HASH';
+
+        my $id = $entry->{id};
+        die "permission entry id is required\n"
+            unless defined $id && !ref $id && length $id;
+
+        my $type = command_permission_value(
+            exists $entry->{type} ? $entry->{type} : 'role',
+        );
+
+        push @normalized, {
+            id         => "$id",
+            type       => $type,
+            permission => $entry->{permission} ? JSON::PP::true : JSON::PP::false,
+        };
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT',
+        "$API_BASE/applications/$application_id/guilds/$guild_id/commands/$command_id/permissions",
+        { permissions => \@normalized },
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ---------------------------------------------------------------- guild widget / preview / vanity
+
+my %WIDGET_STYLE = (
+    shield  => 1,
+    banner1 => 2,
+    banner2 => 3,
+    banner3 => 4,
+    banner4 => 5,
+);
+
+# ギルドの widget 設定（認証あり）。
+sub get_guild_widget {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/widget");
+    return $self->_finish($res, 'hash');
+}
+
+# ギルドの widget 本体（認証不要）。
+sub get_guild_widget_json {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/widget.json", undef, { auth => 0 },
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# widget の設定を変更する（MANAGE_GUILD が必要）。
+#   update_guild_widget($guild_id, enabled => 1, channel_id => $channel_id)
+sub update_guild_widget {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my %payload;
+
+    if (exists $opts{enabled}) {
+        $payload{enabled} = $opts{enabled} ? JSON::PP::true : JSON::PP::false;
+    }
+    $payload{channel_id} = $opts{channel_id} if defined $opts{channel_id};
+
+    die "no widget fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/guilds/$guild_id/widget", \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# widget の画像（PNG バイト列）を取得する。
+#   get_guild_widget_image($guild_id, style => 'shield')
+sub get_guild_widget_image {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $url = "$API_BASE/guilds/$guild_id/widget.png";
+
+    if (defined $opts{style}) {
+        my $style = $opts{style};
+        if (!ref $style && $style =~ /\D/) {
+            die "Unknown widget style: $style\n"
+                unless exists $WIDGET_STYLE{lc $style};
+            $style = $WIDGET_STYLE{lc $style};
+        }
+        die "widget style must be 1-5\n"
+            unless defined $style && !ref $style && $style =~ /^\d+\z/
+                && $style >= 1 && $style <= 5;
+        $url .= "?style=$style";
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+
+    return $res->{content} if $res->{success};
+
+    $self->_finish($res, 'hash');    # last_error を設定する
+    return undef;
+}
+
+# ギルドのプレビュー（未参加でも取得できる）。
+sub get_guild_preview {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/preview");
+    return $self->_finish($res, 'hash');
+}
+
+# ギルドのバニティ URL（{ code, uses }）。
+sub get_guild_vanity_url {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/vanity-url");
+    return $self->_finish($res, 'hash');
 }
 
 # ---------------------------------------------------------------- channel management

@@ -57,6 +57,29 @@
 | `available_tags` | 20 個、タグ名は 20 文字まで | `update_channel` |
 | `default_forum_layout` / `default_sort_order` | 既知の名前または数値 | `update_channel` |
 
+## 絵文字 / ステッカー / サウンドボード
+
+| 項目 | 上限 | 対象メソッド |
+|---|---|---|
+| 絵文字の `name` | 2〜32 文字 | `create_guild_emoji` / `update_guild_emoji` |
+| ステッカーの `name` | 2〜30 文字 | `create_guild_sticker` / `update_guild_sticker` |
+| サウンドの `name` | 1〜32 文字 | `create_guild_soundboard_sound` など |
+| サウンドの `volume` | 0〜1 | 同上 |
+
+## ステージインスタンス
+
+| 項目 | 上限 | 対象メソッド |
+|---|---|---|
+| `topic` | 1〜120 文字 | `create_stage_instance` / `update_stage_instance` |
+| `privacy_level` | `public` (1) / `guild_only` (2) | 同上 |
+
+## アプリ情報・コマンド権限
+
+| 項目 | 上限 | 対象メソッド |
+|---|---|---|
+| 権限エントリの `type` | `role` (1) / `user` (2) / `channel` (3) | `edit_application_command_permissions` |
+| widget の `style` | 1〜5（`shield` / `banner1`〜`banner4`） | `get_guild_widget_image` |
+
 ## チャンネル
 
 | 項目 | 上限 |
@@ -190,6 +213,9 @@
 - [スレッド](threads.md)
 - [フォーラム / メディア](forums.md)
 - [チャンネル管理](channels.md)
+- [絵文字 / ステッカー / サウンドボード](emojis-stickers.md)
+- [ステージインスタンス](stage.md)
+- [アプリ情報 / コマンド権限 / widget](applications.md)
 - [ロール管理](roles.md)
 - [メンバー管理](members.md)
 - [監査ログ](audit-log.md)

@@ -11,6 +11,9 @@ use_ok('Disperl::Permissions');
 use_ok('Disperl::AuditLog');
 use_ok('Disperl::AutoMod');
 use_ok('Disperl::Forum');
+use_ok('Disperl::Sticker');
+use_ok('Disperl::Stage');
+use_ok('Disperl::Commands');
 use_ok('Disperl::WebSocket');
 use_ok('Disperl::Gateway');
 

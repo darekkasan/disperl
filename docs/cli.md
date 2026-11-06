@@ -11,6 +11,7 @@
 - [スレッド](#スレッド)
 - [フォーラム](#フォーラム)
 - [チャンネル管理](#チャンネル管理)
+- [小さめの API](#小さめの-api)
 - [ロール管理](#ロール管理)
 - [メンバー管理](#メンバー管理)
 - [監査ログ](#監査ログ)
@@ -150,6 +151,59 @@ perl test.pl permissions VIEW_CHANNEL SEND_MESSAGES   # => 3072 (3072)
 perl test.pl permissions --names 3072                 # => VIEW_CHANNEL / SEND_MESSAGES
 perl test.pl permissions                              # 全 53 個の一覧
 ```
+
+## 小さめの API
+
+### メッセージ
+
+```sh
+perl test.pl crosspost <メッセージID> [--channel ID]
+```
+
+### 絵文字・ステッカー・サウンドボード
+
+```sh
+perl test.pl emojis [--guild ID]
+perl test.pl emoji-create party party.png [--roles ID,ID] [--reason 理由]
+perl test.pl emoji-edit <ID> --name new [--roles ID,ID|none]
+perl test.pl emoji-delete <ID> --reason 理由
+
+perl test.pl stickers [--guild ID]
+perl test.pl sticker-packs
+perl test.pl sticker-create party party.png --tags party
+perl test.pl sticker-edit <ID> --name new [--tags party]
+perl test.pl sticker-delete <ID>
+
+perl test.pl sounds [--guild ID]
+perl test.pl sound-create fanfare fanfare.mp3 --volume 0.8 [--emoji 🎉]
+perl test.pl sound-edit <ID> [--name new] [--volume 0.5] [--emoji none]
+perl test.pl sound-delete <ID>
+```
+
+### ステージ
+
+```sh
+perl test.pl stage [--channel ID]
+perl test.pl stage-create "発表会" --privacy guild_only --notify
+perl test.pl stage-edit --topic "発表会（延長）" [--privacy public]
+perl test.pl stage-delete [--channel ID]
+```
+
+### アプリ・コマンド権限・widget
+
+```sh
+perl test.pl application
+perl test.pl command-perms [--guild ID]
+perl test.pl command-perm <コマンドID>
+perl test.pl command-perm-edit <コマンドID> \
+    --allow-role <ロールID> --deny-user <ユーザーID> --allow-channel <チャンネルID>
+perl test.pl widget [--guild ID]
+perl test.pl widget-edit --enable --channel <チャンネルID>
+perl test.pl preview [--guild ID]
+perl test.pl vanity [--guild ID]
+```
+
+`--guild` を省略すると現在のチャンネルが属するギルドを使います。
 
 ## ロール管理
 
@@ -440,5 +494,8 @@ perl test.pl history
 - [Gateway](gateway.md)
 - [チャンネル管理](channels.md)
 - [フォーラム / メディア](forums.md)
+- [絵文字 / ステッカー / サウンドボード](emojis-stickers.md)
+- [ステージインスタンス](stage.md)
+- [アプリ情報 / コマンド権限 / widget](applications.md)
 - [スケジュールイベント](events.md)
 - [トラブルシューティング](troubleshooting.md)

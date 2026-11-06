@@ -139,13 +139,29 @@ my $msgs = $client->get_messages($channel, limit => 20);
 | `remove_reaction($channel_id, $message_id, $emoji)` | `1` | 自分のリアクションを外す |
 | `get_reactions($channel_id, $message_id, $emoji, %opts)` | ユーザーの配列 | `limit`（Discord 側の上限 100）/ `after` |
 | `delete_all_reactions($channel_id, $message_id)` | `1` | 全リアクションを削除 |
+| `delete_emoji_reactions($channel_id, $message_id, $emoji)` | `1` | 指定した絵文字のリアクションを全削除 |
+| `delete_user_reaction($channel_id, $message_id, $emoji, $user_id)` | `1` | 特定ユーザーのリアクションを外す |
 
 ```perl
 $client->add_reaction($channel, $message_id, "\x{2705}");         # ✅
 $client->add_reaction($channel, $message_id, 'custom:123456789');  # カスタム絵文字は name:id
+
+$client->delete_emoji_reactions($channel, $message_id, "\x{2705}");
+$client->delete_user_reaction($channel, $message_id, "\x{2705}", $user_id);
 ```
 
-絵文字は自動で URL エンコードされます。
+絵文字は自動で URL エンコードされます（`name:id` の `:` はそのまま）。
+
+### アナウンスの公開
+
+アナウンスチャンネルのメッセージは、フォロー中のチャンネルへ公開（crosspost）できます。
+
+```perl
+my $published = $client->crosspost_message($channel, $message_id);
+```
+
+- `MANAGE_MESSAGES` または投稿者本人が必要です
+- 通常のチャンネルで呼ぶと API エラーになります
 
 ## ピン留め
 

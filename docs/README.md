@@ -14,6 +14,9 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | `Disperl::AuditLog` | 監査ログのイベント種別（名前と数値の変換） | core のみ |
 | `Disperl::AutoMod` | AutoMod のトリガー / アクション / プリセット種別 | core のみ |
 | `Disperl::Forum` | フォーラム / メディアのレイアウト・並び順・タグの検証 | core のみ |
+| `Disperl::Sticker` | ステッカーの種別・画像形式 | core のみ |
+| `Disperl::Stage` | ステージインスタンスの公開範囲 | core のみ |
+| `Disperl::Commands` | コマンド権限の対象種別 | core のみ |
 | `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が内部で使用） | `IO::Socket::SSL` |
 | `Disperl::Config` | `.env` ローダー | core のみ |
 
@@ -26,6 +29,9 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | [スレッド](threads.md) | 作成・一覧・参加・メンバー・アーカイブ |
 | [フォーラム / メディア](forums.md) | 投稿の作成・本文・添付・タグ・レイアウト設定 |
 | [チャンネル管理](channels.md) | 作成・編集・並び替え・権限上書き・削除 |
+| [絵文字 / ステッカー / サウンドボード](emojis-stickers.md) | ギルドの絵文字・ステッカー・サウンドの管理 |
+| [ステージインスタンス](stage.md) | ステージの開始・取得・変更・終了 |
+| [アプリ情報 / コマンド権限 / widget](applications.md) | アプリ情報・権限上書き・widget・プレビュー・バニティ |
 | [ロール管理](roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
 | [メンバー管理](members.md) | 一覧・検索・変更・ロール付与・キック / BAN・プルーン・実効権限 |
 | [監査ログ](audit-log.md) | 取得・絞り込み・ページング・イベント種別・変更内容 |
@@ -81,6 +87,10 @@ if ($message) {
 - スレッド: 作成・一覧・参加・退出・メンバー・アーカイブ・削除
 - フォーラム / メディア: 投稿・タグ・本文の埋め込み / コンポーネント / 添付・レイアウト設定（`Disperl::Forum`）
 - チャンネル: 作成・編集・並び替え・権限上書き・削除・招待一覧
+- 絵文字 / ステッカー / サウンドボード: ギルドの絵文字・ステッカー・サウンドの CRUD（`Disperl::Sticker`）
+- ステージインスタンス: 開始・取得・変更・終了（`Disperl::Stage`）
+- アプリ情報・コマンド権限・ギルド widget / プレビュー / バニティ URL（`Disperl::Commands`）
+- メッセージ小物: クロスポスト・リアクション単位の削除
 - ロール: 取得・作成・編集・並び替え・削除・色 / アイコン / Unicode 絵文字
 - メンバー: 一覧・検索・ニックネーム・ロール付与 / 剥奪・タイムアウト・キック / BAN / プルーン
 - 権限: 名前とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）

@@ -26,6 +26,7 @@ use Disperl::AuditLog qw(audit_action_map audit_action_name);
 use Disperl::AutoMod qw(
     automod_event_name automod_trigger_name automod_action_name
 );
+use Disperl::Commands qw(command_permission_name);
 
 load_dotenv("$FindBin::Bin/.env");
 
@@ -224,6 +225,50 @@ disperl 動作確認 CLI
       [--file パス]... [--channel ID] [--reason 理由]
                                        フォーラム / メディアチャンネルに投稿する
   perl test.pl forum-tags [ID]        フォーラムのタグ一覧
+  perl test.pl crosspost <メッセージID> [--channel ID]
+                                       アナウンスを公開する
+  perl test.pl emojis [--guild ID]    絵文字一覧
+  perl test.pl emoji-create <名前> <画像> [--roles ID,ID] [--guild ID] [--reason 理由]
+                                       絵文字を作る
+  perl test.pl emoji-edit <ID> [--name 名前] [--roles ID,ID|none] [--guild ID] [--reason 理由]
+                                       絵文字を編集する
+  perl test.pl emoji-delete <ID> [--guild ID] [--reason 理由]
+                                       絵文字を削除する
+  perl test.pl stickers [--guild ID]  ステッカー一覧
+  perl test.pl sticker-packs         標準ステッカーパック一覧
+  perl test.pl sticker-create <名前> <ファイル> --tags タグ [--description 説明]
+      [--guild ID] [--reason 理由]    ギルドステッカーを作る
+  perl test.pl sticker-edit <ID> [--name 名前] [--tags タグ] [--description 説明]
+      [--guild ID] [--reason 理由]    ステッカーを編集する
+  perl test.pl sticker-delete <ID> [--guild ID] [--reason 理由]
+                                       ステッカーを削除する
+  perl test.pl sounds [--guild ID]    サウンドボード一覧
+  perl test.pl sound-create <名前> <ファイル> [--volume 0.0-1.0] [--emoji 名前]
+      [--guild ID] [--reason 理由]    サウンドを作る
+  perl test.pl sound-edit <ID> [--name 名前] [--volume 0.0-1.0] [--emoji 名前|none]
+      [--guild ID] [--reason 理由]    サウンドを編集する
+  perl test.pl sound-delete <ID> [--guild ID] [--reason 理由]
+                                       サウンドを削除する
+  perl test.pl stage [--channel ID]   ステージを表示する
+  perl test.pl stage-create <トピック> [--privacy public|guild_only] [--notify]
+      [--event ID] [--channel ID]     ステージを開始する
+  perl test.pl stage-edit [--topic トピック] [--privacy LEVEL] [--channel ID]
+                                       ステージを編集する
+  perl test.pl stage-delete [--channel ID]
+                                       ステージを終了する
+  perl test.pl application            アプリ情報を表示する
+  perl test.pl command-perms [--guild ID]
+                                       コマンド権限の一覧
+  perl test.pl command-perm <コマンドID> [--guild ID]
+                                       コマンド権限を表示する
+  perl test.pl command-perm-edit <コマンドID> [--allow-role ID]... [--deny-role ID]...
+      [--allow-user ID]... [--deny-user ID]... [--allow-channel ID]... [--deny-channel ID]...
+      [--guild ID]                     コマンド権限を設定する
+  perl test.pl widget [--guild ID]    widget 設定を表示する
+  perl test.pl widget-edit [--enable|--disable] [--channel ID] [--guild ID]
+                                       widget を編集する
+  perl test.pl preview [--guild ID]   ギルドのプレビュー
+  perl test.pl vanity [--guild ID]    バニティ URL
   perl test.pl channels [ギルドID]     チャンネル一覧（省略時は現在のギルド）
   perl test.pl channel-create <名前> [--type text|voice|category|announcement|stage|forum|media]
       [--parent ID] [--topic 話題] [--slowmode 秒] [--guild ID] [--reason 理由]
@@ -395,6 +440,11 @@ disperl 動作確認 CLI
   perl test.pl forum-tags 123456789012345678
   perl test.pl forum-post "自己紹介" "はじめまして" --tag-name "自己紹介"
   perl test.pl forum-post "スクリーンショット" --file shot.png --tag 111111111111111111
+  perl test.pl emoji-create party party.png
+  perl test.pl sticker-create party party.png --tags party
+  perl test.pl sound-create fanfare fanfare.mp3 --volume 0.8
+  perl test.pl stage-create "発表会" --privacy guild_only --notify
+  perl test.pl command-perm-edit 123456789012345678 --allow-role 111111111111111111
   perl test.pl watch --status idle --activity "待機中"
   perl test.pl watch --status invisible
   perl test.pl watch --shard 0/2
@@ -880,6 +930,521 @@ sub cmd_forum_tags {
     for my $tag (@$tags) {
         out sprintf "  %-18s %s\n", $tag->{id} // '?', $tag->{name} // '';
     }
+    return 0;
+}
+
+# ---------------------------------------------------------------- 小さめの API
+
+sub _id_list {
+    my ($value) = @_;
+    return [ grep { length } split /\s*,\s*/, ($value // '') ];
+}
+
+sub _guild_or_current {
+    my ($guild_id) = @_;
+    return $guild_id if defined $guild_id && length $guild_id;
+    return _current_guild_id();
+}
+
+sub cmd_crosspost {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(channel)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl crosspost <メッセージID> [--channel ID]')
+        unless defined $id && length $id;
+
+    my $channel = $opt->{channel} // channel_id();
+    my $message = client()->crosspost_message($channel, $id)
+        or _api_fail('クロスポスト');
+
+    out "公開しました: id=" . ($message->{id} // $id) . "\n";
+    return 0;
+}
+
+sub cmd_emojis {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $guild  = _guild_or_current($opt->{guild});
+    my $emojis = client()->get_guild_emojis($guild) or _api_fail('絵文字一覧');
+
+    out sprintf "絵文字 %d 件 (ギルド %s)\n", scalar @$emojis, $guild;
+    for my $emoji (@$emojis) {
+        out sprintf "  %-20s %s\n", $emoji->{id} // '?', $emoji->{name} // '';
+    }
+    return 0;
+}
+
+sub cmd_emoji_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(roles guild reason)]);
+
+    my ($name, $image) = @$pos;
+    _fatal('使い方: perl test.pl emoji-create <名前> <画像パス|dataURI> [--roles ID,ID] [--guild ID] [--reason 理由]')
+        unless defined $name && defined $image;
+
+    my %opts = (name => $name, image => $image);
+    $opts{roles}  = _id_list($opt->{roles}) if defined $opt->{roles};
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $emoji = client()->create_guild_emoji(_guild_or_current($opt->{guild}), %opts)
+        or _api_fail('絵文字の作成');
+
+    out sprintf "絵文字を作成しました: %s (id: %s)\n",
+        $emoji->{name} // $name, $emoji->{id} // '?';
+    return 0;
+}
+
+sub cmd_emoji_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(name roles guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl emoji-edit <ID> [--name 名前] [--roles ID,ID|none] [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+
+    my %opts;
+    $opts{name} = $opt->{name} if defined $opt->{name};
+
+    if (defined $opt->{roles}) {
+        $opts{roles} = lc($opt->{roles}) eq 'none' ? [] : _id_list($opt->{roles});
+    }
+
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+    _fatal('変更する項目がありません（--name / --roles）')
+        unless grep { $_ ne 'reason' } keys %opts;
+
+    my $emoji = client()->update_guild_emoji(
+        _guild_or_current($opt->{guild}), $id, %opts,
+    ) or _api_fail('絵文字の更新');
+
+    out sprintf "絵文字を更新しました: %s (id: %s)\n",
+        $emoji->{name} // '', $emoji->{id} // $id;
+    return 0;
+}
+
+sub cmd_emoji_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl emoji-delete <ID> [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+
+    my %opts;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    client()->delete_guild_emoji(_guild_or_current($opt->{guild}), $id, %opts)
+        or _api_fail('絵文字の削除');
+
+    out "絵文字を削除しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_stickers {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $guild    = _guild_or_current($opt->{guild});
+    my $stickers = client()->get_guild_stickers($guild) or _api_fail('ステッカー一覧');
+
+    out sprintf "ステッカー %d 件 (ギルド %s)\n", scalar @$stickers, $guild;
+    for my $sticker (@$stickers) {
+        out sprintf "  %-20s %-16s %s\n",
+            $sticker->{id} // '?', $sticker->{name} // '', $sticker->{tags} // '';
+    }
+    return 0;
+}
+
+sub cmd_sticker_packs {
+    my ($opt) = _parse_options([ map { _decode_arg($_) } @_ ], []);
+    my $result = client()->get_sticker_packs or _api_fail('ステッカーパック');
+    my $packs  = $result->{sticker_packs} || [];
+
+    out sprintf "ステッカーパック %d 件\n", scalar @$packs;
+    for my $pack (@$packs) {
+        out sprintf "  %-20s %s\n", $pack->{id} // '?', $pack->{name} // '';
+    }
+    return 0;
+}
+
+sub cmd_sticker_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(tags description guild reason)]);
+
+    my ($name, $file) = @$pos;
+    _fatal('使い方: perl test.pl sticker-create <名前> <ファイル> --tags タグ [--description 説明] [--guild ID] [--reason 理由]')
+        unless defined $name && defined $file;
+    _fatal('--tags が必要です')
+        unless defined $opt->{tags} && length $opt->{tags};
+
+    my %opts = (name => $name, tags => $opt->{tags}, file => $file);
+    $opts{description} = $opt->{description} if defined $opt->{description};
+    $opts{reason}      = $opt->{reason}      if defined $opt->{reason};
+
+    my $sticker = client()->create_guild_sticker(
+        _guild_or_current($opt->{guild}), %opts,
+    ) or _api_fail('ステッカーの作成');
+
+    out sprintf "ステッカーを作成しました: %s (id: %s)\n",
+        $sticker->{name} // $name, $sticker->{id} // '?';
+    return 0;
+}
+
+sub cmd_sticker_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(name tags description guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl sticker-edit <ID> [--name 名前] [--tags タグ] [--description 説明] [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+
+    my %opts;
+    for my $key (qw(name tags description)) {
+        $opts{$key} = $opt->{$key} if defined $opt->{$key};
+    }
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+    _fatal('変更する項目がありません（--name / --tags / --description）')
+        unless grep { $_ ne 'reason' } keys %opts;
+
+    my $sticker = client()->update_guild_sticker(
+        _guild_or_current($opt->{guild}), $id, %opts,
+    ) or _api_fail('ステッカーの更新');
+
+    out sprintf "ステッカーを更新しました: %s (id: %s)\n",
+        $sticker->{name} // '', $sticker->{id} // $id;
+    return 0;
+}
+
+sub cmd_sticker_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl sticker-delete <ID> [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+
+    my %opts;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    client()->delete_guild_sticker(_guild_or_current($opt->{guild}), $id, %opts)
+        or _api_fail('ステッカーの削除');
+
+    out "ステッカーを削除しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_sounds {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $guild  = _guild_or_current($opt->{guild});
+    my $result = client()->get_guild_soundboard_sounds($guild)
+        or _api_fail('サウンド一覧');
+    my $items = $result->{items} || [];
+
+    out sprintf "サウンド %d 件 (ギルド %s)\n", scalar @$items, $guild;
+    for my $sound (@$items) {
+        out sprintf "  %-20s %-16s vol=%s\n",
+            $sound->{sound_id} // '?', $sound->{name} // '',
+            $sound->{volume} // '?';
+    }
+    return 0;
+}
+
+sub cmd_sound_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(volume emoji guild reason)]);
+
+    my ($name, $file) = @$pos;
+    _fatal('使い方: perl test.pl sound-create <名前> <ファイル> [--volume 0.0-1.0] [--emoji 名前] [--guild ID] [--reason 理由]')
+        unless defined $name && defined $file;
+
+    my %opts = (name => $name, sound => $file);
+    $opts{volume}     = $opt->{volume} if defined $opt->{volume};
+    $opts{emoji_name} = $opt->{emoji}  if defined $opt->{emoji};
+    $opts{reason}     = $opt->{reason} if defined $opt->{reason};
+
+    my $sound = client()->create_guild_soundboard_sound(
+        _guild_or_current($opt->{guild}), %opts,
+    ) or _api_fail('サウンドの作成');
+
+    out sprintf "サウンドを作成しました: %s (id: %s)\n",
+        $sound->{name} // $name, $sound->{sound_id} // '?';
+    return 0;
+}
+
+sub cmd_sound_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(name volume emoji guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl sound-edit <ID> [--name 名前] [--volume 0.0-1.0] [--emoji 名前|none] [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+
+    my %opts;
+    $opts{name}   = $opt->{name}   if defined $opt->{name};
+    $opts{volume} = $opt->{volume} if defined $opt->{volume};
+
+    if (defined $opt->{emoji}) {
+        $opts{emoji_name} = lc($opt->{emoji}) eq 'none' ? undef : $opt->{emoji};
+        $opts{emoji_id} = undef;
+    }
+
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+    _fatal('変更する項目がありません（--name / --volume / --emoji）')
+        unless grep { $_ ne 'reason' } keys %opts;
+
+    my $sound = client()->update_guild_soundboard_sound(
+        _guild_or_current($opt->{guild}), $id, %opts,
+    ) or _api_fail('サウンドの更新');
+
+    out sprintf "サウンドを更新しました: %s (id: %s)\n",
+        $sound->{name} // '', $sound->{sound_id} // $id;
+    return 0;
+}
+
+sub cmd_sound_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl sound-delete <ID> [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+
+    my %opts;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    client()->delete_guild_soundboard_sound(_guild_or_current($opt->{guild}), $id, %opts)
+        or _api_fail('サウンドの削除');
+
+    out "サウンドを削除しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_stage {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(channel)]);
+
+    my $channel = $opt->{channel} // channel_id();
+    my $stage = client()->get_stage_instance($channel) or _api_fail('ステージの取得');
+
+    out sprintf "ステージ: %s (channel: %s, privacy: %s)\n",
+        $stage->{topic} // '',
+        $stage->{channel_id} // $channel,
+        $stage->{privacy_level} // '?';
+    return 0;
+}
+
+sub cmd_stage_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(privacy event channel)], [qw(notify)]);
+
+    my $topic = join ' ', @$pos;
+    _fatal('使い方: perl test.pl stage-create <トピック> [--privacy public|guild_only] [--notify] [--event ID] [--channel ID]')
+        unless length $topic;
+
+    my %opts = (topic => $topic);
+    $opts{privacy_level} = $opt->{privacy} if defined $opt->{privacy};
+    $opts{send_start_notification} = 1 if $opt->{notify};
+    $opts{guild_scheduled_event_id} = $opt->{event} if defined $opt->{event};
+
+    my $stage = client()->create_stage_instance(
+        $opt->{channel} // channel_id(), %opts,
+    ) or _api_fail('ステージの開始');
+
+    out sprintf "ステージを開始しました: %s (channel: %s)\n",
+        $stage->{topic} // $topic, $stage->{channel_id} // '?';
+    return 0;
+}
+
+sub cmd_stage_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(topic privacy channel)]);
+
+    my ($topic) = @$pos;
+    $topic = $opt->{topic} if defined $opt->{topic};
+
+    my %opts;
+    $opts{topic}         = $topic         if defined $topic;
+    $opts{privacy_level} = $opt->{privacy} if defined $opt->{privacy};
+    _fatal('変更する項目がありません（--topic / --privacy）') unless keys %opts;
+
+    my $stage = client()->update_stage_instance(
+        $opt->{channel} // channel_id(), %opts,
+    ) or _api_fail('ステージの更新');
+
+    out sprintf "ステージを更新しました: %s\n", $stage->{topic} // '';
+    return 0;
+}
+
+sub cmd_stage_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(channel)]);
+
+    client()->delete_stage_instance($opt->{channel} // channel_id())
+        or _api_fail('ステージの終了');
+
+    out "ステージを終了しました\n";
+    return 0;
+}
+
+sub cmd_application {
+    _parse_options([ map { _decode_arg($_) } @_ ], []);
+
+    my $app = client()->get_current_application or _api_fail('アプリ情報');
+
+    out sprintf "%s (id: %s)\n", $app->{name} // '?', $app->{id} // '?';
+    out "  説明:       " . ($app->{description} // '') . "\n";
+    out "  公開ボット: " . ($app->{bot_public} ? 'yes' : 'no') . "\n";
+    out "  ギルド数:   " . ($app->{approximate_guild_count} // '?') . "\n";
+    return 0;
+}
+
+sub cmd_command_perms {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $app_id = _application_id();
+    my $guild  = _guild_or_current($opt->{guild});
+
+    my $list = client()->get_guild_command_permissions($app_id, $guild)
+        or _api_fail('コマンド権限一覧');
+
+    out sprintf "コマンド権限 %d 件 (ギルド %s)\n", scalar @$list, $guild;
+    for my $entry (@$list) {
+        out sprintf "  command=%s id=%s\n",
+            $entry->{command_id} // '?', $entry->{id} // '?';
+    }
+    return 0;
+}
+
+sub cmd_command_perm {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)]);
+
+    my $command_id = $pos->[0];
+    _fatal('使い方: perl test.pl command-perm <コマンドID> [--guild ID]')
+        unless defined $command_id && length $command_id;
+
+    my $app_id = _application_id();
+    my $guild  = _guild_or_current($opt->{guild});
+
+    my $perms = client()->get_application_command_permissions($app_id, $guild, $command_id)
+        or _api_fail('コマンド権限の取得');
+
+    my $items = $perms->{permissions} || [];
+    out sprintf "コマンド %s の権限上書き %d 件\n", $command_id, scalar @$items;
+    for my $item (@$items) {
+        out sprintf "  %-8s %-20s %s\n",
+            _command_permission_name($item->{type}),
+            $item->{id} // '?',
+            $item->{permission} ? 'allow' : 'deny';
+    }
+    return 0;
+}
+
+sub cmd_command_perm_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)], [
+        qw(allow-role deny-role allow-user deny-user allow-channel deny-channel),
+    ]);
+
+    my $command_id = $pos->[0];
+    _fatal('使い方: perl test.pl command-perm-edit <コマンドID> [--allow-role ID]... [--deny-role ID]... [--allow-user ID]... [--deny-user ID]... [--allow-channel ID]... [--deny-channel ID]... [--guild ID]')
+        unless defined $command_id && length $command_id;
+
+    my @permissions;
+    for my $spec (
+        [ 'allow-role',    'role',    1 ],
+        [ 'deny-role',     'role',    0 ],
+        [ 'allow-user',    'user',    1 ],
+        [ 'deny-user',     'user',    0 ],
+        [ 'allow-channel', 'channel', 1 ],
+        [ 'deny-channel',  'channel', 0 ],
+    ) {
+        my ($option, $type, $allow) = @$spec;
+        for my $id (@{ $opt->{$option} || [] }) {
+            push @permissions, { id => $id, type => $type, permission => $allow };
+        }
+    }
+
+    _fatal('権限を指定してください（--allow-role / --deny-user など）')
+        unless @permissions;
+
+    my $app_id = _application_id();
+    my $guild  = _guild_or_current($opt->{guild});
+
+    my $result = client()->edit_application_command_permissions(
+        $app_id, $guild, $command_id, \@permissions,
+    ) or _api_fail('コマンド権限の更新');
+
+    out sprintf "コマンド %s の権限を更新しました（%d 件）\n",
+        $command_id, scalar @{ $result->{permissions} || [] };
+    return 0;
+}
+
+sub _command_permission_name {
+    my ($type) = @_;
+    return 'unknown' unless defined $type;
+    return command_permission_name($type) // "type$type";
+}
+
+sub cmd_widget {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $widget = client()->get_guild_widget(_guild_or_current($opt->{guild}))
+        or _api_fail('widget の取得');
+
+    out sprintf "widget: %s\n", $widget->{enabled} ? '有効' : '無効';
+    out "  channel: " . ($widget->{channel_id} // '(なし)') . "\n";
+    return 0;
+}
+
+sub cmd_widget_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(channel guild)], [qw(enable disable)]);
+
+    my %opts;
+    $opts{enabled} = 1 if $opt->{enable};
+    $opts{enabled} = 0 if $opt->{disable};
+    $opts{channel_id} = $opt->{channel} if defined $opt->{channel};
+    _fatal('変更する項目がありません（--enable / --disable / --channel）')
+        unless keys %opts;
+
+    my $widget = client()->update_guild_widget(_guild_or_current($opt->{guild}), %opts)
+        or _api_fail('widget の更新');
+
+    out sprintf "widget を更新しました: %s\n", $widget->{enabled} ? '有効' : '無効';
+    return 0;
+}
+
+sub cmd_preview {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $preview = client()->get_guild_preview(_guild_or_current($opt->{guild}))
+        or _api_fail('プレビューの取得');
+
+    out sprintf "%s (id: %s) メンバー約 %s 人\n",
+        $preview->{name} // '?',
+        $preview->{id} // '?',
+        $preview->{approximate_member_count} // '?';
+    return 0;
+}
+
+sub cmd_vanity {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $vanity = client()->get_guild_vanity_url(_guild_or_current($opt->{guild}))
+        or _api_fail('バニティ URL の取得');
+
+    out sprintf "https://discord.gg/%s (uses: %s)\n",
+        $vanity->{code} // '?', $vanity->{uses} // '?';
     return 0;
 }
 
@@ -3377,6 +3942,32 @@ my %COMMANDS = (
     'thread-delete'  => \&cmd_thread_delete,
     'forum-post'     => \&cmd_forum_post,
     'forum-tags'     => \&cmd_forum_tags,
+    crosspost     => \&cmd_crosspost,
+    emojis        => \&cmd_emojis,
+    'emoji-create' => \&cmd_emoji_create,
+    'emoji-edit'   => \&cmd_emoji_edit,
+    'emoji-delete' => \&cmd_emoji_delete,
+    stickers        => \&cmd_stickers,
+    'sticker-packs' => \&cmd_sticker_packs,
+    'sticker-create' => \&cmd_sticker_create,
+    'sticker-edit'   => \&cmd_sticker_edit,
+    'sticker-delete' => \&cmd_sticker_delete,
+    sounds         => \&cmd_sounds,
+    'sound-create' => \&cmd_sound_create,
+    'sound-edit'   => \&cmd_sound_edit,
+    'sound-delete' => \&cmd_sound_delete,
+    stage          => \&cmd_stage,
+    'stage-create' => \&cmd_stage_create,
+    'stage-edit'   => \&cmd_stage_edit,
+    'stage-delete' => \&cmd_stage_delete,
+    application    => \&cmd_application,
+    'command-perms'     => \&cmd_command_perms,
+    'command-perm'      => \&cmd_command_perm,
+    'command-perm-edit' => \&cmd_command_perm_edit,
+    widget        => \&cmd_widget,
+    'widget-edit' => \&cmd_widget_edit,
+    preview       => \&cmd_preview,
+    vanity        => \&cmd_vanity,
     channels  => \&cmd_channels,
     'channel-create'      => \&cmd_channel_create,
     'channel-edit'        => \&cmd_channel_edit,
