@@ -19,6 +19,13 @@ use Disperl::Forum qw(
 use Disperl::Sticker qw(sticker_type_value sticker_format_value);
 use Disperl::Stage qw(stage_privacy_value);
 use Disperl::Commands qw(command_permission_value);
+use Disperl::Guild qw(
+    guild_verification_value guild_notification_value guild_content_filter_value
+    guild_afk_timeout_value guild_system_channel_flags
+    guild_onboarding_mode_value guild_onboarding_prompt_value
+);
+use Disperl::Entitlement qw(entitlement_owner_value);
+use Disperl::RoleConnection qw(role_connection_type_value);
 
 my $API_BASE    = 'https://discord.com/api/v10';
 my $MAX_CONTENT = 2000;
@@ -767,6 +774,36 @@ sub get_current_user {
     return $self->_finish($res, 'hash');
 }
 
+# Bot 自身のプロフィールを変更する。
+#   modify_current_user(username => '新しい名前')
+#   modify_current_user(avatar => 'icon.png')
+#   modify_current_user(avatar => undef)          # アイコンを外す
+# 注意: 名前の変更はレート制限が非常に厳しい（Discord 側）。
+sub modify_current_user {
+    my ($self, %opts) = @_;
+
+    my %payload;
+
+    if (defined $opts{username}) {
+        die "username must be 2-32 characters\n"
+            unless length($opts{username}) >= 2 && length($opts{username}) <= 32;
+        $payload{username} = $opts{username};
+    }
+
+    for my $key (qw(avatar banner)) {
+        next unless exists $opts{$key};
+        $payload{$key} = defined $opts{$key}
+            ? _image_data_uri($opts{$key}, "$key image")
+            : undef;
+    }
+
+    die "no user fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('PATCH', "$API_BASE/users/\@me", \%payload);
+    return $self->_finish($res, 'hash');
+}
+
 sub get_channel {
     my ($self, $channel_id) = @_;
 
@@ -815,6 +852,268 @@ sub get_guild {
     $self->{last_error} = undef;
     my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id");
     return $self->_finish($res, 'hash');
+}
+
+# ギルド設定を変更する（MANAGE_GUILD が必要。ギルド所有者でないと変えられない項目もある）。
+#   update_guild($guild_id, name => '新しい名前')
+#   update_guild($guild_id, verification_level => 'high',
+#       default_message_notifications => 'only_mentions',
+#       explicit_content_filter => 'all_members')
+#   update_guild($guild_id, afk_channel_id => $channel_id, afk_timeout => 300)
+#   update_guild($guild_id, system_channel_flags => ['suppress_join_notifications'])
+sub update_guild {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my %payload;
+
+    if (defined $opts{name}) {
+        die "guild name must be 2-100 characters\n"
+            unless length($opts{name}) >= 2 && length($opts{name}) <= 100;
+        $payload{name} = $opts{name};
+    }
+
+    if (defined $opts{description}) {
+        die "guild description must be 300 characters or less\n"
+            if length($opts{description}) > 300;
+        $payload{description} = $opts{description};
+    }
+
+    $payload{verification_level} = guild_verification_value($opts{verification_level})
+        if defined $opts{verification_level};
+    $payload{default_message_notifications} =
+        guild_notification_value($opts{default_message_notifications})
+        if defined $opts{default_message_notifications};
+    $payload{explicit_content_filter} =
+        guild_content_filter_value($opts{explicit_content_filter})
+        if defined $opts{explicit_content_filter};
+
+    $payload{afk_timeout} = guild_afk_timeout_value($opts{afk_timeout})
+        if defined $opts{afk_timeout};
+
+    $payload{system_channel_flags} =
+        guild_system_channel_flags($opts{system_channel_flags})
+        if defined $opts{system_channel_flags};
+
+    if (exists $opts{premium_progress_bar_enabled}) {
+        $payload{premium_progress_bar_enabled} =
+            $opts{premium_progress_bar_enabled} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    # 画像類は data URI（undef で解除）。
+    for my $key (qw(icon splash discovery_splash banner)) {
+        next unless exists $opts{$key};
+        $payload{$key} = defined $opts{$key}
+            ? _image_data_uri($opts{$key}, "$key image")
+            : undef;
+    }
+
+    # チャンネル / ロケールなどは文字列（undef で解除）。
+    for my $key (qw(
+        afk_channel_id system_channel_id rules_channel_id
+        public_updates_channel_id safety_alerts_channel_id
+        preferred_locale owner_id
+    )) {
+        next unless exists $opts{$key};
+        my $value = $opts{$key};
+        die "$key must be a string or undef\n"
+            if defined $value && (ref $value || !length $value);
+        $payload{$key} = defined $value ? "$value" : undef;
+    }
+
+    if (defined $opts{features}) {
+        $payload{features} = _id_array($opts{features}, 'features');
+    }
+
+    die "no guild fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/guilds/$guild_id", \%payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ---------------------------------------------------------------- welcome screen / onboarding
+
+# ギルドのウェルカム画面を取得する。
+sub get_guild_welcome_screen {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/welcome-screen");
+    return $self->_finish($res, 'hash');
+}
+
+# ウェルカム画面を変更する（MANAGE_GUILD が必要）。
+#   update_guild_welcome_screen($guild_id,
+#       enabled     => 1,
+#       description => 'ようこそ',
+#       welcome_channels => [
+#           { channel_id => $id, description => '最初に読む', emoji_name => "\x{1F44B}" },
+#       ],
+#   )
+sub update_guild_welcome_screen {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my %payload;
+
+    if (exists $opts{enabled}) {
+        $payload{enabled} = $opts{enabled} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    if (defined $opts{description}) {
+        die "welcome description must be 140 characters or less\n"
+            if length($opts{description}) > 140;
+        $payload{description} = $opts{description};
+    }
+
+    if (defined $opts{welcome_channels}) {
+        $payload{welcome_channels} =
+            _welcome_channels($opts{welcome_channels});
+    }
+
+    die "no welcome screen fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/guilds/$guild_id/welcome-screen", \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub _welcome_channels {
+    my ($channels) = @_;
+
+    die "welcome_channels must be an array reference\n"
+        unless ref $channels eq 'ARRAY';
+
+    my @out;
+    for my $entry (@$channels) {
+        die "welcome channel must be a hash reference\n"
+            unless ref $entry eq 'HASH';
+
+        my $channel_id = $entry->{channel_id};
+        die "welcome channel_id is required\n"
+            unless defined $channel_id && !ref $channel_id && length $channel_id;
+
+        if (defined $entry->{description} && length $entry->{description} > 100) {
+            die "welcome channel description must be 100 characters or less\n";
+        }
+
+        push @out, { %$entry, channel_id => "$channel_id" };
+    }
+
+    return \@out;
+}
+
+# ギルドのオンボーディング設定を取得する。
+sub get_guild_onboarding {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/onboarding");
+    return $self->_finish($res, 'hash');
+}
+
+# オンボーディング設定を変更する（PUT で丸ごと置き換え、MANAGE_GUILD が必要）。
+#   update_guild_onboarding($guild_id,
+#       enabled             => 1,
+#       mode                => 'onboarding_advanced',
+#       default_channel_ids => [ $channel_id ],
+#       prompts             => [
+#           {
+#               type          => 'multiple_choice',
+#               title         => '何をしますか?',
+#               single_select => 0,
+#               required      => 1,
+#               in_onboarding => 1,
+#               options       => [
+#                   { title => '雑談', channel_ids => [ $channel_id ] },
+#               ],
+#           },
+#       ],
+#   )
+sub update_guild_onboarding {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my %payload;
+
+    if (exists $opts{enabled}) {
+        $payload{enabled} = $opts{enabled} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    $payload{mode} = guild_onboarding_mode_value($opts{mode})
+        if defined $opts{mode};
+
+    if (defined $opts{default_channel_ids}) {
+        $payload{default_channel_ids} =
+            _id_array($opts{default_channel_ids}, 'default_channel_ids');
+    }
+
+    if (defined $opts{prompts}) {
+        $payload{prompts} = _onboarding_prompts($opts{prompts});
+    }
+
+    die "no onboarding fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT', "$API_BASE/guilds/$guild_id/onboarding", \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub _onboarding_prompts {
+    my ($prompts) = @_;
+
+    die "prompts must be an array reference\n" unless ref $prompts eq 'ARRAY';
+
+    my @out;
+    for my $prompt (@$prompts) {
+        die "prompt must be a hash reference\n" unless ref $prompt eq 'HASH';
+
+        my %row = %$prompt;
+
+        if (defined $prompt->{type}) {
+            $row{type} = guild_onboarding_prompt_value($prompt->{type});
+        }
+
+        for my $key (qw(single_select required in_onboarding)) {
+            next unless exists $prompt->{$key};
+            $row{$key} = $prompt->{$key} ? JSON::PP::true : JSON::PP::false;
+        }
+
+        if (defined $prompt->{options}) {
+            die "prompt options must be an array reference\n"
+                unless ref $prompt->{options} eq 'ARRAY';
+
+            my @options;
+            for my $option (@{ $prompt->{options} }) {
+                die "prompt option must be a hash reference\n"
+                    unless ref $option eq 'HASH';
+                my %o = %$option;
+                $o{channel_ids} = _id_array($option->{channel_ids}, 'channel_ids')
+                    if defined $option->{channel_ids};
+                push @options, \%o;
+            }
+            $row{options} = \@options;
+        }
+
+        push @out, \%row;
+    }
+
+    return \@out;
 }
 
 sub get_guild_channels {
@@ -2273,6 +2572,331 @@ sub get_application {
     return $self->_finish($res, 'hash');
 }
 
+# ---------------------------------------------------------------- application emojis
+
+# アプリの絵文字一覧（{ items => [...] }）。
+sub get_application_emojis {
+    my ($self, $application_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/applications/$application_id/emojis",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub get_application_emoji {
+    my ($self, $application_id, $emoji_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "emoji id is required\n" unless defined $emoji_id && length $emoji_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/applications/$application_id/emojis/$emoji_id",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# アプリの絵文字を作る。
+#   create_application_emoji($app_id, name => 'party', image => 'party.png')
+sub create_application_emoji {
+    my ($self, $application_id, %opts) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+
+    my $name = $opts{name};
+    die "emoji name is required\n" unless defined $name && length $name;
+    die "emoji name must be 2-32 characters\n"
+        unless length($name) >= 2 && length($name) <= 32;
+
+    die "emoji image is required\n"
+        unless defined $opts{image} && length $opts{image};
+
+    my %payload = (
+        name  => $name,
+        image => _image_data_uri($opts{image}, 'emoji image'),
+    );
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST', "$API_BASE/applications/$application_id/emojis", \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub update_application_emoji {
+    my ($self, $application_id, $emoji_id, %opts) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "emoji id is required\n" unless defined $emoji_id && length $emoji_id;
+
+    die "emoji name must be 2-32 characters\n"
+        unless defined $opts{name}
+            && length($opts{name}) >= 2 && length($opts{name}) <= 32;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/applications/$application_id/emojis/$emoji_id",
+        { name => $opts{name} },
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub delete_application_emoji {
+    my ($self, $application_id, $emoji_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "emoji id is required\n" unless defined $emoji_id && length $emoji_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE', "$API_BASE/applications/$application_id/emojis/$emoji_id",
+    );
+    return $self->_finish($res, 'none');
+}
+
+# ---------------------------------------------------------------- entitlements / skus
+
+# Entitlement 一覧（課金・プレミアム機能）。
+#   get_entitlements($app_id, user_id => ..., sku_ids => [...], guild_id => ...,
+#       exclude_ended => 1, limit => 100)
+sub get_entitlements {
+    my ($self, $application_id, %opts) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+
+    my @query;
+    for my $key (qw(user_id guild_id before after)) {
+        push @query, "$key=" . _uri_escape($opts{$key}) if defined $opts{$key};
+    }
+
+    if (defined $opts{sku_ids}) {
+        my $ids = _id_array($opts{sku_ids}, 'sku_ids');
+        push @query, 'sku_ids=' . join(',', @$ids) if @$ids;
+    }
+
+    if (defined $opts{limit}) {
+        die "limit must be between 1 and 100\n"
+            unless !ref $opts{limit} && $opts{limit} =~ /^\d+\z/
+                && $opts{limit} >= 1 && $opts{limit} <= 100;
+        push @query, 'limit=' . ($opts{limit} + 0);
+    }
+
+    push @query, 'exclude_ended=true' if $opts{exclude_ended};
+
+    my $url = "$API_BASE/applications/$application_id/entitlements";
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'array');
+}
+
+sub get_entitlement {
+    my ($self, $application_id, $entitlement_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "entitlement id is required\n"
+        unless defined $entitlement_id && length $entitlement_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/applications/$application_id/entitlements/$entitlement_id",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 消費型 Entitlement を使用済みにする。成功時は 1。
+sub consume_entitlement {
+    my ($self, $application_id, $entitlement_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "entitlement id is required\n"
+        unless defined $entitlement_id && length $entitlement_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/applications/$application_id/entitlements/$entitlement_id/consume",
+    );
+    return $self->_finish($res, 'none');
+}
+
+# テスト用 Entitlement を作る。
+#   create_test_entitlement($app_id, sku_id => ..., owner_id => ..., owner_type => 'user_subscription')
+sub create_test_entitlement {
+    my ($self, $application_id, %opts) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+
+    my $sku_id = $opts{sku_id};
+    die "sku id is required\n" unless defined $sku_id && length $sku_id;
+
+    my $owner_id = $opts{owner_id};
+    die "owner id is required\n" unless defined $owner_id && length $owner_id;
+
+    my %payload = (
+        sku_id   => "$sku_id",
+        owner_id => "$owner_id",
+        owner_type => entitlement_owner_value(
+            exists $opts{owner_type} ? $opts{owner_type} : 'user_subscription',
+        ),
+    );
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST', "$API_BASE/applications/$application_id/entitlements", \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# テスト用 Entitlement を削除する。成功時は 1。
+sub delete_test_entitlement {
+    my ($self, $application_id, $entitlement_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "entitlement id is required\n"
+        unless defined $entitlement_id && length $entitlement_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/applications/$application_id/entitlements/$entitlement_id",
+    );
+    return $self->_finish($res, 'none');
+}
+
+# アプリの SKU 一覧。
+sub get_skus {
+    my ($self, $application_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/applications/$application_id/skus",
+    );
+    return $self->_finish($res, 'array');
+}
+
+# SKU のサブスクリプション一覧。
+#   get_sku_subscriptions($sku_id, user_id => ..., limit => 100)
+sub get_sku_subscriptions {
+    my ($self, $sku_id, %opts) = @_;
+
+    die "sku id is required\n" unless defined $sku_id && length $sku_id;
+
+    my @query;
+    for my $key (qw(user_id before after)) {
+        push @query, "$key=" . _uri_escape($opts{$key}) if defined $opts{$key};
+    }
+
+    if (defined $opts{limit}) {
+        die "limit must be between 1 and 100\n"
+            unless !ref $opts{limit} && $opts{limit} =~ /^\d+\z/
+                && $opts{limit} >= 1 && $opts{limit} <= 100;
+        push @query, 'limit=' . ($opts{limit} + 0);
+    }
+
+    my $url = "$API_BASE/skus/$sku_id/subscriptions";
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'array');
+}
+
+# ---------------------------------------------------------------- role connections
+
+# アプリのロール連携メタデータを取得する。
+sub get_application_role_connection_metadata {
+    my ($self, $application_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/applications/$application_id/role-connections/metadata",
+    );
+    return $self->_finish($res, 'array');
+}
+
+# ロール連携メタデータを設定する（最大 5 件、丸ごと置き換え）。
+#   update_application_role_connection_metadata($app_id, [
+#       {
+#           type        => 'integer_greater_than',
+#           key         => 'level',
+#           name        => 'レベル',
+#           description => '到達レベル',
+#       },
+#   ])
+sub update_application_role_connection_metadata {
+    my ($self, $application_id, $records) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "records must be an array reference\n"
+        unless ref $records eq 'ARRAY';
+    die "at most 5 role connection metadata records are allowed\n"
+        if @$records > 5;
+
+    my @normalized;
+    for my $record (@$records) {
+        die "record must be a hash reference\n"
+            unless ref $record eq 'HASH';
+
+        my $key = $record->{key};
+        die "record key is required\n"
+            unless defined $key && !ref $key && length $key;
+        die "record key must be 1-50 characters of [a-z0-9_]\n"
+            unless length($key) <= 50 && $key =~ /\A[a-z0-9_]+\z/;
+
+        my $name = $record->{name};
+        die "record name is required\n"
+            unless defined $name && !ref $name && length $name;
+        die "record name must be 100 characters or less\n"
+            if length($name) > 100;
+
+        my $description = $record->{description};
+        die "record description is required\n"
+            unless defined $description && !ref $description;
+        die "record description must be 200 characters or less\n"
+            if length($description) > 200;
+
+        push @normalized, {
+            type        => role_connection_type_value(
+                exists $record->{type} ? $record->{type} : undef,
+            ),
+            key         => $key,
+            name        => $name,
+            description => $description,
+        };
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT',
+        "$API_BASE/applications/$application_id/role-connections/metadata",
+        \@normalized,
+    );
+    return $self->_finish($res, 'array');
+}
+
 # ---------------------------------------------------------------- command permissions
 
 # ギルドのコマンド権限上書きの一覧。
@@ -2642,6 +3266,26 @@ sub get_channel_invites {
     $self->{last_error} = undef;
     my $res = $self->_request('GET', "$API_BASE/channels/$channel_id/invites");
     return $self->_finish($res, 'array');
+}
+
+# アナウンスチャンネルを Webhook チャンネルでフォローする（MANAGE_WEBHOOKS が必要）。
+#   my $follow = $client->follow_channel($announcement_id, $webhook_channel_id);
+#   # { channel_id => ..., webhook_id => ... }
+sub follow_channel {
+    my ($self, $channel_id, $webhook_channel_id) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+    die "webhook channel id is required\n"
+        unless defined $webhook_channel_id && length $webhook_channel_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/channels/$channel_id/followers",
+        { webhook_channel_id => "$webhook_channel_id" },
+    );
+    return $self->_finish($res, 'hash');
 }
 
 # チャンネルの作成 / 更新の JSON を作る。

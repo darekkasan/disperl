@@ -21,7 +21,11 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - 絵文字・ステッカー・サウンドボードの管理（ギルド）
 - ステージインスタンスの開始・変更・終了
 - アプリ情報・コマンド権限の上書き・ギルド widget / プレビュー / バニティ URL
-- アナウンスのクロスポスト・リアクション単位の削除
+- ギルド設定の変更・ウェルカム画面・オンボーディング
+- Entitlements / SKU / Subscriptions（課金）
+- ロール連携メタデータ（Linked Roles）
+- チャンネルフォロー・アナウンスのクロスポスト・リアクション単位の削除
+- Bot プロフィール（名前 / アイコン / バナー）の変更
 - ロールの取得・作成・編集・並び替え・削除（色 / アイコン / Unicode 絵文字）
 - メンバーの一覧・検索・ニックネーム変更・ロール付与 / 剥奪・タイムアウト
 - キック・BAN / BAN 解除・BAN 一覧・プルーン
@@ -125,6 +129,9 @@ if ($message) {
 | `Disperl::Sticker` | ステッカーの種別・画像形式 |
 | `Disperl::Stage` | ステージインスタンスの公開範囲 |
 | `Disperl::Commands` | コマンド権限の対象種別 |
+| `Disperl::Guild` | ギルド設定・オンボーディングの種別 |
+| `Disperl::Entitlement` | Entitlement / SKU の種別 |
+| `Disperl::RoleConnection` | ロール連携メタデータの種別 |
 | `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が使用） |
 | `Disperl::Config` | `.env` ローダー |
 
@@ -140,6 +147,9 @@ if ($message) {
 | [絵文字 / ステッカー / サウンドボード](docs/emojis-stickers.md) | ギルドの絵文字・ステッカー・サウンドの管理 |
 | [ステージインスタンス](docs/stage.md) | ステージの開始・取得・変更・終了 |
 | [アプリ情報 / コマンド権限 / widget](docs/applications.md) | アプリ情報・権限上書き・widget・プレビュー・バニティ |
+| [ギルド設定](docs/guild-settings.md) | ギルド設定・ウェルカム画面・オンボーディング |
+| [Entitlements / SKU](docs/entitlements.md) | 課金・Entitlement・SKU・サブスクリプション |
+| [ロール連携メタデータ](docs/role-connections.md) | Linked Roles のメタデータ設定 |
 | [ロール管理](docs/roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
 | [メンバー管理](docs/members.md) | 一覧・検索・変更・ロール付与・キック / BAN・プルーン・実効権限 |
 | [監査ログ](docs/audit-log.md) | 取得・絞り込み・ページング・イベント種別・変更内容 |
@@ -430,7 +440,10 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - 絵文字 / ステッカー / サウンドボード: ギルドの絵文字・ステッカー・サウンドの CRUD（`Disperl::Sticker`）
 - ステージインスタンス: 開始・取得・変更・終了（`Disperl::Stage`）
 - アプリ情報・コマンド権限・ギルド widget / プレビュー / バニティ URL（`Disperl::Commands`）
-- メッセージ小物: クロスポスト・リアクション単位の削除
+- ギルド設定の変更・ウェルカム画面・オンボーディング（`Disperl::Guild`）
+- Entitlements / SKU / Subscriptions（`Disperl::Entitlement`）
+- ロール連携メタデータ（`Disperl::RoleConnection`）
+- チャンネルフォロー・Bot プロフィール変更・メッセージ小物（クロスポスト・リアクション単位の削除）
 - ロール: 取得・作成・編集・並び替え・削除・色 / アイコン / Unicode 絵文字
 - メンバー: 一覧・検索・ニックネーム・ロール付与 / 剥奪・タイムアウト・キック / BAN / プルーン
 - 権限: 名前とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）
@@ -447,8 +460,8 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 
 ### 未対応
 
-- 音声（Voice）
+- 音声（Voice）接続
 - OAuth2
-- ギルド設定の変更
-- 課金・Entitlements・SKU
+- ギルドの作成 / 削除（ユーザーアカウントの操作）
+- Guild Template
 - ユーザーアプリ / 埋め込みアプリ

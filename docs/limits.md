@@ -79,6 +79,27 @@
 |---|---|---|
 | 権限エントリの `type` | `role` (1) / `user` (2) / `channel` (3) | `edit_application_command_permissions` |
 | widget の `style` | 1〜5（`shield` / `banner1`〜`banner4`） | `get_guild_widget_image` |
+| アプリ絵文字の `name` | 2〜32 文字 | `create_application_emoji` など |
+
+## ギルド設定・ウェルカム・オンボーディング
+
+| 項目 | 上限 | 対象メソッド |
+|---|---|---|
+| ギルドの `name` | 2〜100 文字 | `update_guild` |
+| ギルドの `description` | 300 文字 | `update_guild` |
+| `afk_timeout` | 60 / 300 / 900 / 1800 / 3600 | `update_guild` |
+| ウェルカムの `description` | 140 文字（チャンネルは 100 文字） | `update_guild_welcome_screen` |
+| オンボーディングの `mode` | `onboarding_default` (0) / `onboarding_advanced` (1) | `update_guild_onboarding` |
+
+## Entitlements / ロール連携
+
+| 項目 | 上限 | 対象メソッド |
+|---|---|---|
+| Entitlement 一覧の `limit` | 1〜100 | `get_entitlements` / `get_sku_subscriptions` |
+| テスト Entitlement の `owner_type` | `guild_subscription` (1) / `user_subscription` (2) | `create_test_entitlement` |
+| ロール連携メタデータ | 最大 5 件 | `update_application_role_connection_metadata` |
+| ロール連携の `key` | 1〜50 文字の `[a-z0-9_]` | 同上 |
+| ロール連携の `name` / `description` | 100 / 200 文字 | 同上 |
 
 ## チャンネル
 
@@ -216,6 +237,9 @@
 - [絵文字 / ステッカー / サウンドボード](emojis-stickers.md)
 - [ステージインスタンス](stage.md)
 - [アプリ情報 / コマンド権限 / widget](applications.md)
+- [ギルド設定](guild-settings.md)
+- [Entitlements / SKU](entitlements.md)
+- [ロール連携メタデータ](role-connections.md)
 - [ロール管理](roles.md)
 - [メンバー管理](members.md)
 - [監査ログ](audit-log.md)

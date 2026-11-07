@@ -25,13 +25,22 @@ $client->send_message($dm->{id}, 'こんにちは');
 | メソッド | 戻り値 | 説明 |
 |---|---|---|
 | `get_current_user()` | ハッシュ | `GET /users/@me`。トークン検証に使える |
+| `modify_current_user(%opts)` | ハッシュ | Bot 自身の名前 / アイコン / バナーを変更 |
 | `get_user($user_id)` | ハッシュ | ユーザー情報 |
 | `get_channel($channel_id)` | ハッシュ | チャンネル情報（スレッドも可） |
 
 ```perl
 my $me = $client->get_current_user or die "bad token\n";
 print "$me->{username} ($me->{id})\n";
+
+# Bot のプロフィールを変更（名前変更はレート制限が非常に厳しい）
+$client->modify_current_user(username => 'disperl');
+$client->modify_current_user(avatar => 'icon.png');
+$client->modify_current_user(avatar => undef);    # アイコンを外す
 ```
+
+`modify_current_user` の `avatar` / `banner` はファイルパスか data URI、
+`undef` で解除です。
 
 ## ギルド
 
@@ -52,6 +61,9 @@ my $members  = $client->get_guild_members($guild_id, limit => 100, after => $use
 - `get_guild_members` の `limit` は 1〜1000（Discord の上限）。`after` でページング
 - `GUILD_MEMBERS` は **Privileged Intent**。Developer Portal で有効化が必要
 - メンバー系 API は Intent が無効だと制限・失敗する
+
+ギルド設定の変更（`update_guild`）やウェルカム画面・オンボーディングは
+[ギルド設定](guild-settings.md) を参照してください。
 
 ## 招待
 
@@ -90,6 +102,7 @@ $client->delete_invite($code);       # 招待を削除
 ## 関連ページ
 
 - [Client](client.md)
+- [ギルド設定](guild-settings.md)
 - [ロール管理](roles.md)
 - [メンバー管理](members.md)
 - [監査ログ](audit-log.md)

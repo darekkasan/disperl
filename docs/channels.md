@@ -205,6 +205,19 @@ for my $invite (@$invites) {
 
 招待の作成・削除は [ギルド・ユーザー・招待](guilds.md) を参照してください。
 
+## アナウンスのフォロー
+
+アナウンスチャンネルを Webhook チャンネルでフォローすると、
+投稿が自動で転送されます（`MANAGE_WEBHOOKS` が必要）。
+
+```perl
+my $follow = $client->follow_channel($announcement_channel_id, $webhook_channel_id);
+print "$follow->{channel_id} -> $follow->{webhook_id}\n";
+```
+
+転送されたメッセージを他チャンネルでも公開するには
+[クロスポスト](client.md#アナウンスの公開) を使います。
+
 ## 関連ページ
 
 - [Client](client.md)

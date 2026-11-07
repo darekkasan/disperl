@@ -27,6 +27,9 @@ use Disperl::AutoMod qw(
     automod_event_name automod_trigger_name automod_action_name
 );
 use Disperl::Commands qw(command_permission_name);
+use Disperl::Guild qw(guild_onboarding_mode_name);
+use Disperl::Entitlement qw(sku_type_name);
+use Disperl::RoleConnection qw(role_connection_type_name);
 
 load_dotenv("$FindBin::Bin/.env");
 
@@ -269,6 +272,39 @@ disperl 動作確認 CLI
                                        widget を編集する
   perl test.pl preview [--guild ID]   ギルドのプレビュー
   perl test.pl vanity [--guild ID]    バニティ URL
+  perl test.pl guild-edit [--name 名前] [--verification LEVEL] [--notifications LEVEL]
+      [--content-filter LEVEL] [--afk-channel ID|none] [--afk-timeout 秒]
+      [--system-channel ID|none] [--system-flags NAME,NAME|none] [--premium-bar 0|1]
+      [--icon 画像|none] [--description 説明] [--guild ID] [--reason 理由]
+                                       ギルド設定を変更する
+  perl test.pl welcome [--guild ID]   ウェルカム画面を表示する
+  perl test.pl welcome-edit [--enable|--disable] [--description 説明]
+      [--welcome-channel ID]... [--guild ID]   ウェルカム画面を変更する
+  perl test.pl onboarding [--guild ID] オンボーディングを表示する
+  perl test.pl onboarding-edit [--enable|--disable] [--mode MODE]
+      [--default-channel ID]... [--prompts JSONファイル] [--guild ID]
+                                       オンボーディングを変更する
+  perl test.pl follow <アナウンスID> <WebhookチャンネルID>
+                                       アナウンスをフォローする
+  perl test.pl me                     自分（Bot）の情報を表示する
+  perl test.pl me-edit [--username 名前] [--avatar 画像|none] [--banner 画像|none]
+                                       Bot のプロフィールを変更する
+  perl test.pl app-emojis             アプリ絵文字一覧
+  perl test.pl app-emoji-create <名前> <画像>   アプリ絵文字を作る
+  perl test.pl app-emoji-edit <ID> --name 名前  アプリ絵文字を編集する
+  perl test.pl app-emoji-delete <ID>  アプリ絵文字を削除する
+  perl test.pl entitlements [--user ID] [--sku ID,ID] [--guild ID] [--exclude-ended] [--limit N]
+                                       Entitlement 一覧
+  perl test.pl entitlement <ID>       Entitlement を表示する
+  perl test.pl entitlement-consume <ID>          Entitlement を消費する
+  perl test.pl entitlement-test-create <SKU_ID> --owner ID [--owner-type TYPE]
+                                       テスト Entitlement を作る
+  perl test.pl entitlement-test-delete <ID>      テスト Entitlement を削除する
+  perl test.pl skus                   SKU 一覧
+  perl test.pl sku-subscriptions <SKU_ID> [--user ID] [--limit N]
+                                       サブスクリプション一覧
+  perl test.pl role-connections       ロール連携メタデータ一覧
+  perl test.pl role-connection-edit <JSONファイル>  ロール連携メタデータを設定する
   perl test.pl channels [ギルドID]     チャンネル一覧（省略時は現在のギルド）
   perl test.pl channel-create <名前> [--type text|voice|category|announcement|stage|forum|media]
       [--parent ID] [--topic 話題] [--slowmode 秒] [--guild ID] [--reason 理由]
@@ -445,6 +481,11 @@ disperl 動作確認 CLI
   perl test.pl sound-create fanfare fanfare.mp3 --volume 0.8
   perl test.pl stage-create "発表会" --privacy guild_only --notify
   perl test.pl command-perm-edit 123456789012345678 --allow-role 111111111111111111
+  perl test.pl guild-edit --verification high --system-flags suppress_join_notifications
+  perl test.pl welcome-edit --enable --description "ようこそ"
+  perl test.pl follow 111111111111111111 222222222222222222
+  perl test.pl app-emoji-create party party.png
+  perl test.pl entitlements --exclude-ended
   perl test.pl watch --status idle --activity "待機中"
   perl test.pl watch --status invisible
   perl test.pl watch --shard 0/2
@@ -1445,6 +1486,439 @@ sub cmd_vanity {
 
     out sprintf "https://discord.gg/%s (uses: %s)\n",
         $vanity->{code} // '?', $vanity->{uses} // '?';
+    return 0;
+}
+
+# ---------------------------------------------------------------- ギルド設定 / アプリ / 課金
+
+sub _read_json_file {
+    my ($path) = @_;
+
+    _fatal("JSON ファイルが見つかりません: $path") unless -f $path;
+
+    open my $fh, '<:raw', $path or _fatal("JSON ファイルを開けません: $path");
+    local $/;
+    my $raw = <$fh>;
+    close $fh;
+
+    my $decoded = eval { JSON::PP->new->utf8(1)->decode($raw) };
+    _fatal("JSON の解析に失敗しました: $path") unless defined $decoded;
+    return $decoded;
+}
+
+sub cmd_guild_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(
+        name description verification notifications content-filter
+        afk-channel afk-timeout system-channel system-flags premium-bar
+        icon guild reason
+    )]);
+
+    my %opts;
+    $opts{name}        = $opt->{name}        if defined $opt->{name};
+    $opts{description} = $opt->{description} if defined $opt->{description};
+    $opts{verification_level} = $opt->{verification} if defined $opt->{verification};
+    $opts{default_message_notifications} = $opt->{notifications}
+        if defined $opt->{notifications};
+    $opts{explicit_content_filter} = $opt->{'content-filter'}
+        if defined $opt->{'content-filter'};
+
+    if (defined $opt->{'afk-channel'}) {
+        $opts{afk_channel_id} = lc($opt->{'afk-channel'}) eq 'none'
+            ? undef : $opt->{'afk-channel'};
+    }
+    $opts{afk_timeout} = $opt->{'afk-timeout'} if defined $opt->{'afk-timeout'};
+
+    if (defined $opt->{'system-channel'}) {
+        $opts{system_channel_id} = lc($opt->{'system-channel'}) eq 'none'
+            ? undef : $opt->{'system-channel'};
+    }
+
+    if (defined $opt->{'system-flags'}) {
+        $opts{system_channel_flags} = lc($opt->{'system-flags'}) eq 'none'
+            ? 0 : _id_list($opt->{'system-flags'});
+    }
+
+    if (defined $opt->{'premium-bar'}) {
+        $opts{premium_progress_bar_enabled} = $opt->{'premium-bar'} ? 1 : 0;
+    }
+
+    if (defined $opt->{icon}) {
+        $opts{icon} = lc($opt->{icon}) eq 'none' ? undef : $opt->{icon};
+    }
+
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+    _fatal('変更する項目がありません（--name / --verification など）')
+        unless grep { $_ ne 'reason' } keys %opts;
+
+    my $guild = client()->update_guild(_guild_or_current($opt->{guild}), %opts)
+        or _api_fail('ギルドの更新');
+
+    out sprintf "ギルドを更新しました: %s (id: %s)\n",
+        $guild->{name} // '', $guild->{id} // '';
+    return 0;
+}
+
+sub cmd_welcome {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $screen = client()->get_guild_welcome_screen(_guild_or_current($opt->{guild}))
+        or _api_fail('ウェルカム画面');
+
+    out sprintf "ウェルカム画面: %s\n", $screen->{enabled} ? '有効' : '無効';
+    out "  説明: " . ($screen->{description} // '') . "\n";
+    for my $ch (@{ $screen->{welcome_channels} || [] }) {
+        out sprintf "  %-20s %s\n", $ch->{channel_id} // '?', $ch->{description} // '';
+    }
+    return 0;
+}
+
+sub cmd_welcome_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args,
+        [qw(description guild)], [qw(welcome-channel)], [qw(enable disable)]);
+
+    my %opts;
+    $opts{enabled} = 1 if $opt->{enable};
+    $opts{enabled} = 0 if $opt->{disable};
+    $opts{description} = $opt->{description} if defined $opt->{description};
+
+    if ($opt->{'welcome-channel'}) {
+        $opts{welcome_channels} =
+            [ map { { channel_id => $_ } } @{ $opt->{'welcome-channel'} } ];
+    }
+
+    _fatal('変更する項目がありません（--enable / --disable / --description / --welcome-channel）')
+        unless keys %opts;
+
+    my $screen = client()->update_guild_welcome_screen(
+        _guild_or_current($opt->{guild}), %opts,
+    ) or _api_fail('ウェルカム画面の更新');
+
+    out sprintf "ウェルカム画面を更新しました: %s\n",
+        $screen->{enabled} ? '有効' : '無効';
+    return 0;
+}
+
+sub cmd_onboarding {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $onboarding = client()->get_guild_onboarding(_guild_or_current($opt->{guild}))
+        or _api_fail('オンボーディング');
+
+    out sprintf "オンボーディング: %s\n", $onboarding->{enabled} ? '有効' : '無効';
+    out "  モード: " . _onboarding_mode_name($onboarding->{mode}) . "\n";
+    out "  プロンプト: " . scalar @{ $onboarding->{prompts} || [] } . " 件\n";
+    out "  既定チャンネル: "
+        . join(', ', @{ $onboarding->{default_channel_ids} || [] }) . "\n";
+    return 0;
+}
+
+sub _onboarding_mode_name {
+    my ($mode) = @_;
+    return 'unknown' unless defined $mode;
+    return guild_onboarding_mode_name($mode) // "mode$mode";
+}
+
+sub cmd_onboarding_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args,
+        [qw(mode prompts guild)], [qw(default-channel)], [qw(enable disable)]);
+
+    my %opts;
+    $opts{enabled} = 1 if $opt->{enable};
+    $opts{enabled} = 0 if $opt->{disable};
+    $opts{mode}    = $opt->{mode} if defined $opt->{mode};
+    $opts{default_channel_ids} = $opt->{'default-channel'}
+        if $opt->{'default-channel'};
+
+    if (defined $opt->{prompts}) {
+        my $prompts = _read_json_file($opt->{prompts});
+        _fatal('--prompts の JSON は配列にしてください') unless ref $prompts eq 'ARRAY';
+        $opts{prompts} = $prompts;
+    }
+
+    _fatal('変更する項目がありません（--enable / --mode / --default-channel / --prompts）')
+        unless keys %opts;
+
+    my $onboarding = client()->update_guild_onboarding(
+        _guild_or_current($opt->{guild}), %opts,
+    ) or _api_fail('オンボーディングの更新');
+
+    out sprintf "オンボーディングを更新しました: %s\n",
+        $onboarding->{enabled} ? '有効' : '無効';
+    return 0;
+}
+
+sub cmd_follow {
+    my ($channel, $webhook_channel) = map { _decode_arg($_) } @_;
+
+    _fatal('使い方: perl test.pl follow <アナウンスチャンネルID> <WebhookチャンネルID>')
+        unless defined $channel && defined $webhook_channel;
+
+    my $follow = client()->follow_channel($channel, $webhook_channel)
+        or _api_fail('チャンネルのフォロー');
+
+    out sprintf "フォローしました: channel=%s webhook=%s\n",
+        $follow->{channel_id} // '?', $follow->{webhook_id} // '?';
+    return 0;
+}
+
+sub cmd_me {
+    _parse_options([ map { _decode_arg($_) } @_ ], []);
+
+    my $me = client()->get_current_user or _api_fail('ユーザー取得');
+
+    out sprintf "%s (id: %s, bot: %s)\n",
+        $me->{global_name} // $me->{username} // '?',
+        $me->{id} // '?',
+        $me->{bot} ? 'yes' : 'no';
+    return 0;
+}
+
+sub cmd_me_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(username avatar banner)]);
+
+    my %opts;
+    $opts{username} = $opt->{username} if defined $opt->{username};
+
+    for my $key (qw(avatar banner)) {
+        next unless defined $opt->{$key};
+        $opts{$key} = lc($opt->{$key}) eq 'none' ? undef : $opt->{$key};
+    }
+
+    _fatal('変更する項目がありません（--username / --avatar / --banner）')
+        unless keys %opts;
+
+    my $me = client()->modify_current_user(%opts) or _api_fail('プロフィールの更新');
+
+    out sprintf "プロフィールを更新しました: %s\n",
+        $me->{global_name} // $me->{username} // '';
+    return 0;
+}
+
+sub cmd_app_emojis {
+    _parse_options([ map { _decode_arg($_) } @_ ], []);
+
+    my $result = client()->get_application_emojis(_application_id())
+        or _api_fail('アプリ絵文字一覧');
+    my $items = $result->{items} || [];
+
+    out sprintf "アプリ絵文字 %d 件\n", scalar @$items;
+    for my $emoji (@$items) {
+        out sprintf "  %-20s %s\n", $emoji->{id} // '?', $emoji->{name} // '';
+    }
+    return 0;
+}
+
+sub cmd_app_emoji_create {
+    my @args = map { _decode_arg($_) } @_;
+    my (undef, $pos) = _parse_options(\@args, []);
+
+    my ($name, $image) = @$pos;
+    _fatal('使い方: perl test.pl app-emoji-create <名前> <画像>')
+        unless defined $name && defined $image;
+
+    my $emoji = client()->create_application_emoji(
+        _application_id(), name => $name, image => $image,
+    ) or _api_fail('アプリ絵文字の作成');
+
+    out sprintf "アプリ絵文字を作成しました: %s (id: %s)\n",
+        $emoji->{name} // $name, $emoji->{id} // '?';
+    return 0;
+}
+
+sub cmd_app_emoji_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(name)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl app-emoji-edit <ID> --name 名前')
+        unless defined $id && defined $opt->{name};
+
+    my $emoji = client()->update_application_emoji(
+        _application_id(), $id, name => $opt->{name},
+    ) or _api_fail('アプリ絵文字の更新');
+
+    out sprintf "アプリ絵文字を更新しました: %s (id: %s)\n",
+        $emoji->{name} // '', $emoji->{id} // $id;
+    return 0;
+}
+
+sub cmd_app_emoji_delete {
+    my ($id) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl app-emoji-delete <ID>')
+        unless defined $id && length $id;
+
+    client()->delete_application_emoji(_application_id(), $id)
+        or _api_fail('アプリ絵文字の削除');
+
+    out "アプリ絵文字を削除しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_entitlements {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(user sku guild limit)], [qw(exclude-ended)]);
+
+    my %opts;
+    $opts{user_id}  = $opt->{user}  if defined $opt->{user};
+    $opts{guild_id} = $opt->{guild} if defined $opt->{guild};
+    $opts{sku_ids}  = _id_list($opt->{sku}) if defined $opt->{sku};
+    $opts{limit}    = $opt->{limit} if defined $opt->{limit};
+    $opts{exclude_ended} = 1 if $opt->{'exclude-ended'};
+
+    my $list = client()->get_entitlements(_application_id(), %opts)
+        or _api_fail('Entitlement 一覧');
+
+    out sprintf "Entitlement %d 件\n", scalar @$list;
+    for my $e (@$list) {
+        out sprintf "  %-20s sku=%-20s user=%-20s guild=%s\n",
+            $e->{id} // '?', $e->{sku_id} // '?',
+            $e->{user_id} // '-', $e->{guild_id} // '-';
+    }
+    return 0;
+}
+
+sub cmd_entitlement {
+    my ($id) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl entitlement <ID>')
+        unless defined $id && length $id;
+
+    my $e = client()->get_entitlement(_application_id(), $id)
+        or _api_fail('Entitlement');
+
+    out sprintf "id=%s sku=%s type=%s\n",
+        $e->{id} // '?', $e->{sku_id} // '?', $e->{type} // '?';
+    out "  user="  . ($e->{user_id}  // '-') . "\n";
+    out "  guild=" . ($e->{guild_id} // '-') . "\n";
+    out "  消費済み: " . ($e->{consumed} ? 'yes' : 'no') . "\n";
+    return 0;
+}
+
+sub cmd_entitlement_consume {
+    my ($id) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl entitlement-consume <ID>')
+        unless defined $id && length $id;
+
+    client()->consume_entitlement(_application_id(), $id)
+        or _api_fail('Entitlement の消費');
+
+    out "Entitlement を消費しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_entitlement_test_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(owner owner-type)]);
+
+    my $sku_id = $pos->[0];
+    _fatal('使い方: perl test.pl entitlement-test-create <SKU_ID> --owner ID [--owner-type guild_subscription|user_subscription]')
+        unless defined $sku_id && length $sku_id && defined $opt->{owner};
+
+    my $e = client()->create_test_entitlement(
+        _application_id(),
+        sku_id     => $sku_id,
+        owner_id   => $opt->{owner},
+        owner_type => $opt->{'owner-type'} // 'user_subscription',
+    ) or _api_fail('テスト Entitlement の作成');
+
+    out "テスト Entitlement を作成しました: id=" . ($e->{id} // '?') . "\n";
+    return 0;
+}
+
+sub cmd_entitlement_test_delete {
+    my ($id) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl entitlement-test-delete <ID>')
+        unless defined $id && length $id;
+
+    client()->delete_test_entitlement(_application_id(), $id)
+        or _api_fail('テスト Entitlement の削除');
+
+    out "テスト Entitlement を削除しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_skus {
+    _parse_options([ map { _decode_arg($_) } @_ ], []);
+
+    my $skus = client()->get_skus(_application_id()) or _api_fail('SKU 一覧');
+
+    out sprintf "SKU %d 件\n", scalar @$skus;
+    for my $sku (@$skus) {
+        out sprintf "  %-20s %-20s type=%s\n",
+            $sku->{id} // '?', $sku->{name} // '', _sku_type_name($sku->{type});
+    }
+    return 0;
+}
+
+sub _sku_type_name {
+    my ($type) = @_;
+    return 'unknown' unless defined $type;
+    return sku_type_name($type) // "type$type";
+}
+
+sub cmd_sku_subscriptions {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(user limit)]);
+
+    my $sku_id = $pos->[0];
+    _fatal('使い方: perl test.pl sku-subscriptions <SKU_ID> [--user ID] [--limit N]')
+        unless defined $sku_id && length $sku_id;
+
+    my %opts;
+    $opts{user_id} = $opt->{user}  if defined $opt->{user};
+    $opts{limit}   = $opt->{limit} if defined $opt->{limit};
+
+    my $subs = client()->get_sku_subscriptions($sku_id, %opts)
+        or _api_fail('サブスクリプション一覧');
+
+    out sprintf "サブスクリプション %d 件\n", scalar @$subs;
+    for my $sub (@$subs) {
+        out sprintf "  %-20s user=%-20s status=%s\n",
+            $sub->{id} // '?', $sub->{user_id} // '-', $sub->{status} // '?';
+    }
+    return 0;
+}
+
+sub cmd_role_connections {
+    _parse_options([ map { _decode_arg($_) } @_ ], []);
+
+    my $records = client()->get_application_role_connection_metadata(_application_id())
+        or _api_fail('ロール連携メタデータ');
+
+    out sprintf "ロール連携メタデータ %d 件\n", scalar @$records;
+    for my $record (@$records) {
+        out sprintf "  %-20s %-24s %s\n",
+            $record->{key} // '?',
+            _role_connection_type_name($record->{type}),
+            $record->{name} // '';
+    }
+    return 0;
+}
+
+sub _role_connection_type_name {
+    my ($type) = @_;
+    return 'unknown' unless defined $type;
+    return role_connection_type_name($type) // "type$type";
+}
+
+sub cmd_role_connection_edit {
+    my ($path) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl role-connection-edit <JSONファイル>')
+        unless defined $path && length $path;
+
+    my $records = _read_json_file($path);
+    _fatal('JSON は配列にしてください') unless ref $records eq 'ARRAY';
+
+    my $result = client()->update_application_role_connection_metadata(
+        _application_id(), $records,
+    ) or _api_fail('ロール連携メタデータの更新');
+
+    out sprintf "ロール連携メタデータを更新しました（%d 件）\n", scalar @$result;
     return 0;
 }
 
@@ -3968,6 +4442,27 @@ my %COMMANDS = (
     'widget-edit' => \&cmd_widget_edit,
     preview       => \&cmd_preview,
     vanity        => \&cmd_vanity,
+    'guild-edit'   => \&cmd_guild_edit,
+    welcome        => \&cmd_welcome,
+    'welcome-edit' => \&cmd_welcome_edit,
+    onboarding     => \&cmd_onboarding,
+    'onboarding-edit' => \&cmd_onboarding_edit,
+    follow         => \&cmd_follow,
+    me             => \&cmd_me,
+    'me-edit'      => \&cmd_me_edit,
+    'app-emojis'        => \&cmd_app_emojis,
+    'app-emoji-create'  => \&cmd_app_emoji_create,
+    'app-emoji-edit'    => \&cmd_app_emoji_edit,
+    'app-emoji-delete'  => \&cmd_app_emoji_delete,
+    entitlements   => \&cmd_entitlements,
+    entitlement    => \&cmd_entitlement,
+    'entitlement-consume'     => \&cmd_entitlement_consume,
+    'entitlement-test-create' => \&cmd_entitlement_test_create,
+    'entitlement-test-delete' => \&cmd_entitlement_test_delete,
+    skus           => \&cmd_skus,
+    'sku-subscriptions' => \&cmd_sku_subscriptions,
+    'role-connections'  => \&cmd_role_connections,
+    'role-connection-edit' => \&cmd_role_connection_edit,
     channels  => \&cmd_channels,
     'channel-create'      => \&cmd_channel_create,
     'channel-edit'        => \&cmd_channel_edit,

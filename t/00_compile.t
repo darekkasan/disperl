@@ -14,6 +14,9 @@ use_ok('Disperl::Forum');
 use_ok('Disperl::Sticker');
 use_ok('Disperl::Stage');
 use_ok('Disperl::Commands');
+use_ok('Disperl::Guild');
+use_ok('Disperl::Entitlement');
+use_ok('Disperl::RoleConnection');
 use_ok('Disperl::WebSocket');
 use_ok('Disperl::Gateway');
 

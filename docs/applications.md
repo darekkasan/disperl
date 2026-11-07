@@ -140,5 +140,7 @@ command_permission_name(2);            # USER
 
 - [Client](client.md)
 - [インタラクション](interactions.md)
+- [Entitlements / SKU](entitlements.md)
+- [ロール連携メタデータ](role-connections.md)
 - [ギルド・ユーザー・招待](guilds.md)
 - [CLI](cli.md)

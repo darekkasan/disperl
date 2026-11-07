@@ -12,6 +12,7 @@
 - [フォーラム](#フォーラム)
 - [チャンネル管理](#チャンネル管理)
 - [小さめの API](#小さめの-api)
+- [ギルド設定・課金](#ギルド設定課金)
 - [ロール管理](#ロール管理)
 - [メンバー管理](#メンバー管理)
 - [監査ログ](#監査ログ)
@@ -204,6 +205,56 @@ perl test.pl vanity [--guild ID]
 ```
 
 `--guild` を省略すると現在のチャンネルが属するギルドを使います。
+
+## ギルド設定・課金
+
+### ギルド設定
+
+```sh
+perl test.pl guild-edit --name "新しい名前"
+perl test.pl guild-edit --verification high --notifications only_mentions
+perl test.pl guild-edit --system-flags suppress_join_notifications
+perl test.pl guild-edit --afk-timeout 300 --premium-bar 1
+
+perl test.pl welcome [--guild ID]
+perl test.pl welcome-edit --enable --description "ようこそ" --welcome-channel <チャンネルID>
+perl test.pl onboarding [--guild ID]
+perl test.pl onboarding-edit --enable --mode onboarding_advanced \
+    --default-channel <チャンネルID> --prompts prompts.json
+```
+
+- `--system-flags` は `NAME,NAME` か `none`
+- `--prompts` はプロンプト配列の JSON ファイル（[ギルド設定](guild-settings.md#オンボーディング) 参照）
+
+### フォロー・プロフィール
+
+```sh
+perl test.pl follow <アナウンスチャンネルID> <WebhookチャンネルID>
+perl test.pl me
+perl test.pl me-edit --username disperl
+perl test.pl me-edit --avatar icon.png
+perl test.pl me-edit --avatar none        # アイコンを消す
+```
+
+### アプリ絵文字・課金
+
+```sh
+perl test.pl app-emojis
+perl test.pl app-emoji-create party party.png
+perl test.pl app-emoji-edit <ID> --name new
+perl test.pl app-emoji-delete <ID>
+
+perl test.pl entitlements --exclude-ended [--user ID] [--sku ID,ID]
+perl test.pl entitlement <ID>
+perl test.pl entitlement-consume <ID>
+perl test.pl entitlement-test-create <SKU_ID> --owner <ユーザー/ギルドID> --owner-type user_subscription
+perl test.pl entitlement-test-delete <ID>
+perl test.pl skus
+perl test.pl sku-subscriptions <SKU_ID> [--user ID]
+
+perl test.pl role-connections
+perl test.pl role-connection-edit metadata.json
+```
 
 ## ロール管理
 
@@ -497,5 +548,8 @@ perl test.pl history
 - [絵文字 / ステッカー / サウンドボード](emojis-stickers.md)
 - [ステージインスタンス](stage.md)
 - [アプリ情報 / コマンド権限 / widget](applications.md)
+- [ギルド設定](guild-settings.md)
+- [Entitlements / SKU](entitlements.md)
+- [ロール連携メタデータ](role-connections.md)
 - [スケジュールイベント](events.md)
 - [トラブルシューティング](troubleshooting.md)
