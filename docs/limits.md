@@ -101,6 +101,18 @@
 | ロール連携の `key` | 1〜50 文字の `[a-z0-9_]` | 同上 |
 | ロール連携の `name` / `description` | 100 / 200 文字 | 同上 |
 
+## ギルド管理（審査・連携・所属）
+
+| 項目 | 上限 | 対象メソッド |
+|---|---|---|
+| 一括 BAN の `user_ids` | 1〜200 件 | `bulk_ban_guild_members` |
+| `delete_message_seconds` | 0〜604,800 | `bulk_ban_guild_members` |
+| ボイスステータス | 1〜500 文字 | `set_channel_voice_status` |
+| 審査の `description` | 300 文字 | `update_guild_member_verification` |
+| 審査の `label` | 45 文字 | 同上 |
+| 連携の `expire_grace_period` | 0〜30 日 | `update_guild_integration` |
+| 所属ギルドの `limit` | 1〜200 | `get_current_user_guilds` |
+
 ## チャンネル
 
 | 項目 | 上限 |
@@ -238,6 +250,7 @@
 - [ステージインスタンス](stage.md)
 - [アプリ情報 / コマンド権限 / widget](applications.md)
 - [ギルド設定](guild-settings.md)
+- [ギルド管理（審査・連携・所属）](guild-admin.md)
 - [Entitlements / SKU](entitlements.md)
 - [ロール連携メタデータ](role-connections.md)
 - [ロール管理](roles.md)

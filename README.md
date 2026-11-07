@@ -24,8 +24,9 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - ギルド設定の変更・ウェルカム画面・オンボーディング
 - Entitlements / SKU / Subscriptions（課金）
 - ロール連携メタデータ（Linked Roles）
-- チャンネルフォロー・アナウンスのクロスポスト・リアクション単位の削除
-- Bot プロフィール（名前 / アイコン / バナー）の変更
+- メンバー審査・ギルド連携・ボイスリージョン・一括 BAN
+- チャンネルフォロー・ボイスステータス・アナウンスのクロスポスト
+- Bot プロフィール（名前 / アイコン / バナー）の変更・所属ギルドの管理
 - ロールの取得・作成・編集・並び替え・削除（色 / アイコン / Unicode 絵文字）
 - メンバーの一覧・検索・ニックネーム変更・ロール付与 / 剥奪・タイムアウト
 - キック・BAN / BAN 解除・BAN 一覧・プルーン
@@ -132,6 +133,7 @@ if ($message) {
 | `Disperl::Guild` | ギルド設定・オンボーディングの種別 |
 | `Disperl::Entitlement` | Entitlement / SKU の種別 |
 | `Disperl::RoleConnection` | ロール連携メタデータの種別 |
+| `Disperl::Integration` | ギルド連携の種別 |
 | `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が使用） |
 | `Disperl::Config` | `.env` ローダー |
 
@@ -148,6 +150,7 @@ if ($message) {
 | [ステージインスタンス](docs/stage.md) | ステージの開始・取得・変更・終了 |
 | [アプリ情報 / コマンド権限 / widget](docs/applications.md) | アプリ情報・権限上書き・widget・プレビュー・バニティ |
 | [ギルド設定](docs/guild-settings.md) | ギルド設定・ウェルカム画面・オンボーディング |
+| [ギルド管理（審査・連携・所属）](docs/guild-admin.md) | メンバー審査・連携・ボイスリージョン・一括 BAN・所属ギルド |
 | [Entitlements / SKU](docs/entitlements.md) | 課金・Entitlement・SKU・サブスクリプション |
 | [ロール連携メタデータ](docs/role-connections.md) | Linked Roles のメタデータ設定 |
 | [ロール管理](docs/roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
@@ -443,7 +446,9 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - ギルド設定の変更・ウェルカム画面・オンボーディング（`Disperl::Guild`）
 - Entitlements / SKU / Subscriptions（`Disperl::Entitlement`）
 - ロール連携メタデータ（`Disperl::RoleConnection`）
-- チャンネルフォロー・Bot プロフィール変更・メッセージ小物（クロスポスト・リアクション単位の削除）
+- メンバー審査・ギルド連携・ボイスリージョン・一括 BAN・所属ギルド管理（`Disperl::Integration`）
+- チャンネルフォロー・ボイスステータス・Bot プロフィール変更
+- メッセージ小物: クロスポスト・リアクション単位の削除・元の応答の取得 / 削除・ステッカーパック取得
 - ロール: 取得・作成・編集・並び替え・削除・色 / アイコン / Unicode 絵文字
 - メンバー: 一覧・検索・ニックネーム・ロール付与 / 剥奪・タイムアウト・キック / BAN / プルーン
 - 権限: 名前とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）
@@ -464,4 +469,5 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - OAuth2
 - ギルドの作成 / 削除（ユーザーアカウントの操作）
 - Guild Template
+- 現在のアプリの編集（`PATCH /applications/@me`）・アプリのアクティビティインスタンス
 - ユーザーアプリ / 埋め込みアプリ

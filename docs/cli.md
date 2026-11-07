@@ -13,6 +13,7 @@
 - [チャンネル管理](#チャンネル管理)
 - [小さめの API](#小さめの-api)
 - [ギルド設定・課金](#ギルド設定課金)
+- [その他の管理 API](#その他の管理-api)
 - [ロール管理](#ロール管理)
 - [メンバー管理](#メンバー管理)
 - [監査ログ](#監査ログ)
@@ -255,6 +256,41 @@ perl test.pl sku-subscriptions <SKU_ID> [--user ID]
 perl test.pl role-connections
 perl test.pl role-connection-edit metadata.json
 ```
+
+## その他の管理 API
+
+### ボイス・インタラクション
+
+```sh
+perl test.pl voice-status [--channel ID]
+perl test.pl voice-status-set "会議中" [--channel ID]
+perl test.pl voice-status-clear [--channel ID]
+
+perl test.pl original <インタラクショントークン>          # 元の応答を表示
+perl test.pl original-delete <インタラクショントークン>   # 元の応答を削除
+```
+
+### ギルド管理・所属
+
+```sh
+perl test.pl bulk-ban <ID> <ID> ... [--delete-seconds N] [--guild ID] [--reason 理由]
+perl test.pl sticker-pack <ID>
+perl test.pl regions [--guild ID]
+perl test.pl my-guilds [--limit N] [--with-counts]
+perl test.pl my-member [--guild ID]
+perl test.pl leave-guild [--guild ID]
+
+perl test.pl verification [--guild ID]
+perl test.pl verification-edit --enable --description "規約に同意してください"
+perl test.pl verification-edit --fields fields.json
+
+perl test.pl integrations [--guild ID]
+perl test.pl integration-edit <ID> --expire-behavior kick --expire-grace-days 7
+perl test.pl integration-edit <ID> --emoticons 0
+perl test.pl integration-delete <ID> --reason "解除"
+```
+
+- `verification-edit --fields` は審査フォームの配列 JSON（[ギルド管理](guild-admin.md#メンバー審査screening) 参照）
 
 ## ロール管理
 
@@ -549,6 +585,7 @@ perl test.pl history
 - [ステージインスタンス](stage.md)
 - [アプリ情報 / コマンド権限 / widget](applications.md)
 - [ギルド設定](guild-settings.md)
+- [ギルド管理（審査・連携・所属）](guild-admin.md)
 - [Entitlements / SKU](entitlements.md)
 - [ロール連携メタデータ](role-connections.md)
 - [スケジュールイベント](events.md)

@@ -12,6 +12,8 @@
 - [権限ビット](#権限ビット)
 - [削除](#削除)
 - [招待一覧](#招待一覧)
+- [アナウンスのフォロー](#アナウンスのフォロー)
+- [ボイスチャンネルのステータス](#ボイスチャンネルのステータス)
 - [関連ページ](#関連ページ)
 
 ## 作成
@@ -217,6 +219,26 @@ print "$follow->{channel_id} -> $follow->{webhook_id}\n";
 
 転送されたメッセージを他チャンネルでも公開するには
 [クロスポスト](client.md#アナウンスの公開) を使います。
+
+## ボイスチャンネルのステータス
+
+ボイスチャンネルに「会議中」などのステータスを表示できます。
+
+```perl
+my $status = $client->get_channel_voice_status($channel_id);   # { status => ... }
+print $status->{status};
+
+$client->set_channel_voice_status($channel_id, '会議中');   # 成功時は 1
+$client->delete_channel_voice_status($channel_id);          # 消す
+```
+
+| メソッド | 戻り値 | 説明 |
+|---|---|---|
+| `get_channel_voice_status($channel_id)` | ハッシュ | `{ status }` |
+| `set_channel_voice_status($channel_id, $status)` | `1` | 1〜500 文字 |
+| `delete_channel_voice_status($channel_id)` | `1` | ステータスを消す |
+
+- ボイスチャンネル以外では API エラーになります
 
 ## 関連ページ
 

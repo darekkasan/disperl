@@ -28,6 +28,7 @@ lib/Disperl/Commands.pm      コマンド権限の対象種別
 lib/Disperl/Guild.pm         ギルド設定・オンボーディングの種別
 lib/Disperl/Entitlement.pm   Entitlement / SKU の種別
 lib/Disperl/RoleConnection.pm ロール連携メタデータの種別
+lib/Disperl/Integration.pm   ギルド連携の種別
 lib/Disperl/WebSocket.pm     RFC 6455 クライアント
 lib/Disperl/Config.pm        .env ローダー
 
@@ -94,7 +95,7 @@ prove -l t
 - **ネットワークを使いません**。`ua` と WebSocket を偽オブジェクトに差し替えます
 - `t/` から `.env` は読みません（実トークンを使わない）
 
-現在のテスト（35 ファイル / 311 件）:
+現在のテスト（36 ファイル / 320 件）:
 
 | ファイル | 内容 |
 |---|---|
@@ -133,6 +134,7 @@ prove -l t
 | `t/32_forum.t` | フォーラム投稿 / タグ / レイアウト / `Disperl::Forum` |
 | `t/33_small_apis.t` | 絵文字 / ステッカー / サウンド / ステージ / アプリ / 権限 / widget |
 | `t/34_bot_apis.t` | ギルド設定 / ウェルカム / オンボーディング / Entitlement / ロール連携 / follow / me |
+| `t/35_remaining_apis.t` | ボイスステータス / 元の応答 / 一括 BAN / 審査 / 連携 / 所属ギルド |
 
 ### テストを書くとき
 

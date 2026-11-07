@@ -23,9 +23,13 @@ use Disperl::Guild qw(
     guild_verification_value guild_notification_value guild_content_filter_value
     guild_afk_timeout_value guild_system_channel_flags
     guild_onboarding_mode_value guild_onboarding_prompt_value
+    guild_screening_field_value
 );
 use Disperl::Entitlement qw(entitlement_owner_value);
 use Disperl::RoleConnection qw(role_connection_type_value);
+use Disperl::Integration qw(
+    integration_expire_behavior_value
+);
 
 my $API_BASE    = 'https://discord.com/api/v10';
 my $MAX_CONTENT = 2000;
@@ -804,6 +808,57 @@ sub modify_current_user {
     return $self->_finish($res, 'hash');
 }
 
+# Bot が参加しているギルドの一覧。
+#   get_current_user_guilds(limit => 200, with_counts => 1)
+sub get_current_user_guilds {
+    my ($self, %opts) = @_;
+
+    my @query;
+    for my $key (qw(before after)) {
+        push @query, "$key=" . _uri_escape($opts{$key}) if defined $opts{$key};
+    }
+
+    if (defined $opts{limit}) {
+        die "limit must be between 1 and 200\n"
+            unless !ref $opts{limit} && $opts{limit} =~ /^\d+\z/
+                && $opts{limit} >= 1 && $opts{limit} <= 200;
+        push @query, 'limit=' . ($opts{limit} + 0);
+    }
+
+    push @query, 'with_counts=true' if $opts{with_counts};
+
+    my $url = "$API_BASE/users/\@me/guilds";
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'array');
+}
+
+# ギルドでの自分のメンバー情報。
+sub get_current_user_guild_member {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/users/\@me/guilds/$guild_id/member",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ギルドから退出する。成功時は 1（ギルド所有者は退出できない）。
+sub leave_guild {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('DELETE', "$API_BASE/users/\@me/guilds/$guild_id");
+    return $self->_finish($res, 'none');
+}
+
 sub get_channel {
     my ($self, $channel_id) = @_;
 
@@ -1114,6 +1169,200 @@ sub _onboarding_prompts {
     }
 
     return \@out;
+}
+
+# ギルドで使えるボイスリージョン一覧。
+sub get_guild_voice_regions {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/regions");
+    return $self->_finish($res, 'array');
+}
+
+# ---------------------------------------------------------------- membership screening
+
+# メンバー審査フォームを取得する（MANAGE_GUILD が必要）。
+sub get_guild_member_verification {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/member-verification",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# メンバー審査フォームを変更する（MANAGE_GUILD が必要）。
+#   update_guild_member_verification($guild_id,
+#       enabled     => 1,
+#       description => 'ルールに同意してください',
+#       form_fields => [
+#           { field_type => 'terms', label => '規約', required => 1 },
+#           { field_type => 'multiple_choice_dropdown', label => 'きっかけ', required => 0,
+#             choices => [ { label => '友達', value => 'friend' } ] },
+#       ],
+#   )
+sub update_guild_member_verification {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my %payload;
+
+    if (exists $opts{enabled}) {
+        $payload{enabled} = $opts{enabled} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    if (defined $opts{description}) {
+        die "verification description must be 300 characters or less\n"
+            if length($opts{description}) > 300;
+        $payload{description} = $opts{description};
+    }
+
+    if (defined $opts{form_fields}) {
+        $payload{form_fields} = _verification_fields($opts{form_fields});
+    }
+
+    die "no membership screening fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/guilds/$guild_id/member-verification", \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub _verification_fields {
+    my ($fields) = @_;
+
+    die "form_fields must be an array reference\n" unless ref $fields eq 'ARRAY';
+
+    my @out;
+    for my $field (@$fields) {
+        die "form field must be a hash reference\n"
+            unless ref $field eq 'HASH';
+
+        my $type = guild_screening_field_value(
+            exists $field->{field_type} ? $field->{field_type} : undef,
+        );
+
+        my $label = $field->{label};
+        die "form field label is required\n"
+            unless defined $label && !ref $label && length $label;
+        die "form field label must be 45 characters or less\n"
+            if length($label) > 45;
+
+        my %row = (
+            field_type => $type,
+            label      => $label,
+            required   => $field->{required} ? JSON::PP::true : JSON::PP::false,
+        );
+
+        $row{description} = $field->{description}
+            if defined $field->{description};
+
+        if (defined $field->{choices}) {
+            die "form field choices must be an array reference\n"
+                unless ref $field->{choices} eq 'ARRAY';
+
+            my @choices;
+            for my $choice (@{ $field->{choices} }) {
+                die "choice must be a hash reference\n"
+                    unless ref $choice eq 'HASH';
+                die "choice label is required\n"
+                    unless defined $choice->{label} && length $choice->{label};
+                die "choice value is required\n"
+                    unless defined $choice->{value} && length $choice->{value};
+                push @choices, {
+                    label => $choice->{label},
+                    value => $choice->{value},
+                };
+            }
+            $row{choices} = \@choices;
+        }
+
+        push @out, \%row;
+    }
+
+    return \@out;
+}
+
+# ---------------------------------------------------------------- integrations
+
+# ギルドの連携一覧（MANAGE_GUILD が必要）。
+sub get_guild_integrations {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/integrations");
+    return $self->_finish($res, 'array');
+}
+
+# 連携の設定を変更する（MANAGE_GUILD が必要。一部の種類のみ）。
+#   update_guild_integration($guild_id, $integration_id,
+#       expire_behavior     => 'kick',
+#       expire_grace_period => 7,
+#       enable_emoticons    => 1,
+#   )
+sub update_guild_integration {
+    my ($self, $guild_id, $integration_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "integration id is required\n"
+        unless defined $integration_id && length $integration_id;
+
+    my %payload;
+
+    if (defined $opts{expire_behavior}) {
+        $payload{expire_behavior} =
+            integration_expire_behavior_value($opts{expire_behavior});
+    }
+
+    if (defined $opts{expire_grace_period}) {
+        my $days = $opts{expire_grace_period};
+        die "expire_grace_period must be between 0 and 30\n"
+            unless !ref $days && $days =~ /^\d+\z/ && $days <= 30;
+        $payload{expire_grace_period} = $days + 0;
+    }
+
+    if (exists $opts{enable_emoticons}) {
+        $payload{enable_emoticons} =
+            $opts{enable_emoticons} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    die "no integration fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/guilds/$guild_id/integrations/$integration_id",
+        \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 連携を削除する（MANAGE_GUILD が必要）。成功時は 1。
+sub delete_guild_integration {
+    my ($self, $guild_id, $integration_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "integration id is required\n"
+        unless defined $integration_id && length $integration_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/guilds/$guild_id/integrations/$integration_id",
+        undef,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
 }
 
 sub get_guild_channels {
@@ -1569,6 +1818,40 @@ sub unban_guild_member {
         $self->_audit_opts(\%opts),
     );
     return $self->_finish($res, 'none');
+}
+
+# 複数ユーザーをまとめて BAN する（BAN_MEMBERS）。
+#   my $result = $client->bulk_ban_guild_members($guild_id, [ $id1, $id2 ],
+#       delete_message_seconds => 86400, reason => '荒らし');
+#   # { banned_users => [...], failed_users => [...] }
+sub bulk_ban_guild_members {
+    my ($self, $guild_id, $user_ids, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    die "user_ids must be an array reference\n"
+        unless ref $user_ids eq 'ARRAY';
+    die "at least one user id is required\n" unless @$user_ids;
+    die "at most 200 user ids are allowed\n" if @$user_ids > 200;
+
+    my $ids = _id_array($user_ids, 'user_ids');
+
+    my %payload = (user_ids => $ids);
+    if (defined $opts{delete_message_seconds}) {
+        my $seconds = $opts{delete_message_seconds};
+        die "delete_message_seconds must be between 0 and 604800\n"
+            unless !ref $seconds && $seconds =~ /^\d+\z/ && $seconds <= 604800;
+        $payload{delete_message_seconds} = $seconds + 0;
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/guilds/$guild_id/bulk-ban",
+        \%payload,
+        $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
 }
 
 # プルーン対象の人数を取得する（KICK_MEMBERS）。
@@ -2229,6 +2512,18 @@ sub get_sticker_packs {
 
     $self->{last_error} = undef;
     my $res = $self->_request('GET', "$API_BASE/sticker-packs");
+    return $self->_finish($res, 'hash');
+}
+
+# ステッカーパックを 1 つ取得する。
+sub get_sticker_pack {
+    my ($self, $pack_id) = @_;
+
+    die "sticker pack id is required\n"
+        unless defined $pack_id && length $pack_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/sticker-packs/$pack_id");
     return $self->_finish($res, 'hash');
 }
 
@@ -3286,6 +3581,52 @@ sub follow_channel {
         { webhook_channel_id => "$webhook_channel_id" },
     );
     return $self->_finish($res, 'hash');
+}
+
+# ボイスチャンネルのステータス（「会議中」等）を取得する。
+sub get_channel_voice_status {
+    my ($self, $channel_id) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/channels/$channel_id/voice-status");
+    return $self->_finish($res, 'hash');
+}
+
+# ボイスチャンネルのステータスを設定する（1〜500 文字）。成功時は 1。
+sub set_channel_voice_status {
+    my ($self, $channel_id, $status) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+    die "voice status is required\n"
+        unless defined $status && length $status;
+    die "voice status must be 500 characters or less\n"
+        if length($status) > 500;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT',
+        "$API_BASE/channels/$channel_id/voice-status",
+        { status => $status },
+    );
+    return $self->_finish($res, 'none');
+}
+
+# ボイスチャンネルのステータスを消す。成功時は 1。
+sub delete_channel_voice_status {
+    my ($self, $channel_id) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE', "$API_BASE/channels/$channel_id/voice-status",
+    );
+    return $self->_finish($res, 'none');
 }
 
 # チャンネルの作成 / 更新の JSON を作る。
@@ -4594,6 +4935,40 @@ sub edit_interaction_response {
     $self->{last_error} = undef;
     my $res = $self->_request('PATCH', $url, $payload, { auth => 0 });
     return $self->_finish($res, 'hash');
+}
+
+# 最初のインタラクション応答（@original）を取得する。
+sub get_original_interaction_response {
+    my ($self, $application_id, $token) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "interaction token is required\n"
+        unless defined $token && length $token;
+
+    my $url = "$API_BASE/webhooks/$application_id/"
+        . _uri_escape($token) . '/messages/@original';
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url, undef, { auth => 0 });
+    return $self->_finish($res, 'hash');
+}
+
+# 最初のインタラクション応答（@original）を削除する。成功時は 1。
+sub delete_original_interaction_response {
+    my ($self, $application_id, $token) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "interaction token is required\n"
+        unless defined $token && length $token;
+
+    my $url = "$API_BASE/webhooks/$application_id/"
+        . _uri_escape($token) . '/messages/@original';
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('DELETE', $url, undef, { auth => 0 });
+    return $self->_finish($res, 'none');
 }
 
 # インタラクションのフォローアップを送る（トークンが有効な間は何度でも送れる）。

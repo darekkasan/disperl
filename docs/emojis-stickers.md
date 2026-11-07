@@ -52,7 +52,8 @@ $client->delete_guild_emoji($guild_id, $emoji_id, reason => '削除');
 ```perl
 # 標準ステッカー / パック
 my $sticker = $client->get_sticker($sticker_id);
-my $packs   = $client->get_sticker_packs;    # { sticker_packs => [...] }
+my $packs   = $client->get_sticker_packs;        # { sticker_packs => [...] }
+my $pack    = $client->get_sticker_pack($pack_id);
 
 # ギルドステッカー
 my $stickers = $client->get_guild_stickers($guild_id);
@@ -74,6 +75,7 @@ $client->delete_guild_sticker($guild_id, $sticker_id, reason => '削除');
 |---|---|---|
 | `get_sticker($sticker_id)` | ハッシュ | 標準ステッカー |
 | `get_sticker_packs()` | ハッシュ | 標準パック一覧（`sticker_packs`） |
+| `get_sticker_pack($pack_id)` | ハッシュ | パックを 1 つ取得 |
 | `get_guild_stickers($guild_id)` | 配列 | ギルドのステッカー |
 | `get_guild_sticker($guild_id, $sticker_id)` | ハッシュ | ギルドステッカー |
 | `create_guild_sticker($guild_id, %opts)` | ハッシュ | `name` / `tags` / `file` か `data` / `description` / `filename` / `reason` |

@@ -27,9 +27,10 @@ use Disperl::AutoMod qw(
     automod_event_name automod_trigger_name automod_action_name
 );
 use Disperl::Commands qw(command_permission_name);
-use Disperl::Guild qw(guild_onboarding_mode_name);
+use Disperl::Guild qw(guild_onboarding_mode_name guild_screening_field_name);
 use Disperl::Entitlement qw(sku_type_name);
 use Disperl::RoleConnection qw(role_connection_type_name);
+use Disperl::Integration qw(integration_type_name);
 
 load_dotenv("$FindBin::Bin/.env");
 
@@ -305,6 +306,25 @@ disperl 動作確認 CLI
                                        サブスクリプション一覧
   perl test.pl role-connections       ロール連携メタデータ一覧
   perl test.pl role-connection-edit <JSONファイル>  ロール連携メタデータを設定する
+  perl test.pl voice-status [--channel ID]          ボイスステータスを表示する
+  perl test.pl voice-status-set <状態> [--channel ID]  ボイスステータスを設定する
+  perl test.pl voice-status-clear [--channel ID]    ボイスステータスを消す
+  perl test.pl original <インタラクショントークン>   元の応答を表示する
+  perl test.pl original-delete <インタラクショントークン>  元の応答を削除する
+  perl test.pl bulk-ban <ID> <ID> ... [--delete-seconds N] [--guild ID] [--reason 理由]
+                                       まとめて BAN する
+  perl test.pl sticker-pack <ID>      ステッカーパックを表示する
+  perl test.pl regions [--guild ID]   ボイスリージョン一覧
+  perl test.pl my-guilds [--limit N] [--with-counts]  参加中のギルド一覧
+  perl test.pl my-member [--guild ID] 自分のメンバー情報
+  perl test.pl leave-guild [--guild ID]  ギルドから退出する
+  perl test.pl verification [--guild ID]   メンバー審査を表示する
+  perl test.pl verification-edit [--enable|--disable] [--description 説明]
+      [--fields JSONファイル] [--guild ID]   メンバー審査を変更する
+  perl test.pl integrations [--guild ID]   連携一覧
+  perl test.pl integration-edit <ID> [--expire-behavior remove_role|kick]
+      [--expire-grace-days N] [--emoticons 0|1] [--guild ID]   連携を変更する
+  perl test.pl integration-delete <ID> [--guild ID] [--reason 理由]  連携を削除する
   perl test.pl channels [ギルドID]     チャンネル一覧（省略時は現在のギルド）
   perl test.pl channel-create <名前> [--type text|voice|category|announcement|stage|forum|media]
       [--parent ID] [--topic 話題] [--slowmode 秒] [--guild ID] [--reason 理由]
@@ -486,6 +506,11 @@ disperl 動作確認 CLI
   perl test.pl follow 111111111111111111 222222222222222222
   perl test.pl app-emoji-create party party.png
   perl test.pl entitlements --exclude-ended
+  perl test.pl voice-status-set "会議中" --channel 111111111111111111
+  perl test.pl bulk-ban 111111111111111111 222222222222222222 --delete-seconds 86400
+  perl test.pl my-guilds --with-counts
+  perl test.pl verification-edit --enable --description "規約に同意してください"
+  perl test.pl integrations
   perl test.pl watch --status idle --activity "待機中"
   perl test.pl watch --status invisible
   perl test.pl watch --shard 0/2
@@ -1919,6 +1944,282 @@ sub cmd_role_connection_edit {
     ) or _api_fail('ロール連携メタデータの更新');
 
     out sprintf "ロール連携メタデータを更新しました（%d 件）\n", scalar @$result;
+    return 0;
+}
+
+# ---------------------------------------------------------------- 残りの Bot API
+
+sub cmd_voice_status {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(channel)]);
+
+    my $status = client()->get_channel_voice_status($opt->{channel} // channel_id())
+        or _api_fail('ボイスステータスの取得');
+
+    out "ボイスステータス: " . ($status->{status} // '(なし)') . "\n";
+    return 0;
+}
+
+sub cmd_voice_status_set {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(channel)]);
+
+    my $status = join ' ', @$pos;
+    _fatal('使い方: perl test.pl voice-status-set <状態> [--channel ID]')
+        unless length $status;
+
+    client()->set_channel_voice_status($opt->{channel} // channel_id(), $status)
+        or _api_fail('ボイスステータスの設定');
+
+    out "ボイスステータスを設定しました: $status\n";
+    return 0;
+}
+
+sub cmd_voice_status_clear {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(channel)]);
+
+    client()->delete_channel_voice_status($opt->{channel} // channel_id())
+        or _api_fail('ボイスステータスの削除');
+
+    out "ボイスステータスを削除しました\n";
+    return 0;
+}
+
+sub cmd_original {
+    my ($token) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl original <インタラクショントークン>')
+        unless defined $token && length $token;
+
+    my $message = client()->get_original_interaction_response(_application_id(), $token)
+        or _api_fail('元の応答の取得');
+
+    out "元の応答: id=" . ($message->{id} // '?') . "\n";
+    out "  " . ($message->{content} // '(本文なし)') . "\n";
+    return 0;
+}
+
+sub cmd_original_delete {
+    my ($token) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl original-delete <インタラクショントークン>')
+        unless defined $token && length $token;
+
+    client()->delete_original_interaction_response(_application_id(), $token)
+        or _api_fail('元の応答の削除');
+
+    out "元の応答を削除しました\n";
+    return 0;
+}
+
+sub cmd_bulk_ban {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(delete-seconds guild reason)]);
+
+    _fatal('使い方: perl test.pl bulk-ban <ユーザーID> <ユーザーID> ... [--delete-seconds N] [--guild ID] [--reason 理由]')
+        unless @$pos;
+
+    my %opts;
+    $opts{delete_message_seconds} = $opt->{'delete-seconds'}
+        if defined $opt->{'delete-seconds'};
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    my $result = client()->bulk_ban_guild_members(
+        _guild_or_current($opt->{guild}), $pos, %opts,
+    ) or _api_fail('一括 BAN');
+
+    out sprintf "BAN 成功 %d 件 / 失敗 %d 件\n",
+        scalar @{ $result->{banned_users} || [] },
+        scalar @{ $result->{failed_users} || [] };
+    return 0;
+}
+
+sub cmd_sticker_pack {
+    my ($id) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl sticker-pack <ID>')
+        unless defined $id && length $id;
+
+    my $pack = client()->get_sticker_pack($id) or _api_fail('ステッカーパック');
+
+    out sprintf "%s (id: %s)\n", $pack->{name} // '?', $pack->{id} // '?';
+    out "  ステッカー: " . scalar @{ $pack->{stickers} || [] } . " 件\n";
+    return 0;
+}
+
+sub cmd_regions {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $regions = client()->get_guild_voice_regions(_guild_or_current($opt->{guild}))
+        or _api_fail('ボイスリージョン');
+
+    out sprintf "ボイスリージョン %d 件\n", scalar @$regions;
+    for my $region (@$regions) {
+        out sprintf "  %-20s %s%s\n",
+            $region->{id} // '?', $region->{name} // '',
+            $region->{deprecated} ? ' (非推奨)' : '';
+    }
+    return 0;
+}
+
+sub cmd_my_guilds {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(limit)], [qw(with-counts)]);
+
+    my %opts;
+    $opts{limit} = $opt->{limit} if defined $opt->{limit};
+    $opts{with_counts} = 1 if $opt->{'with-counts'};
+
+    my $guilds = client()->get_current_user_guilds(%opts)
+        or _api_fail('所属ギルド一覧');
+
+    out sprintf "参加中ギルド %d 件\n", scalar @$guilds;
+    for my $guild (@$guilds) {
+        out sprintf "  %-20s %s%s\n",
+            $guild->{id} // '?', $guild->{name} // '',
+            $guild->{owner} ? ' (owner)' : '';
+    }
+    return 0;
+}
+
+sub cmd_my_member {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $member = client()->get_current_user_guild_member(_guild_or_current($opt->{guild}))
+        or _api_fail('自分のメンバー情報');
+
+    out sprintf "nick: %s\n", $member->{nick} // '(なし)';
+    out "ロール: " . join(', ', @{ $member->{roles} || [] }) . "\n";
+    return 0;
+}
+
+sub cmd_leave_guild {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $guild = _guild_or_current($opt->{guild});
+    client()->leave_guild($guild) or _api_fail('ギルドからの退出');
+
+    out "ギルドから退出しました: $guild\n";
+    return 0;
+}
+
+sub cmd_verification {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $form = client()->get_guild_member_verification(_guild_or_current($opt->{guild}))
+        or _api_fail('メンバー審査');
+
+    out sprintf "メンバー審査: %s\n", $form->{enabled} ? '有効' : '無効';
+    out "  説明: " . ($form->{description} // '') . "\n";
+    for my $field (@{ $form->{form_fields} || [] }) {
+        out sprintf "  %-24s %s%s\n",
+            _screening_field_name($field->{field_type}),
+            $field->{label} // '',
+            $field->{required} ? ' (必須)' : '';
+    }
+    return 0;
+}
+
+sub _screening_field_name {
+    my ($type) = @_;
+    return 'unknown' unless defined $type;
+    return guild_screening_field_name($type) // "type$type";
+}
+
+sub cmd_verification_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(description fields guild)], [qw(enable disable)]);
+
+    my %opts;
+    $opts{enabled} = 1 if $opt->{enable};
+    $opts{enabled} = 0 if $opt->{disable};
+    $opts{description} = $opt->{description} if defined $opt->{description};
+
+    if (defined $opt->{fields}) {
+        my $fields = _read_json_file($opt->{fields});
+        _fatal('--fields の JSON は配列にしてください') unless ref $fields eq 'ARRAY';
+        $opts{form_fields} = $fields;
+    }
+
+    _fatal('変更する項目がありません（--enable / --disable / --description / --fields）')
+        unless keys %opts;
+
+    my $form = client()->update_guild_member_verification(
+        _guild_or_current($opt->{guild}), %opts,
+    ) or _api_fail('メンバー審査の更新');
+
+    out sprintf "メンバー審査を更新しました: %s\n", $form->{enabled} ? '有効' : '無効';
+    return 0;
+}
+
+sub cmd_integrations {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $integrations = client()->get_guild_integrations(_guild_or_current($opt->{guild}))
+        or _api_fail('連携一覧');
+
+    out sprintf "連携 %d 件\n", scalar @$integrations;
+    for my $integration (@$integrations) {
+        out sprintf "  %-20s %-20s %s\n",
+            $integration->{id} // '?',
+            _integration_type_name($integration->{type}),
+            $integration->{name} // '';
+    }
+    return 0;
+}
+
+sub _integration_type_name {
+    my ($type) = @_;
+    return 'unknown' unless defined $type;
+    return integration_type_name($type) // "type$type";
+}
+
+sub cmd_integration_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(expire-behavior expire-grace-days emoticons guild)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl integration-edit <ID> [--expire-behavior remove_role|kick] [--expire-grace-days N] [--emoticons 0|1] [--guild ID]')
+        unless defined $id && length $id;
+
+    my %opts;
+    $opts{expire_behavior} = $opt->{'expire-behavior'}
+        if defined $opt->{'expire-behavior'};
+    $opts{expire_grace_period} = $opt->{'expire-grace-days'}
+        if defined $opt->{'expire-grace-days'};
+    $opts{enable_emoticons} = $opt->{emoticons} ? 1 : 0
+        if defined $opt->{emoticons};
+
+    _fatal('変更する項目がありません（--expire-behavior / --expire-grace-days / --emoticons）')
+        unless keys %opts;
+
+    my $integration = client()->update_guild_integration(
+        _guild_or_current($opt->{guild}), $id, %opts,
+    ) or _api_fail('連携の更新');
+
+    out sprintf "連携を更新しました: id=%s\n", $integration->{id} // $id;
+    return 0;
+}
+
+sub cmd_integration_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild reason)]);
+
+    my $id = $pos->[0];
+    _fatal('使い方: perl test.pl integration-delete <ID> [--guild ID] [--reason 理由]')
+        unless defined $id && length $id;
+
+    my %opts;
+    $opts{reason} = $opt->{reason} if defined $opt->{reason};
+
+    client()->delete_guild_integration(_guild_or_current($opt->{guild}), $id, %opts)
+        or _api_fail('連携の削除');
+
+    out "連携を削除しました: id=$id\n";
     return 0;
 }
 
@@ -4463,6 +4764,22 @@ my %COMMANDS = (
     'sku-subscriptions' => \&cmd_sku_subscriptions,
     'role-connections'  => \&cmd_role_connections,
     'role-connection-edit' => \&cmd_role_connection_edit,
+    'voice-status'       => \&cmd_voice_status,
+    'voice-status-set'   => \&cmd_voice_status_set,
+    'voice-status-clear' => \&cmd_voice_status_clear,
+    original        => \&cmd_original,
+    'original-delete' => \&cmd_original_delete,
+    'bulk-ban'      => \&cmd_bulk_ban,
+    'sticker-pack'  => \&cmd_sticker_pack,
+    regions         => \&cmd_regions,
+    'my-guilds'     => \&cmd_my_guilds,
+    'my-member'     => \&cmd_my_member,
+    'leave-guild'   => \&cmd_leave_guild,
+    verification    => \&cmd_verification,
+    'verification-edit' => \&cmd_verification_edit,
+    integrations    => \&cmd_integrations,
+    'integration-edit'   => \&cmd_integration_edit,
+    'integration-delete' => \&cmd_integration_delete,
     channels  => \&cmd_channels,
     'channel-create'      => \&cmd_channel_create,
     'channel-edit'        => \&cmd_channel_edit,

@@ -20,6 +20,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | `Disperl::Guild` | ギルド設定・オンボーディングの種別 | core のみ |
 | `Disperl::Entitlement` | Entitlement / SKU の種別 | core のみ |
 | `Disperl::RoleConnection` | ロール連携メタデータの種別 | core のみ |
+| `Disperl::Integration` | ギルド連携の種別 | core のみ |
 | `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が内部で使用） | `IO::Socket::SSL` |
 | `Disperl::Config` | `.env` ローダー | core のみ |
 
@@ -36,6 +37,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | [ステージインスタンス](stage.md) | ステージの開始・取得・変更・終了 |
 | [アプリ情報 / コマンド権限 / widget](applications.md) | アプリ情報・権限上書き・widget・プレビュー・バニティ |
 | [ギルド設定](guild-settings.md) | ギルド設定・ウェルカム画面・オンボーディング |
+| [ギルド管理（審査・連携・所属）](guild-admin.md) | メンバー審査・連携・ボイスリージョン・一括 BAN・所属ギルド |
 | [Entitlements / SKU](entitlements.md) | 課金・Entitlement・SKU・サブスクリプション |
 | [ロール連携メタデータ](role-connections.md) | Linked Roles のメタデータ設定 |
 | [ロール管理](roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
@@ -97,10 +99,11 @@ if ($message) {
 - ステージインスタンス: 開始・取得・変更・終了（`Disperl::Stage`）
 - アプリ情報・コマンド権限・ギルド widget / プレビュー / バニティ URL（`Disperl::Commands`）
 - ギルド設定の変更・ウェルカム画面・オンボーディング（`Disperl::Guild`）
+- メンバー審査・連携（Integrations）・ボイスリージョン・一括 BAN・所属ギルド管理（`Disperl::Integration`）
 - Entitlements / SKU / Subscriptions（`Disperl::Entitlement`）
 - ロール連携メタデータ（`Disperl::RoleConnection`）
-- チャンネルフォロー・Bot プロフィール変更
-- メッセージ小物: クロスポスト・リアクション単位の削除
+- チャンネルフォロー・ボイスステータス・Bot プロフィール変更
+- メッセージ小物: クロスポスト・リアクション単位の削除・元の応答の取得 / 削除
 - ロール: 取得・作成・編集・並び替え・削除・色 / アイコン / Unicode 絵文字
 - メンバー: 一覧・検索・ニックネーム・ロール付与 / 剥奪・タイムアウト・キック / BAN / プルーン
 - 権限: 名前とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）
@@ -121,6 +124,7 @@ if ($message) {
 - OAuth2
 - ギルドの作成 / 削除（ユーザーアカウントの操作）
 - Guild Template
+- 現在のアプリの編集（`PATCH /applications/@me`）・アプリのアクティビティインスタンス
 - ユーザーアプリ / 埋め込みアプリ
 
 ## Wiki へ移すときのメモ

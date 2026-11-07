@@ -53,6 +53,8 @@ $i->{data}{components} # モーダル送信の入力（Label → Text Input の�
 | `autocomplete_interaction($id, $token, \@choices)` | 8 | オートコンプリートの候補を返す |
 | `reply_modal($id, $token, $modal_or_opts)` | 9 | モーダルを表示する |
 | `edit_interaction_response($app_id, $token, $content, %opts)` | — | defer した応答を後から編集 |
+| `get_original_interaction_response($app_id, $token)` | — | 最初の応答（`@original`）を取得 |
+| `delete_original_interaction_response($app_id, $token)` | — | 最初の応答を削除 |
 | `create_followup_message($app_id, $token, $content, %opts)` | — | 追加のメッセージを送る |
 | `edit_followup_message($app_id, $token, $message_id, $content, %opts)` | — | フォローアップを編集（`@original` も可） |
 | `delete_followup_message($app_id, $token, $message_id)` | — | フォローアップを削除 |
@@ -117,6 +119,13 @@ $client->create_followup_message(
 
 - 内部で `wait=1` を付けるため、送信したメッセージが返る
 - `edit_followup_message` / `delete_followup_message` は `@original` を指定すると最初の応答を対象にできる
+
+最初の応答そのものを取得・削除するには専用メソッドを使います。
+
+```perl
+my $original = $client->get_original_interaction_response($app_id, $token);
+$client->delete_original_interaction_response($app_id, $token);
+```
 
 ## モーダル
 

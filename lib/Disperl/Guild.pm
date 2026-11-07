@@ -11,6 +11,7 @@ our @EXPORT_OK = qw(
     guild_system_channel_flag_map guild_system_channel_flags
     guild_onboarding_mode_map guild_onboarding_mode_name guild_onboarding_mode_value
     guild_onboarding_prompt_map guild_onboarding_prompt_name guild_onboarding_prompt_value
+    guild_screening_field_map guild_screening_field_name guild_screening_field_value
 );
 
 # ギルド設定の種別（2026 年時点）。
@@ -61,17 +62,26 @@ my %ONBOARDING_PROMPT = (
     DROPDOWN        => 1,
 );
 
+# メンバー審査（Membership Screening）の入力欄の種別。
+my %SCREENING_FIELD = (
+    TERMS                    => 0,
+    TEXT_INPUT               => 1,
+    MULTIPLE_CHOICE_DROPDOWN => 2,
+);
+
 my %VERIFICATION_BY_VALUE   = reverse %VERIFICATION;
 my %NOTIFICATION_BY_VALUE   = reverse %NOTIFICATION;
 my %CONTENT_FILTER_BY_VALUE = reverse %CONTENT_FILTER;
 my %ONBOARDING_MODE_BY_VALUE   = reverse %ONBOARDING_MODE;
 my %ONBOARDING_PROMPT_BY_VALUE = reverse %ONBOARDING_PROMPT;
+my %SCREENING_FIELD_BY_VALUE   = reverse %SCREENING_FIELD;
 
 sub guild_verification_map   { return { %VERIFICATION } }
 sub guild_notification_map   { return { %NOTIFICATION } }
 sub guild_content_filter_map { return { %CONTENT_FILTER } }
 sub guild_onboarding_mode_map   { return { %ONBOARDING_MODE } }
 sub guild_onboarding_prompt_map { return { %ONBOARDING_PROMPT } }
+sub guild_screening_field_map   { return { %SCREENING_FIELD } }
 sub guild_system_channel_flag_map { return { %SYSTEM_CHANNEL_FLAG } }
 
 sub guild_verification_name {
@@ -94,6 +104,10 @@ sub guild_onboarding_prompt_name {
     return _lookup(\%ONBOARDING_PROMPT_BY_VALUE, $_[0]);
 }
 
+sub guild_screening_field_name {
+    return _lookup(\%SCREENING_FIELD_BY_VALUE, $_[0]);
+}
+
 sub guild_verification_value {
     return _resolve(\%VERIFICATION, 'guild verification level', $_[0]);
 }
@@ -112,6 +126,10 @@ sub guild_onboarding_mode_value {
 
 sub guild_onboarding_prompt_value {
     return _resolve(\%ONBOARDING_PROMPT, 'onboarding prompt type', $_[0]);
+}
+
+sub guild_screening_field_value {
+    return _resolve(\%SCREENING_FIELD, 'membership screening field type', $_[0]);
 }
 
 # afk_timeout を検証する（60 / 300 / 900 / 1800 / 3600 秒）。
