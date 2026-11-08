@@ -25,6 +25,8 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - Entitlements / SKU / Subscriptions（課金）
 - ロール連携メタデータ（Linked Roles）
 - メンバー審査・ギルド連携・ギルドテンプレート・ボイスリージョン・一括 BAN
+- 権限のサーバー側計算（ギルド / チャンネル / ロール）・ボイスステート
+- 招待のターゲットユーザー（Community Invites）・コマンド単体取得
 - チャンネルフォロー・ボイスステータス・アナウンスのクロスポスト
 - Bot プロフィール（名前 / アイコン / バナー）の変更・アプリ設定の変更・所属ギルドの管理
 - メッセージのステッカー・nonce（重複検知）・返信の `fail_if_not_exists`
@@ -448,6 +450,8 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - Entitlements / SKU / Subscriptions（`Disperl::Entitlement`）
 - ロール連携メタデータ（`Disperl::RoleConnection`）
 - メンバー審査・ギルド連携・ギルドテンプレート・ボイスリージョン・一括 BAN・所属ギルド管理（`Disperl::Integration`）
+- 権限のサーバー側計算（ギルド / チャンネル / ロール）・ボイスステートの取得 / 変更
+- 招待のターゲットユーザー（Community Invites）・コマンド単体取得
 - チャンネルフォロー・ボイスステータス・Bot プロフィール変更・アプリ編集
 - メッセージ小物: ステッカー・nonce・クロスポスト・リアクション単位の削除・元の応答の取得 / 削除・ステッカーパック取得
 - ロール: 取得・作成・編集・並び替え・削除・色 / アイコン / Unicode 絵文字
@@ -458,7 +462,7 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - スケジュールイベント: 一覧・取得・作成・変更・削除・参加者
 - DM・ギルド情報の取得・招待・Webhook 実行（ファイル添付可）
 - Webhook の管理と送信済みメッセージの取得・編集・削除
-- Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス / 型付きコールバック / member chunking / シャーディング
+- Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス / 型付きコールバック / member chunking / シャーディング / capabilities
 - インタラクション: ボタン・セレクト・モーダル・オートコンプリート・フォローアップ
 - Components V2: Container / Section / Text Display / Media Gallery / File / Separator / モーダル V2
 - スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）

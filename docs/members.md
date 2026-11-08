@@ -203,6 +203,18 @@ my $channel_bits = channel_permissions($guild, $member, $channel);
 - `$guild` は `get_guild` / `GUILD_CREATE` のハッシュ、`$member` は `get_guild_member` のハッシュを渡します
 - 権限名とビットの対応は [チャンネル管理](channels.md#権限ビット) を参照してください
 
+### サーバー側で計算する
+
+Discord 側に計算させることもできます（`{ permissions => 'ビット列' }` が返ります）。
+
+```perl
+my $result = $client->get_guild_member_permissions($guild_id, $user_id);
+print "$result->{permissions}\n";
+```
+
+チャンネル単位・ロール単位の計算は
+[チャンネル管理](channels.md#サーバー側での権限計算) を参照してください。
+
 ## 必要な Intent と権限
 
 | 操作 | 必要なもの |

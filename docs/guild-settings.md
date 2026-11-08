@@ -47,13 +47,14 @@ my $guild = $client->update_guild($guild_id,
 
 `system_channel_flags` のフラグ名:
 
-| 名前 | 内容 |
-|---|---|
-| `suppress_join_notifications` | 参加通知を抑制 |
-| `suppress_premium_subscriptions` | プレミアムの通知を抑制 |
-| `suppress_guild_reminder` | ギルドのリマインダーを抑制 |
-| `suppress_join_notification_replies` | 参加通知への返信を抑制 |
-| `suppress_role_update_notifications` | ロール更新通知を抑制 |
+| 名前 | ビット | 内容 |
+|---|---|---|
+| `suppress_join_notifications` | 1<<0 | 参加通知を抑制 |
+| `suppress_premium_subscriptions` | 1<<1 | プレミアムの通知を抑制 |
+| `suppress_guild_reminder_notifications`（旧 `suppress_guild_reminder`） | 1<<2 | セットアップのヒントを抑制 |
+| `suppress_join_notification_replies` | 1<<3 | 参加通知への返信を抑制 |
+| `suppress_role_subscription_purchase_notifications`（旧 `suppress_role_update_notifications`） | 1<<4 | ロールサブスク購入の通知を抑制 |
+| `suppress_role_subscription_purchase_notification_replies` | 1<<5 | ロールサブスク通知への返信を抑制 |
 
 - 1 つも項目が無いと `die`（`no guild fields to update`）
 - `icon` などはファイルパスから data URI を自動生成します

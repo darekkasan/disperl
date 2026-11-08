@@ -506,6 +506,10 @@ sub _thread_payload {
     $payload{rate_limit_per_user} = $opts{rate_limit_per_user} + 0
         if defined $opts{rate_limit_per_user};
 
+    if (exists $opts{invitable}) {
+        $payload{invitable} = $opts{invitable} ? JSON::PP::true : JSON::PP::false;
+    }
+
     $payload{applied_tags} = forum_applied_tags($opts{applied_tags})
         if defined $opts{applied_tags};
 
@@ -825,6 +829,13 @@ sub get_current_user_guilds {
         push @query, 'limit=' . ($opts{limit} + 0);
     }
 
+    if (defined $opts{shard}) {
+        my $shard = $opts{shard};
+        die "shard must be a non-negative integer\n"
+            unless !ref $shard && $shard =~ /^\d+\z/;
+        push @query, 'shard=' . ($shard + 0);
+    }
+
     push @query, 'with_counts=true' if $opts{with_counts};
 
     my $url = "$API_BASE/users/\@me/guilds";
@@ -901,11 +912,15 @@ sub get_gateway_bot {
 
 # ---------------------------------------------------------------- guilds
 
+# ギルドを取得する。with_counts => 1 でメンバー数の概算も含む。
 sub get_guild {
-    my ($self, $guild_id) = @_;
+    my ($self, $guild_id, %opts) = @_;
+
+    my $url = "$API_BASE/guilds/$guild_id";
+    $url .= '?with_counts=true' if $opts{with_counts};
 
     $self->{last_error} = undef;
-    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id");
+    my $res = $self->_request('GET', $url);
     return $self->_finish($res, 'hash');
 }
 
@@ -1189,6 +1204,96 @@ sub get_voice_regions {
     $self->{last_error} = undef;
     my $res = $self->_request('GET', "$API_BASE/voice/regions");
     return $self->_finish($res, 'array');
+}
+
+# ギルドでの自分のボイスステート。
+sub get_current_user_voice_state {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/voice-states/\@me",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ギルドでの指定ユーザーのボイスステート。
+sub get_user_voice_state {
+    my ($self, $guild_id, $user_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/voice-states/$user_id",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 自分のボイスステートを変更する（ステージの発言要求 / 抑制）。
+#   update_current_user_voice_state($guild_id,
+#       channel_id => $stage_channel_id,
+#       suppress   => 1,
+#       request_to_speak_timestamp => '2026-12-01T20:00:00Z',
+#   )
+sub update_current_user_voice_state {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my %payload = _voice_state_payload(%opts, with_speak => 1);
+    die "no voice state fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/guilds/$guild_id/voice-states/\@me", \%payload,
+    );
+    return $self->_finish($res, 'none');
+}
+
+# 他人のボイスステートを変更する（MUTE_MEMBERS が必要。抑制のみ）。
+#   update_user_voice_state($guild_id, $user_id, channel_id => $stage_channel_id, suppress => 1)
+sub update_user_voice_state {
+    my ($self, $guild_id, $user_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
+
+    my %payload = _voice_state_payload(%opts);
+    die "no voice state fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/guilds/$guild_id/voice-states/$user_id", \%payload,
+    );
+    return $self->_finish($res, 'none');
+}
+
+sub _voice_state_payload {
+    my (%opts) = @_;
+    my $with_speak = delete $opts{with_speak};
+
+    my %payload;
+
+    if (defined $opts{channel_id}) {
+        $payload{channel_id} = "$opts{channel_id}";
+    }
+
+    if (exists $opts{suppress}) {
+        $payload{suppress} = $opts{suppress} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    if ($with_speak && exists $opts{request_to_speak_timestamp}) {
+        my $until = $opts{request_to_speak_timestamp};
+        $payload{request_to_speak_timestamp} = defined $until
+            ? _iso8601_time($until, 'request_to_speak_timestamp')
+            : undef;
+    }
+
+    return %payload;
 }
 
 # ---------------------------------------------------------------- membership screening
@@ -2152,6 +2257,59 @@ sub get_guild_audit_log {
 
     my $url = "$API_BASE/guilds/$guild_id/audit-logs";
     $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'hash');
+}
+
+# ---------------------------------------------------------------- permission calculations
+
+# ギルドでのメンバーの実効権限をサーバー側で計算する。
+# 返り値は { permissions => 'ビット列' }。
+sub get_guild_member_permissions {
+    my ($self, $guild_id, $user_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/permissions/member/$user_id",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# チャンネルでのメンバーの実効権限（ロール + 上書き）。
+#   get_channel_member_permissions($channel_id, $user_id, implicit => 0)
+sub get_channel_member_permissions {
+    my ($self, $channel_id, $user_id, %opts) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+    die "user id is required\n" unless defined $user_id && length $user_id;
+
+    my $url = "$API_BASE/channels/$channel_id/permissions/member/$user_id";
+    $url .= '?implicit=' . ($opts{implicit} ? 'true' : 'false')
+        if exists $opts{implicit};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'hash');
+}
+
+# チャンネルでのロール（+ @everyone）の実効権限。
+#   get_channel_role_permissions($channel_id, $role_id, implicit => 0)
+sub get_channel_role_permissions {
+    my ($self, $channel_id, $role_id, %opts) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+    die "role id is required\n" unless defined $role_id && length $role_id;
+
+    my $url = "$API_BASE/channels/$channel_id/permissions/role/$role_id";
+    $url .= '?implicit=' . ($opts{implicit} ? 'true' : 'false')
+        if exists $opts{implicit};
 
     $self->{last_error} = undef;
     my $res = $self->_request('GET', $url);
@@ -3780,8 +3938,9 @@ sub get_channel_voice_status {
 }
 
 # ボイスチャンネルのステータスを設定する（1〜500 文字）。成功時は 1。
+#   set_channel_voice_status($channel_id, '会議中', reason => '定例')
 sub set_channel_voice_status {
-    my ($self, $channel_id, $status) = @_;
+    my ($self, $channel_id, $status, %opts) = @_;
 
     die "channel id is required\n"
         unless defined $channel_id && length $channel_id;
@@ -3795,13 +3954,14 @@ sub set_channel_voice_status {
         'PUT',
         "$API_BASE/channels/$channel_id/voice-status",
         { status => $status },
+        $self->_audit_opts(\%opts),
     );
     return $self->_finish($res, 'none');
 }
 
 # ボイスチャンネルのステータスを消す。成功時は 1。
 sub delete_channel_voice_status {
-    my ($self, $channel_id) = @_;
+    my ($self, $channel_id, %opts) = @_;
 
     die "channel id is required\n"
         unless defined $channel_id && length $channel_id;
@@ -3809,6 +3969,7 @@ sub delete_channel_voice_status {
     $self->{last_error} = undef;
     my $res = $self->_request(
         'DELETE', "$API_BASE/channels/$channel_id/voice-status",
+        undef, $self->_audit_opts(\%opts),
     );
     return $self->_finish($res, 'none');
 }
@@ -4016,8 +4177,13 @@ sub _permission_value {
 
 # 招待を作る。成功時は招待オブジェクト（code を含む）。
 #   create_invite($channel_id, max_age => 3600, max_uses => 10, temporary => 1, unique => 1)
+#   create_invite($channel_id, target_user_ids => [ $user_id ], role_ids => [ $role_id ])
+#   create_invite($channel_id, target_users_file => 'users.csv')   # multipart
 sub create_invite {
     my ($self, $channel_id, %opts) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
 
     my %payload;
     $payload{max_age}   = $opts{max_age}   + 0 if defined $opts{max_age};
@@ -4031,13 +4197,176 @@ sub create_invite {
         $payload{$key} = $opts{$key} if defined $opts{$key};
     }
 
+    $payload{target_user_ids} = _id_array($opts{target_user_ids}, 'target_user_ids')
+        if defined $opts{target_user_ids};
+    $payload{role_ids} = _id_array($opts{role_ids}, 'role_ids')
+        if defined $opts{role_ids};
+
+    die "target_user_ids and target_users_file cannot be combined\n"
+        if defined $opts{target_user_ids} && defined $opts{target_users_file};
+
+    my $file = $self->_csv_file_spec(
+        \%opts, 'target_users_file', 'target_users_data',
+        'target_users_filename', 'target_users.csv',
+    );
+
+    my $url = "$API_BASE/channels/$channel_id/invites";
+
+    $self->{last_error} = undef;
+    my $res;
+    if ($file) {
+        my ($body, $boundary) = _multipart_named(\%payload, 'target_users_file', $file);
+        $res = $self->_request(
+            'POST', $url, undef,
+            {
+                raw          => $body,
+                content_type => "multipart/form-data; boundary=$boundary",
+            },
+        );
+    } else {
+        $res = $self->_request('POST', $url, \%payload);
+    }
+
+    return $self->_finish($res, 'hash');
+}
+
+# 招待のターゲットユーザー一覧を CSV 文字列で取得する。
+sub get_invite_target_users {
+    my ($self, $code) = @_;
+
+    die "invite code is required\n" unless defined $code && length $code;
+
+    my $url = "$API_BASE/invites/" . _uri_escape($code) . '/target-users';
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+
+    return $res->{content} if $res->{success};
+
+    $self->_finish($res, 'hash');
+    return undef;
+}
+
+# ターゲットユーザーを 1 人追加する。成功時は 1。
+sub add_invite_target_user {
+    my ($self, $code, $user_id) = @_;
+
+    die "invite code is required\n" unless defined $code && length $code;
+    die "user id is required\n"     unless defined $user_id && length $user_id;
+
+    my $url = "$API_BASE/invites/" . _uri_escape($code)
+        . "/target-users/$user_id";
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('PUT', $url);
+    return $self->_finish($res, 'none');
+}
+
+# ターゲットユーザーを 1 人削除する。成功時は 1。
+sub remove_invite_target_user {
+    my ($self, $code, $user_id) = @_;
+
+    die "invite code is required\n" unless defined $code && length $code;
+    die "user id is required\n"     unless defined $user_id && length $user_id;
+
+    my $url = "$API_BASE/invites/" . _uri_escape($code)
+        . "/target-users/$user_id";
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('DELETE', $url);
+    return $self->_finish($res, 'none');
+}
+
+# ターゲットユーザーを CSV で丸ごと置き換える（非同期ジョブ）。
+#   update_invite_target_users($code, file => 'users.csv')
+#   update_invite_target_users($code, data => "111\n222\n")
+sub update_invite_target_users {
+    my ($self, $code, %opts) = @_;
+
+    die "invite code is required\n" unless defined $code && length $code;
+
+    my $file = $self->_csv_file_spec(
+        \%opts, 'file', 'data', 'filename', 'target_users.csv',
+    );
+    die "target users file is required (file or data)\n" unless $file;
+
+    my ($body, $boundary) = _multipart_file_only('target_users_file', $file);
+    my $url = "$API_BASE/invites/" . _uri_escape($code) . '/target-users';
+
     $self->{last_error} = undef;
     my $res = $self->_request(
-        'POST',
-        "$API_BASE/channels/$channel_id/invites",
-        \%payload,
+        'PUT', $url, undef,
+        {
+            raw          => $body,
+            content_type => "multipart/form-data; boundary=$boundary",
+        },
     );
+    return $self->_finish($res, 'none');
+}
+
+# ターゲットユーザーをまとめて追加する（最大 1000 件）。
+sub bulk_add_invite_target_users {
+    my ($self, $code, $user_ids) = @_;
+    return $self->_bulk_target_users($code, 'bulk-add', $user_ids);
+}
+
+# ターゲットユーザーをまとめて削除する（最大 1000 件）。
+sub bulk_delete_invite_target_users {
+    my ($self, $code, $user_ids) = @_;
+    return $self->_bulk_target_users($code, 'bulk-delete', $user_ids);
+}
+
+sub _bulk_target_users {
+    my ($self, $code, $action, $user_ids) = @_;
+
+    die "invite code is required\n" unless defined $code && length $code;
+    die "user_ids must be an array reference\n"
+        unless ref $user_ids eq 'ARRAY';
+    die "user_ids accepts at most 1000 ids\n" if @$user_ids > 1000;
+
+    my $ids = _id_array($user_ids, 'user_ids');
+
+    my $url = "$API_BASE/invites/" . _uri_escape($code)
+        . "/target-users/$action";
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('POST', $url, { user_ids => $ids });
+    return $self->_finish($res, 'none');
+}
+
+# CSV 取り込みジョブの状態（非同期）。
+sub get_invite_target_users_job_status {
+    my ($self, $code) = @_;
+
+    die "invite code is required\n" unless defined $code && length $code;
+
+    my $url = "$API_BASE/invites/" . _uri_escape($code)
+        . '/target-users/job-status';
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
     return $self->_finish($res, 'hash');
+}
+
+# CSV ファイルの指定を内部形式（filename / bytes）に変換する。
+sub _csv_file_spec {
+    my ($self, $opts, $file_key, $data_key, $filename_key, $default_name) = @_;
+
+    my ($path, $data) = ($opts->{$file_key}, $opts->{$data_key});
+    return undef unless defined $path || defined $data;
+
+    if (defined $path) {
+        die "file not found: $path\n" unless -f $path;
+        return {
+            filename => $opts->{$filename_key} // _basename($path),
+            bytes    => _read_file($path),
+        };
+    }
+
+    return {
+        filename => $opts->{$filename_key} // $default_name,
+        bytes    => $data,
+    };
 }
 
 # 招待コードから情報を取得する（認証不要で使える）。
@@ -4943,6 +5272,53 @@ sub _multipart_body {
     return ($body, $boundary);
 }
 
+# payload_json + 名前付きファイル 1 つ（target_users_file など）の multipart。
+sub _multipart_named {
+    my ($json, $name, $file) = @_;
+
+    my $boundary = _multipart_boundary();
+
+    my $body = "--$boundary\r\n"
+        . "Content-Disposition: form-data; name=\"payload_json\"\r\n"
+        . "Content-Type: application/json\r\n\r\n"
+        . $JSON->encode($json) . "\r\n"
+        . _file_part($boundary, $name, $file)
+        . "--$boundary--\r\n";
+
+    return ($body, $boundary);
+}
+
+# 名前付きファイル 1 つだけの multipart（payload_json なし）。
+sub _multipart_file_only {
+    my ($name, $file) = @_;
+
+    my $boundary = _multipart_boundary();
+
+    my $body = _file_part($boundary, $name, $file)
+        . "--$boundary--\r\n";
+
+    return ($body, $boundary);
+}
+
+sub _file_part {
+    my ($boundary, $name, $file) = @_;
+
+    my $type = $file->{content_type} // _content_type($file->{filename});
+
+    # ヘッダを壊す文字だけ落とす
+    (my $safe = $file->{filename}) =~ s/["\r\n]/_/g;
+
+    return "--$boundary\r\n"
+        . "Content-Disposition: form-data; name=\"$name\"; filename=\"$safe\"\r\n"
+        . "Content-Type: $type\r\n\r\n"
+        . $file->{bytes} . "\r\n";
+}
+
+sub _multipart_boundary {
+    return '----disperl'
+        . join('', map { sprintf '%02x', int rand 256 } 1 .. 16);
+}
+
 sub _read_file {
     my ($path) = @_;
 
@@ -4982,7 +5358,8 @@ my %INTERACTION_RESPONSE = (
 # type: 4 = メッセージ, 5 = 後で返信, 6 = 後で更新, 7 = メッセージを更新,
 #       8 = オートコンプリート, 9 = モーダル
 sub interaction_callback {
-    my ($self, $interaction_id, $token, $type, $data) = @_;
+    my ($self, $interaction_id, $token, $type, $data, $opts) = @_;
+    $opts ||= {};
 
     die "interaction id is required\n"
         unless defined $interaction_id && length $interaction_id;
@@ -5000,10 +5377,13 @@ sub interaction_callback {
 
     my $url = "$API_BASE/interactions/$interaction_id/"
         . _uri_escape($token) . '/callback';
+    $url .= '?with_response=true' if $opts->{with_response};
 
     $self->{last_error} = undef;
     my $res = $self->_request('POST', $url, \%payload, { auth => 0 });
-    return $self->_finish($res, 'none');
+
+    # with_response なら interaction / resource を含む本文が返る
+    return $self->_finish($res, $opts->{with_response} ? 'hash' : 'none');
 }
 
 # インタラクションにその場で返信する（type 4）。
@@ -5294,6 +5674,40 @@ sub get_guild_commands {
         "$API_BASE/applications/$application_id/guilds/$guild_id/commands",
     );
     return $self->_finish($res, 'array');
+}
+
+# グローバルコマンドを 1 件取得する。
+sub get_global_command {
+    my ($self, $application_id, $command_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "command id is required\n"
+        unless defined $command_id && length $command_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/applications/$application_id/commands/$command_id",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ギルドコマンドを 1 件取得する。
+sub get_guild_command {
+    my ($self, $application_id, $guild_id, $command_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "command id is required\n"
+        unless defined $command_id && length $command_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET',
+        "$API_BASE/applications/$application_id/guilds/$guild_id/commands/$command_id",
+    );
+    return $self->_finish($res, 'hash');
 }
 
 sub delete_global_command {

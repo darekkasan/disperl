@@ -39,6 +39,11 @@ my %ACTIVITY_TYPE = (
     competing => 5,
 );
 
+# Gateway の capabilities（intents とは別のビットフィールド）。
+my %CAPABILITY = (
+    CHANNEL_OBFUSCATION => 1 << 15,
+);
+
 # 既定は GUILDS | GUILD_MESSAGES。本文まで読むには MESSAGE_CONTENT を足す
 # （Discord の Developer Portal で Privileged Intent を有効にする必要がある）。
 my $DEFAULT_INTENTS = $INTENTS{GUILDS} | $INTENTS{GUILD_MESSAGES};
@@ -72,19 +77,51 @@ my %TYPED_CALLBACK = (
     GUILD_ROLE_UPDATE    => 'on_guild_role_update',
     GUILD_ROLE_DELETE    => 'on_guild_role_delete',
 
-    CHANNEL_CREATE => 'on_channel_create',
-    CHANNEL_UPDATE => 'on_channel_update',
-    CHANNEL_DELETE => 'on_channel_delete',
+    GUILD_EMOJIS_UPDATE      => 'on_guild_emojis_update',
+    GUILD_STICKERS_UPDATE    => 'on_guild_stickers_update',
+    GUILD_INTEGRATIONS_UPDATE => 'on_guild_integrations_update',
+    INTEGRATION_CREATE       => 'on_integration_create',
+    INTEGRATION_UPDATE       => 'on_integration_update',
+    INTEGRATION_DELETE       => 'on_integration_delete',
 
-    THREAD_CREATE => 'on_thread_create',
-    THREAD_UPDATE => 'on_thread_update',
-    THREAD_DELETE => 'on_thread_delete',
+    ENTITLEMENT_CREATE => 'on_entitlement_create',
+    ENTITLEMENT_UPDATE => 'on_entitlement_update',
+    ENTITLEMENT_DELETE => 'on_entitlement_delete',
+
+    SUBSCRIPTION_CREATE => 'on_subscription_create',
+    SUBSCRIPTION_UPDATE => 'on_subscription_update',
+    SUBSCRIPTION_DELETE => 'on_subscription_delete',
+
+    CHANNEL_CREATE      => 'on_channel_create',
+    CHANNEL_UPDATE      => 'on_channel_update',
+    CHANNEL_DELETE      => 'on_channel_delete',
+    CHANNEL_INFO        => 'on_channel_info',
+    CHANNEL_PINS_UPDATE => 'on_channel_pins_update',
+
+    THREAD_CREATE          => 'on_thread_create',
+    THREAD_UPDATE          => 'on_thread_update',
+    THREAD_DELETE          => 'on_thread_delete',
+    THREAD_LIST_SYNC       => 'on_thread_list_sync',
+    THREAD_MEMBER_UPDATE   => 'on_thread_member_update',
+    THREAD_MEMBERS_UPDATE  => 'on_thread_members_update',
 
     INVITE_CREATE => 'on_invite_create',
     INVITE_DELETE => 'on_invite_delete',
 
     PRESENCE_UPDATE    => 'on_presence_update',
     VOICE_STATE_UPDATE => 'on_voice_state_update',
+
+    VOICE_CHANNEL_STATUS_UPDATE    => 'on_voice_channel_status_update',
+    VOICE_CHANNEL_START_TIME_UPDATE => 'on_voice_channel_start_time_update',
+    VOICE_CHANNEL_EFFECT_SEND      => 'on_voice_channel_effect_send',
+
+    GUILD_SOUNDBOARD_SOUND_CREATE => 'on_soundboard_sound_create',
+    GUILD_SOUNDBOARD_SOUND_UPDATE => 'on_soundboard_sound_update',
+    GUILD_SOUNDBOARD_SOUND_DELETE => 'on_soundboard_sound_delete',
+    GUILD_SOUNDBOARD_SOUNDS_UPDATE => 'on_soundboard_sounds_update',
+    SOUNDBOARD_SOUNDS              => 'on_soundboard_sounds',
+
+    APPLICATION_COMMAND_PERMISSIONS_UPDATE => 'on_command_permissions_update',
 
     GUILD_SCHEDULED_EVENT_CREATE      => 'on_scheduled_event_create',
     GUILD_SCHEDULED_EVENT_UPDATE      => 'on_scheduled_event_update',
@@ -137,6 +174,18 @@ sub new {
         $shard = [ $id + 0, $count + 0 ];
     }
 
+    # capabilities（整数、または名前の配列）。省略時は送らない。
+    my $capabilities;
+    if (defined $args{capabilities}) {
+        my $value = $args{capabilities};
+        if (ref $value eq 'ARRAY') {
+            $value = $class->capability_bits(@$value);
+        }
+        die "capabilities must be an integer\n"
+            unless defined $value && !ref $value && $value =~ /^\d+\z/;
+        $capabilities = $value + 0;
+    }
+
     # 型付きコールバックを引数から拾う（on_message など）
     my %typed;
     {
@@ -152,6 +201,7 @@ sub new {
         intents        => $intents,
         url            => $args{url} // 'wss://gateway.discord.gg/?v=10&encoding=json',
         shard          => $shard,
+        capabilities   => $capabilities,
         %typed,
         on_event       => $args{on_event},
         on_interaction => $args{on_interaction},
@@ -203,6 +253,54 @@ sub presence { $_[0]->{presence} }
 
 # シャード [id, count]。シャーディングしていなければ undef。
 sub shard { $_[0]->{shard} }
+
+# Identify に送る capabilities（未設定なら undef）。
+sub capabilities { $_[0]->{capabilities} }
+
+# サウンドボードの音源を要求する（op 31）。結果は on_soundboard_sounds で受け取る。
+#   $gw->request_soundboard_sounds($guild_id1, $guild_id2);
+sub request_soundboard_sounds {
+    my ($self, @guild_ids) = @_;
+
+    die "at least one guild id is required\n" unless @guild_ids;
+    die "not connected to the gateway\n" unless $self->{ws} && $self->{ready};
+
+    my @ids;
+    for my $id (@guild_ids) {
+        die "guild id must be a non-empty string\n"
+            if ref $id || !defined $id || !length $id;
+        push @ids, "$id";
+    }
+
+    $self->{ws}->send_text($JSON->encode({ op => 31, d => { guild_ids => \@ids } }));
+    return 1;
+}
+
+# チャンネルの一時情報（ステータス・ボイス開始時刻）を要求する（op 43）。
+# 結果は on_channel_info で受け取る。fields は status / voice_start_time。
+#   $gw->request_channel_info($guild_id, 'status', 'voice_start_time');
+sub request_channel_info {
+    my ($self, $guild_id, @fields) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "not connected to the gateway\n" unless $self->{ws} && $self->{ready};
+
+    @fields = ('status') unless @fields;
+
+    my %VALID = (status => 1, voice_start_time => 1);
+    for my $field (@fields) {
+        die "Unknown channel info field: "
+            . (ref $field ? 'reference' : (defined $field ? $field : 'undef'))
+            . " (expected status or voice_start_time)\n"
+            unless defined $field && !ref $field && $VALID{$field};
+    }
+
+    $self->{ws}->send_text($JSON->encode({
+        op => 43,
+        d  => { guild_id => "$guild_id", fields => [@fields] },
+    }));
+    return 1;
+}
 
 # ギルドメンバーを要求する（op 8）。結果は on_guild_members_chunk で受け取る。
 # GUILD_MEMBERS（Privileged Intent）が必要。
@@ -297,6 +395,19 @@ sub intent_bits {
     for my $name (@names) {
         die "Unknown intent: $name\n" unless exists $INTENTS{$name};
         $bits |= $INTENTS{$name};
+    }
+    return $bits;
+}
+
+# 名前のリストから capabilities のビットマスクを作る。
+#   Disperl::Gateway->capability_bits('CHANNEL_OBFUSCATION')
+sub capability_bits {
+    my ($class, @names) = @_;
+
+    my $bits = 0;
+    for my $name (@names) {
+        die "Unknown capability: $name\n" unless exists $CAPABILITY{$name};
+        $bits |= $CAPABILITY{$name};
     }
     return $bits;
 }
@@ -687,8 +798,9 @@ sub _identify {
             device  => 'disperl',
         },
     };
-    $d->{presence} = $self->{presence} if $self->{presence};
-    $d->{shard}    = $self->{shard}    if $self->{shard};
+    $d->{presence}     = $self->{presence}     if $self->{presence};
+    $d->{shard}        = $self->{shard}        if $self->{shard};
+    $d->{capabilities} = $self->{capabilities} if $self->{capabilities};
 
     $ws->send_text($JSON->encode({ op => 2, d => $d }));
 

@@ -58,7 +58,7 @@ $i->{data}{components} # モーダル送信の入力（Label → Text Input の�
 | `create_followup_message($app_id, $token, $content, %opts)` | — | 追加のメッセージを送る |
 | `edit_followup_message($app_id, $token, $message_id, $content, %opts)` | — | フォローアップを編集（`@original` も可） |
 | `delete_followup_message($app_id, $token, $message_id)` | — | フォローアップを削除 |
-| `interaction_callback($id, $token, $type, $data)` | — | 低レベル API |
+| `interaction_callback($id, $token, $type, $data, \%opts)` | — | 低レベル API。`with_response => 1` で応答本文を取得 |
 
 `interaction_callback` の `$type` は数値のほか、次の名前も使えます。
 
@@ -72,6 +72,16 @@ $i->{data}{components} # モーダル送信の入力（Label → Text Input の�
 | `modal` | 9 |
 
 `%opts` は `send_message` と同じ（`embeds` / `components` / `allowed_mentions` / `attachments`）です。
+
+`interaction_callback` に `with_response => 1` を渡すと、Discord からの応答本文
+（`interaction` / `resource`）を返します。
+
+```perl
+my $result = $client->interaction_callback(
+    $i->{id}, $i->{token}, 4, { content => 'pong' }, { with_response => 1 },
+);
+print $result->{resource}{message}{id};
+```
 
 ```perl
 # スラッシュコマンド
@@ -220,6 +230,8 @@ $client->delete_guild_command($app_id, $guild_id, $command_id);
 | `register_global_commands($app_id, \@commands)` | グローバルコマンドを登録 |
 | `get_guild_commands($app_id, $guild_id)` | 一覧 |
 | `get_global_commands($app_id)` | 一覧 |
+| `get_guild_command($app_id, $guild_id, $command_id)` | 1 件取得 |
+| `get_global_command($app_id, $command_id)` | 1 件取得 |
 | `delete_guild_command($app_id, $guild_id, $command_id)` | 1 件削除 |
 | `delete_global_command($app_id, $command_id)` | 1 件削除 |
 

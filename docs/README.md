@@ -100,6 +100,8 @@ if ($message) {
 - アプリ情報・コマンド権限・ギルド widget / プレビュー / バニティ URL（`Disperl::Commands`）
 - ギルド設定の変更・ウェルカム画面・オンボーディング（`Disperl::Guild`）
 - メンバー審査・連携（Integrations）・ギルドテンプレート・ボイスリージョン・一括 BAN・所属ギルド管理（`Disperl::Integration`）
+- 権限のサーバー側計算（ギルド / チャンネル / ロール）・ボイスステートの取得 / 変更
+- 招待のターゲットユーザー（Community Invites）・コマンド単体取得
 - Entitlements / SKU / Subscriptions（`Disperl::Entitlement`）
 - ロール連携メタデータ（`Disperl::RoleConnection`）
 - チャンネルフォロー・ボイスステータス・Bot プロフィール変更・アプリ編集
@@ -112,7 +114,7 @@ if ($message) {
 - スケジュールイベント: 一覧・取得・作成・変更・削除・参加者
 - DM・ギルド情報・招待
 - Webhook: 実行・管理・送信済みメッセージの取得 / 編集 / 削除
-- Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス / 型付きコールバック / member chunking / シャーディング
+- Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス / 型付きコールバック / member chunking / シャーディング / capabilities
 - インタラクション: ボタン・セレクト・モーダル・オートコンプリート・フォローアップ
 - Components V2: Container / Section / Text Display / Media Gallery / File / Separator / モーダル V2
 - スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）

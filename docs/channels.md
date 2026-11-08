@@ -14,6 +14,7 @@
 - [招待一覧](#招待一覧)
 - [アナウンスのフォロー](#アナウンスのフォロー)
 - [ボイスチャンネルのステータス](#ボイスチャンネルのステータス)
+- [ボイスステート](#ボイスステート)
 - [関連ページ](#関連ページ)
 
 ## 作成
@@ -185,6 +186,33 @@ my $channel_bits = channel_permissions($guild, $member, $channel);
 
 全 53 個の一覧は `perl test.pl permissions` で表示できます。
 
+### サーバー側での権限計算
+
+`Disperl::Permissions` はローカル計算ですが、Discord 側に計算させることもできます。
+
+```perl
+# ギルドでの実効権限
+my $guild_perms = $client->get_guild_member_permissions($guild_id, $user_id);
+
+# チャンネルでの実効権限（ロール + 上書き）
+my $member_perms = $client->get_channel_member_permissions($channel_id, $user_id);
+my $role_perms   = $client->get_channel_role_permissions($channel_id, $role_id);
+
+# implicit を外す（VIEW_CHANNEL / CONNECT によるマスクを適用しない）
+$client->get_channel_member_permissions($channel_id, $user_id, implicit => 0);
+```
+
+返り値は `{ permissions => 'ビット列' }` です。
+
+| メソッド | 説明 |
+|---|---|
+| `get_guild_member_permissions($guild_id, $user_id)` | ギルド全体の実効権限 |
+| `get_channel_member_permissions($channel_id, $user_id, %opts)` | チャンネルでの実効権限。`implicit` に対応 |
+| `get_channel_role_permissions($channel_id, $role_id, %opts)` | ロール + `@everyone` の実効権限。`implicit` に対応 |
+
+- `implicit` の既定は Discord 側で `true`（Bot 以外が対象のとき）
+- ビット列を名前に変換するには `permission_names($bits)` を使います
+
 ## 削除
 
 ```perl
@@ -239,6 +267,34 @@ $client->delete_channel_voice_status($channel_id);          # 消す
 | `delete_channel_voice_status($channel_id)` | `1` | ステータスを消す |
 
 - ボイスチャンネル以外では API エラーになります
+- `set_channel_voice_status` / `delete_channel_voice_status` は `reason`（監査ログ）に対応
+
+## ボイスステート
+
+```perl
+my $me      = $client->get_current_user_voice_state($guild_id);
+my $someone = $client->get_user_voice_state($guild_id, $user_id);
+
+# ステージで発言を要求する / 抑制する
+$client->update_current_user_voice_state($guild_id,
+    channel_id                 => $stage_channel_id,
+    request_to_speak_timestamp => '2026-12-01T20:00:00Z',
+);
+$client->update_user_voice_state($guild_id, $user_id,
+    channel_id => $stage_channel_id,
+    suppress   => 1,
+);
+```
+
+| メソッド | 戻り値 | 説明 |
+|---|---|---|
+| `get_current_user_voice_state($guild_id)` | ハッシュ | 自分のボイスステート |
+| `get_user_voice_state($guild_id, $user_id)` | ハッシュ | 指定ユーザーのボイスステート |
+| `update_current_user_voice_state($guild_id, %opts)` | `1` | `channel_id` / `suppress` / `request_to_speak_timestamp` |
+| `update_user_voice_state($guild_id, $user_id, %opts)` | `1` | `channel_id` / `suppress`（`MUTE_MEMBERS` が必要） |
+
+- いずれもステージチャンネル向けです（接続中でないと `404 Unknown Voice State`）
+- ボイス接続（VC への入退室）は対象外です（[実装範囲](README.md#実装範囲) 参照）
 
 ## 関連ページ
 

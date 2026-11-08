@@ -46,7 +46,7 @@ $client->modify_current_user(avatar => undef);    # アイコンを外す
 
 | メソッド | 戻り値 | 説明 |
 |---|---|---|
-| `get_guild($guild_id)` | ハッシュ | ギルド情報 |
+| `get_guild($guild_id, %opts)` | ハッシュ | ギルド情報。`with_counts => 1` でメンバー数の概算も含む |
 | `get_guild_channels($guild_id)` | 配列 | チャンネル一覧 |
 | `get_guild_roles($guild_id)` | 配列 | ロール一覧（詳細は [ロール管理](roles.md)） |
 | `get_guild_members($guild_id, %opts)` | 配列 | メンバー一覧（`GUILD_MEMBERS` が必要。詳細は [メンバー管理](members.md)） |
@@ -86,6 +86,45 @@ $client->delete_invite($code);       # 招待を削除
 | `temporary` | 一時的な参加（キックで退出） |
 | `unique` | 同じ条件でも常に新しいコードを作る |
 | `target_type` / `target_user_id` / `target_application_id` | ターゲット付き招待 |
+| `target_user_ids` | 参加できるユーザー ID（最大 1000） |
+| `role_ids` | 参加時に付与するロール（`MANAGE_ROLES` が必要） |
+| `target_users_file` / `target_users_data` | 参加できるユーザーの CSV（multipart） |
+
+`target_user_ids` と `target_users_file` / `target_users_data` は同時に指定できません。
+
+### ターゲットユーザー（Community Invites）
+
+招待を特定のユーザーだけに制限できます。追加・削除・一括操作・CSV 取り込みに対応します。
+
+```perl
+my $csv = $client->get_invite_target_users($invite->{code});   # CSV 文字列
+
+$client->add_invite_target_user($invite->{code}, $user_id);
+$client->remove_invite_target_user($invite->{code}, $user_id);
+
+$client->bulk_add_invite_target_users($invite->{code}, [ $id1, $id2 ]);
+$client->bulk_delete_invite_target_users($invite->{code}, [ $id1 ]);
+
+# CSV で丸ごと置き換え（非同期ジョブ）
+$client->update_invite_target_users($invite->{code}, file => 'users.csv');
+$client->update_invite_target_users($invite->{code}, data => "111\n222\n");
+
+my $job = $client->get_invite_target_users_job_status($invite->{code});
+print "$job->{processed_users} / $job->{total_users}\n";
+```
+
+| メソッド | 戻り値 | 説明 |
+|---|---|---|
+| `get_invite_target_users($code)` | CSV 文字列 | `user_id` ヘッダーの CSV |
+| `add_invite_target_user($code, $user_id)` | `1` | 1 人追加 |
+| `remove_invite_target_user($code, $user_id)` | `1` | 1 人削除 |
+| `bulk_add_invite_target_users($code, \@ids)` | `1` | 最大 1000 件 |
+| `bulk_delete_invite_target_users($code, \@ids)` | `1` | 最大 1000 件 |
+| `update_invite_target_users($code, %opts)` | `1` | `file` か `data` で CSV を置換 |
+| `get_invite_target_users_job_status($code)` | ハッシュ | `status` / `processed_users` / `total_users` / `error_message` |
+
+- CSV の取り込みは**非同期**です。`get_invite_target_users_job_status` で完了を確認してください
+- 実行者が招待作成者か、`MANAGE_GUILD` を持っている必要があります
 
 `get_invite` のオプション:
 

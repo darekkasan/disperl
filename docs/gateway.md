@@ -12,6 +12,7 @@ Identify / Resume / Heartbeat / 自動再接続 / プレゼンス変更に加え
 - [型付きコールバック](#型付きコールバック)
 - [メンバー一括取得](#メンバー一括取得)
 - [シャーディング](#シャーディング)
+- [capabilities](#capabilities)
 - [Intent](#intent)
 - [再接続](#再接続)
 - [プレゼンス](#プレゼンス)
@@ -54,6 +55,7 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `on_ready` | — | `READY` のときだけ |
 | `on_error` | 未指定なら `warn` | 接続エラー・再接続の通知 |
 | `shard` | — | `[id, count]`（[シャーディング](#シャーディング)） |
+| `capabilities` | — | 整数、または名前の配列（[capabilities](#capabilities)） |
 | 型付き | — | `on_guild_create` / `on_message_update` など（[型付きコールバック](#型付きコールバック)） |
 | `reconnect` | `1` | 自動再接続するか |
 | `max_reconnects` | `5` | 連続エラーの上限（READY でリセット） |
@@ -80,8 +82,18 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `$gw->is_running` | `run` 中か |
 | `$gw->presence` | 現在のプレゼンス（未設定なら `undef`） |
 | `$gw->shard` | シャード `[id, count]`（未設定なら `undef`） |
+| `$gw->capabilities` | capabilities のビットマスク（未設定なら `undef`） |
 
 `stop()` でループを止められます。
+
+送信系の操作:
+
+| メソッド | 説明 |
+|---|---|
+| `$gw->request_guild_members($guild_id, %opts)` | メンバーを要求（op 8、[メンバー一括取得](#メンバー一括取得)） |
+| `$gw->request_soundboard_sounds(@guild_ids)` | サウンドボード音源を要求（op 31）。結果は `on_soundboard_sounds` |
+| `$gw->request_channel_info($guild_id, @fields)` | チャンネルの一時情報を要求（op 43）。`fields` は `status` / `voice_start_time` |
+| `$gw->set_presence(%args)` | プレゼンスを変更 |
 
 ## コールバック
 
@@ -134,15 +146,25 @@ my $gw = Disperl::Gateway->new(
 | `on_guild_members_chunk` | `GUILD_MEMBERS_CHUNK` |
 | `on_guild_ban_add` / `on_guild_ban_remove` | `GUILD_BAN_*` |
 | `on_guild_role_create` / `on_guild_role_update` / `on_guild_role_delete` | `GUILD_ROLE_*` |
+| `on_guild_emojis_update` / `on_guild_stickers_update` | `GUILD_EMOJIS_UPDATE` / `GUILD_STICKERS_UPDATE` |
+| `on_guild_integrations_update` / `on_integration_create` / `on_integration_update` / `on_integration_delete` | `GUILD_INTEGRATIONS_UPDATE` / `INTEGRATION_*` |
 | `on_channel_create` / `on_channel_update` / `on_channel_delete` | `CHANNEL_*` |
+| `on_channel_info` / `on_channel_pins_update` | `CHANNEL_INFO` / `CHANNEL_PINS_UPDATE` |
 | `on_thread_create` / `on_thread_update` / `on_thread_delete` | `THREAD_*` |
+| `on_thread_list_sync` / `on_thread_member_update` / `on_thread_members_update` | `THREAD_LIST_SYNC` / `THREAD_MEMBER*_UPDATE` |
 | `on_invite_create` / `on_invite_delete` | `INVITE_*` |
 | `on_presence_update` | `PRESENCE_UPDATE` |
 | `on_voice_state_update` | `VOICE_STATE_UPDATE` |
+| `on_voice_channel_status_update` / `on_voice_channel_start_time_update` / `on_voice_channel_effect_send` | `VOICE_CHANNEL_*` |
+| `on_soundboard_sound_create` / `on_soundboard_sound_update` / `on_soundboard_sound_delete` / `on_soundboard_sounds_update` | `GUILD_SOUNDBOARD_SOUND_*` |
+| `on_soundboard_sounds` | `SOUNDBOARD_SOUNDS` |
 | `on_scheduled_event_create` / `on_scheduled_event_update` / `on_scheduled_event_delete` | `GUILD_SCHEDULED_EVENT_*` |
 | `on_scheduled_event_user_add` / `on_scheduled_event_user_remove` | `GUILD_SCHEDULED_EVENT_USER_*` |
 | `on_automod_action` | `AUTO_MODERATION_ACTION_EXECUTION` |
 | `on_automod_rule_create` / `on_automod_rule_update` / `on_automod_rule_delete` | `AUTO_MODERATION_RULE_*` |
+| `on_entitlement_create` / `on_entitlement_update` / `on_entitlement_delete` | `ENTITLEMENT_*` |
+| `on_subscription_create` / `on_subscription_update` / `on_subscription_delete` | `SUBSCRIPTION_*` |
+| `on_command_permissions_update` | `APPLICATION_COMMAND_PERMISSIONS_UPDATE` |
 | `on_audit_log_entry_create` | `GUILD_AUDIT_LOG_ENTRY_CREATE` |
 
 - 型付きコールバックを用意していないイベントは無視されます（`on_event` は全イベントで呼ばれます）
@@ -204,6 +226,30 @@ print @{ $gw->shard };            # 0 2
 - `id` は `0` 以上 `count - 1` 以下。範囲外は `die`
 - 推奨シャード数は `$client->get_gateway_bot->{shards}` で確認できます
 - CLI では `perl test.pl watch --shard 0/2` で指定できます
+
+## capabilities
+
+`capabilities` は Identify に含める別のビットフィールドで、
+**接続の振る舞い**を切り替えます（`intents` は受信イベントの選択）。
+
+```perl
+my $gw = Disperl::Gateway->new(
+    token        => $ENV{DISCORD_TOKEN},
+    capabilities => ['CHANNEL_OBFUSCATION'],   # または 1 << 15 の整数
+);
+
+print $gw->capabilities;    # 32768
+
+# 名前からビットマスクを作る
+my $bits = Disperl::Gateway->capability_bits('CHANNEL_OBFUSCATION');
+```
+
+| 名前 | 値 | 説明 |
+|---|---|---|
+| `CHANNEL_OBFUSCATION` | `1 << 15` | 権限の無いチャンネルのメタデータを秘匿して受信する（テスト用のオプトイン） |
+
+- 未指定なら Identify に `capabilities` を含めません
+- CLI では `perl test.pl watch --capabilities CHANNEL_OBFUSCATION` で指定できます
 
 ## Intent
 

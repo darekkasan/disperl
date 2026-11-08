@@ -338,6 +338,28 @@ disperl 動作確認 CLI
       [--cover 画像|none] [--install-url URL] [--role-url URL]
       [--interactions-url URL] [--flags N]   現在のアプリを編集する
   perl test.pl voice-regions          グローバルなボイスリージョン一覧
+  perl test.pl perms-member <ユーザーID> [--channel ID] [--guild ID] [--implicit 0|1]
+                                       実効権限をサーバー側で計算する
+  perl test.pl perms-role <ロールID> --channel ID [--implicit 0|1]
+                                       ロールのチャンネル権限を計算する
+  perl test.pl command-info <コマンドID> [--guild ID | --global]
+                                       コマンドを 1 件表示する
+  perl test.pl voice-state [ユーザーID|me] [--guild ID]
+                                       ボイスステートを表示する
+  perl test.pl voice-state-edit [ユーザーID|me] [--channel ID] [--suppress 0|1]
+      [--speak-at ISO8601] [--guild ID]   ボイスステートを変更する
+  perl test.pl target-users <招待コード>  ターゲットユーザー一覧（CSV）
+  perl test.pl target-user-add <招待コード> <ユーザーID>
+                                       ターゲットユーザーを追加する
+  perl test.pl target-user-remove <招待コード> <ユーザーID>
+                                       ターゲットユーザーを削除する
+  perl test.pl target-users-set <招待コード> <CSVファイル>
+                                       ターゲットユーザーを CSV で置き換える
+  perl test.pl target-users-bulk-add <招待コード> <ID,ID>
+                                       ターゲットユーザーを一括追加する
+  perl test.pl target-users-bulk-delete <招待コード> <ID,ID>
+                                       ターゲットユーザーを一括削除する
+  perl test.pl target-users-job <招待コード>  CSV 取り込みジョブの状態
   perl test.pl channels [ギルドID]     チャンネル一覧（省略時は現在のギルド）
   perl test.pl channel-create <名前> [--type text|voice|category|announcement|stage|forum|media]
       [--parent ID] [--topic 話題] [--slowmode 秒] [--guild ID] [--reason 理由]
@@ -426,7 +448,8 @@ disperl 動作確認 CLI
                                        スケジュールイベントを削除する
   perl test.pl event-users <ID> [--guild ID] [--limit N] [--with-member]
                                        イベント参加者一覧
-  perl test.pl invite                 招待リンクを作る（24 時間有効）
+  perl test.pl invite [--max-age 秒] [--target-user ID]... [--role ID]...
+                                       招待リンクを作る（既定 24 時間有効）
   perl test.pl user <ユーザーID>       ユーザー情報を表示する
   perl test.pl webhook <ID> <トークン> <本文>  Webhook で送信する
   perl test.pl webhook-create <名前> [--channel ID] [--avatar 画像] [--reason 理由]
@@ -461,6 +484,7 @@ disperl 動作確認 CLI
       --activity <名前>                アクティビティ
       --type <種類>                    playing / streaming / listening / watching / competing / custom
       --shard <ID/COUNT>               シャードを指定する（例: 0/2）
+      --capabilities NAME,NAME          Gateway capabilities（CHANNEL_OBFUSCATION）
   perl test.pl help                  このヘルプ
 
 例:
@@ -532,6 +556,9 @@ disperl 動作確認 CLI
   perl test.pl watch --status idle --activity "待機中"
   perl test.pl watch --status invisible
   perl test.pl watch --shard 0/2
+  perl test.pl watch --capabilities CHANNEL_OBFUSCATION
+  perl test.pl perms-member 123456789012345678 --channel 111111111111111111
+  perl test.pl target-users-bulk-add AbCdEf 111111111111111111,222222222222222222
 
 ステータスは Gateway に接続している間だけ有効（切断すると通常のオフラインに戻る）。
 watch 中は Discord から !status idle / !activity "作業中" でも変更できる。
@@ -2398,6 +2425,222 @@ sub cmd_voice_regions {
     return 0;
 }
 
+sub _print_permissions {
+    my ($bits) = @_;
+
+    out sprintf "permissions: %s\n", defined $bits ? $bits : '?';
+    my @names = permission_names($bits // 0);
+    out "  " . join(', ', @names) . "\n" if @names;
+    return;
+}
+
+sub cmd_perms_member {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(channel guild implicit)]);
+
+    my $user_id = $pos->[0];
+    _fatal('使い方: perl test.pl perms-member <ユーザーID> [--channel ID] [--guild ID] [--implicit 0|1]')
+        unless defined $user_id && length $user_id;
+
+    my %extra = exists $opt->{implicit} ? (implicit => $opt->{implicit}) : ();
+
+    my $result;
+    if (defined $opt->{channel}) {
+        $result = client()->get_channel_member_permissions(
+            $opt->{channel}, $user_id, %extra,
+        ) or _api_fail('チャンネル権限の計算');
+    } else {
+        $result = client()->get_guild_member_permissions(
+            _guild_or_current($opt->{guild}), $user_id,
+        ) or _api_fail('ギルド権限の計算');
+    }
+
+    _print_permissions($result->{permissions});
+    return 0;
+}
+
+sub cmd_perms_role {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(channel implicit)]);
+
+    my $role_id = $pos->[0];
+    _fatal('使い方: perl test.pl perms-role <ロールID> --channel ID [--implicit 0|1]')
+        unless defined $role_id && length $role_id && defined $opt->{channel};
+
+    my %extra = exists $opt->{implicit} ? (implicit => $opt->{implicit}) : ();
+
+    my $result = client()->get_channel_role_permissions(
+        $opt->{channel}, $role_id, %extra,
+    ) or _api_fail('ロール権限の計算');
+
+    _print_permissions($result->{permissions});
+    return 0;
+}
+
+sub cmd_command_info {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)], [qw(global)]);
+
+    my $command_id = $pos->[0];
+    _fatal('使い方: perl test.pl command-info <コマンドID> [--guild ID | --global]')
+        unless defined $command_id && length $command_id;
+
+    my $app_id = _application_id();
+    my $command = $opt->{global}
+        ? client()->get_global_command($app_id, $command_id)
+        : client()->get_guild_command(
+            $app_id, _guild_or_current($opt->{guild}), $command_id,
+        );
+
+    $command or _api_fail('コマンドの取得');
+
+    out sprintf "%s (id: %s, type: %s)\n",
+        $command->{name} // '?', $command->{id} // '?', $command->{type} // 1;
+    out "  説明: " . ($command->{description} // '') . "\n";
+    return 0;
+}
+
+sub cmd_voice_state {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)]);
+
+    my $target = $pos->[0] // 'me';
+    my $guild  = _guild_or_current($opt->{guild});
+
+    my $state = ($target eq 'me' || $target eq '@me')
+        ? client()->get_current_user_voice_state($guild)
+        : client()->get_user_voice_state($guild, $target);
+
+    $state or _api_fail('ボイスステートの取得');
+
+    out sprintf "user=%s channel=%s suppress=%s\n",
+        $state->{user_id} // '?',
+        $state->{channel_id} // '(未接続)',
+        $state->{suppress} ? 'yes' : 'no';
+    return 0;
+}
+
+sub cmd_voice_state_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(channel suppress speak-at guild)]);
+
+    my $target = $pos->[0] // 'me';
+    my $guild  = _guild_or_current($opt->{guild});
+
+    my %opts;
+    $opts{channel_id} = $opt->{channel} if defined $opt->{channel};
+    $opts{suppress}   = $opt->{suppress} ? 1 : 0 if defined $opt->{suppress};
+
+    if ($target eq 'me' || $target eq '@me') {
+        $opts{request_to_speak_timestamp} = $opt->{'speak-at'}
+            if defined $opt->{'speak-at'};
+        _fatal('変更する項目がありません（--channel / --suppress / --speak-at）')
+            unless keys %opts;
+        client()->update_current_user_voice_state($guild, %opts)
+            or _api_fail('ボイスステートの更新');
+    } else {
+        _fatal('他人の変更で指定できるのは --channel / --suppress だけです')
+            if defined $opt->{'speak-at'};
+        _fatal('変更する項目がありません（--channel / --suppress）')
+            unless keys %opts;
+        client()->update_user_voice_state($guild, $target, %opts)
+            or _api_fail('ボイスステートの更新');
+    }
+
+    out "ボイスステートを更新しました\n";
+    return 0;
+}
+
+sub cmd_target_users {
+    my ($code) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl target-users <招待コード>')
+        unless defined $code && length $code;
+
+    my $csv = client()->get_invite_target_users($code)
+        or _api_fail('ターゲットユーザー');
+
+    out $csv;
+    out "\n" unless $csv =~ /\n\z/;
+    return 0;
+}
+
+sub cmd_target_user_add {
+    my ($code, $user_id) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl target-user-add <招待コード> <ユーザーID>')
+        unless defined $code && defined $user_id;
+
+    client()->add_invite_target_user($code, $user_id)
+        or _api_fail('ターゲットユーザーの追加');
+
+    out "ターゲットユーザーを追加しました: $user_id\n";
+    return 0;
+}
+
+sub cmd_target_user_remove {
+    my ($code, $user_id) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl target-user-remove <招待コード> <ユーザーID>')
+        unless defined $code && defined $user_id;
+
+    client()->remove_invite_target_user($code, $user_id)
+        or _api_fail('ターゲットユーザーの削除');
+
+    out "ターゲットユーザーを削除しました: $user_id\n";
+    return 0;
+}
+
+sub cmd_target_users_set {
+    my ($code, $path) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl target-users-set <招待コード> <CSVファイル>')
+        unless defined $code && defined $path;
+
+    client()->update_invite_target_users($code, file => $path)
+        or _api_fail('ターゲットユーザーの更新');
+
+    out "ターゲットユーザーを更新しました（処理は非同期。target-users-job で確認）\n";
+    return 0;
+}
+
+sub cmd_target_users_bulk_add {
+    my ($code, $ids) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl target-users-bulk-add <招待コード> <ID,ID>')
+        unless defined $code && defined $ids;
+
+    client()->bulk_add_invite_target_users($code, _id_list($ids))
+        or _api_fail('ターゲットユーザーの一括追加');
+
+    out "ターゲットユーザーを一括追加しました\n";
+    return 0;
+}
+
+sub cmd_target_users_bulk_delete {
+    my ($code, $ids) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl target-users-bulk-delete <招待コード> <ID,ID>')
+        unless defined $code && defined $ids;
+
+    client()->bulk_delete_invite_target_users($code, _id_list($ids))
+        or _api_fail('ターゲットユーザーの一括削除');
+
+    out "ターゲットユーザーを一括削除しました\n";
+    return 0;
+}
+
+sub cmd_target_users_job {
+    my ($code) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl target-users-job <招待コード>')
+        unless defined $code && length $code;
+
+    my $job = client()->get_invite_target_users_job_status($code)
+        or _api_fail('ジョブ状態');
+
+    out sprintf "status=%s processed=%s/%s\n",
+        $job->{status} // '?',
+        $job->{processed_users} // '?',
+        $job->{total_users} // '?';
+    out "  error: $job->{error_message}\n" if defined $job->{error_message};
+    return 0;
+}
+
 # ---------------------------------------------------------------- ギルド / 招待 / ユーザー
 
 my %CHANNEL_TYPE = (
@@ -2443,8 +2686,17 @@ sub cmd_channels {
 }
 
 sub cmd_invite {
-    my $invite = client()->create_invite(channel_id(), max_age => 86400)
-        or _api_fail('招待の作成');
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args,
+        [qw(channel max-age)], [qw(target-user role)]);
+
+    my %opts = (max_age => defined $opt->{'max-age'} ? $opt->{'max-age'} : 86400);
+    $opts{target_user_ids} = $opt->{'target-user'} if $opt->{'target-user'};
+    $opts{role_ids}        = $opt->{role}         if $opt->{role};
+
+    my $invite = client()->create_invite(
+        $opt->{channel} // channel_id(), %opts,
+    ) or _api_fail('招待の作成');
 
     out "招待を作成しました: https://discord.gg/$invite->{code}\n";
     return 0;
@@ -4480,6 +4732,11 @@ sub cmd_watch {
         $gateway_args{shard} = [ $id, $count ];
     }
 
+    if (defined $opt{capabilities}) {
+        $gateway_args{capabilities} =
+            [ grep { length } split /\s*,\s*/, $opt{capabilities} ];
+    }
+
     if (defined $opt{activity}) {
         my $type = lc($opt{type} // 'playing');
         $gateway_args{activity} = $type eq 'custom'
@@ -4510,9 +4767,9 @@ sub _parse_watch_options {
     while (@args) {
         my $arg = shift @args;
 
-        if ($arg =~ /^--(status|activity|type|shard)=(.*)\z/s) {
+        if ($arg =~ /^--(status|activity|type|shard|capabilities)=(.*)\z/s) {
             $opt{$1} = $2;
-        } elsif ($arg =~ /^--(status|activity|type|shard)\z/) {
+        } elsif ($arg =~ /^--(status|activity|type|shard|capabilities)\z/) {
             _fatal("--$1 には値が必要です") unless @args;
             $opt{$1} = shift @args;
         } else {
@@ -4970,6 +5227,18 @@ my %COMMANDS = (
     'template-delete' => \&cmd_template_delete,
     'app-edit'      => \&cmd_app_edit,
     'voice-regions' => \&cmd_voice_regions,
+    'perms-member'  => \&cmd_perms_member,
+    'perms-role'    => \&cmd_perms_role,
+    'command-info'  => \&cmd_command_info,
+    'voice-state'      => \&cmd_voice_state,
+    'voice-state-edit' => \&cmd_voice_state_edit,
+    'target-users'          => \&cmd_target_users,
+    'target-user-add'       => \&cmd_target_user_add,
+    'target-user-remove'    => \&cmd_target_user_remove,
+    'target-users-set'      => \&cmd_target_users_set,
+    'target-users-bulk-add' => \&cmd_target_users_bulk_add,
+    'target-users-bulk-delete' => \&cmd_target_users_bulk_delete,
+    'target-users-job'      => \&cmd_target_users_job,
     channels  => \&cmd_channels,
     'channel-create'      => \&cmd_channel_create,
     'channel-edit'        => \&cmd_channel_edit,

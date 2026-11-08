@@ -302,6 +302,37 @@ perl test.pl voice-regions
 perl test.pl poll "質問" --answer A --answer B --layout default
 ```
 
+### 権限計算・コマンド・ボイス
+
+```sh
+perl test.pl perms-member <ユーザーID> [--channel ID] [--guild ID] [--implicit 0|1]
+perl test.pl perms-role <ロールID> --channel ID [--implicit 0|1]
+perl test.pl command-info <コマンドID> [--guild ID | --global]
+perl test.pl voice-state [ユーザーID|me] [--guild ID]
+perl test.pl voice-state-edit [ユーザーID|me] [--channel ID] [--suppress 0|1] [--speak-at ISO8601]
+```
+
+### 招待のターゲットユーザー
+
+```sh
+perl test.pl invite --max-age 3600 --target-user <ユーザーID> --role <ロールID>
+perl test.pl target-users <招待コード>              # CSV を表示
+perl test.pl target-user-add <招待コード> <ユーザーID>
+perl test.pl target-user-remove <招待コード> <ユーザーID>
+perl test.pl target-users-set <招待コード> users.csv
+perl test.pl target-users-bulk-add <招待コード> <ID,ID>
+perl test.pl target-users-bulk-delete <招待コード> <ID,ID>
+perl test.pl target-users-job <招待コード>
+```
+
+- `target-users-set` は非同期です。`target-users-job` で完了を確認してください
+
+### Gateway の capabilities
+
+```sh
+perl test.pl watch --capabilities CHANNEL_OBFUSCATION
+```
+
 - `verification-edit --fields` は審査フォームの配列 JSON（[ギルド管理](guild-admin.md#メンバー審査screening) 参照）
 
 ## ロール管理
@@ -559,6 +590,7 @@ perl test.pl watch --shard 0/2          # シャーディング
 | `--activity <名前>` | アクティビティの表示名 |
 | `--type <種類>` | `playing` / `streaming` / `listening` / `watching` / `competing` / `custom` |
 | `--shard <ID/COUNT>` | シャードを指定（例: `0/2`） |
+| `--capabilities NAME,NAME` | Gateway capabilities（例: `CHANNEL_OBFUSCATION`） |
 
 `watch` 中に反応するもの:
 

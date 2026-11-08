@@ -18,6 +18,10 @@ Bot がギルドを管理するための補助的な API をまとめます。
 
 参加時に同意させる審査フォームを扱います（`MANAGE_GUILD` が必要）。
 
+> **仕様変更（2026 年時点）**: 審査フォームの取得 / 編集エンドポイントは
+> 公式ドキュメントから削除されました（大幅改修中）。実装は残していますが、
+> 予告なく挙動が変わる可能性があります。
+
 ```perl
 my $form = $client->get_guild_member_verification($guild_id);
 
@@ -148,9 +152,12 @@ $client->leave_guild($guild_id);
 
 | メソッド | 戻り値 | 説明 |
 |---|---|---|
-| `get_current_user_guilds(%opts)` | 配列 | `before` / `after` / `limit` (1〜200) / `with_counts` |
+| `get_current_user_guilds(%opts)` | 配列 | `before` / `after` / `limit` (1〜200) / `with_counts` / `shard` |
 | `get_current_user_guild_member($guild_id)` | ハッシュ | 自分のメンバー情報 |
 | `leave_guild($guild_id)` | `1` | 退出 |
+
+- Large Bot Sharding を使う場合は `get_current_user_guilds(shard => $n)` で
+  シャードごとに取得します（`$n` は `max_concurrency - 1` まで）
 
 ## Disperl::Integration
 

@@ -66,6 +66,11 @@ $client->edit_application_command_permissions($app_id, $guild_id, $command_id, [
 | `get_application_command_permissions($app_id, $guild_id, $command_id)` | ハッシュ | 特定コマンドの上書き |
 | `edit_application_command_permissions($app_id, $guild_id, $command_id, $permissions)` | ハッシュ | 上書きを設定 |
 
+> **仕様変更（2026 年時点）**: コマンド権限の**更新**は Bearer トークン
+> （`applications.commands.permissions.update` スコープ）が必要と公式ドキュメントに明記されました。
+> Bot トークンで `edit_application_command_permissions` を呼ぶとエラーになる可能性があります
+> （取得は Bot トークンでも可能）。OAuth2 は対象外のため、このライブラリでは更新は保証外です。
+
 - `edit_...` は**丸ごと置き換え**です。既存の上書きは消えます
 - 各エントリは `{ id, type, permission }`。`permission` は真偽値
 - `type` は `role` (1) / `user` (2) / `channel` (3)。既定は `role`

@@ -116,6 +116,8 @@
 | 所属ギルドの `limit` | 1〜200 | `get_current_user_guilds` |
 | テンプレートの `name` / `description` | 1〜100 / 120 文字 | `create_guild_template` など |
 | アプリの `description` | 400 文字 | `update_current_application` |
+| 招待 `target_user_ids` / 一括操作の `user_ids` | 最大 1000 件 | `create_invite` / `bulk_*_invite_target_users` |
+| `get_current_user_guilds` の `limit` | 1〜200 | `get_current_user_guilds` |
 
 ## チャンネル
 

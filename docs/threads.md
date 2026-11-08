@@ -30,6 +30,7 @@ $client->create_thread_from_message($channel, $message_id, name => 'この件に
 | `auto_archive_duration` | — | 60 / 1440 / 4320 / 10080（分） |
 | `rate_limit_per_user` | — | 1 人あたりの投稿間隔（秒） |
 | `applied_tags` | — | 付けるタグの ID 配列（最大 5 個、フォーラム用） |
+| `invitable` | — | プライベートスレッドで非モデレーターの招待を許可するか |
 | `message` / `content` / `embeds` / `components` | — | 最初の書き込み（フォーラム / メディア用） |
 
 `create_thread_from_message` は `type` を受け付けません（既存メッセージのスレッドは公開のみ）。
