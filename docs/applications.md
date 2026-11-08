@@ -19,12 +19,24 @@ my $app = $client->get_current_application;    # GET /applications/@me
 print "$app->{name} ($app->{id})\n";
 
 my $public = $client->get_application($application_id);
+
+# アプリ設定を変更（一部はアプリ所有者 / チーム権限が必要）
+$client->update_current_application(
+    description => '説明',
+    tags        => [ 'bot', 'utility' ],
+    icon        => 'icon.png',
+    custom_install_url => 'https://example.com/install',
+);
 ```
 
 | メソッド | 戻り値 | 説明 |
 |---|---|---|
 | `get_current_application()` | ハッシュ | Bot 自身のアプリ情報 |
 | `get_application($application_id)` | ハッシュ | アプリの公開情報（認証不要） |
+| `update_current_application(%opts)` | ハッシュ | `description` / `tags` / `icon` / `cover_image` / `custom_install_url` / `role_connections_verification_url` / `interactions_endpoint_url` / `flags` / `install_params` / `integration_types_config` |
+
+- `description` は 400 文字まで、`tags` は配列
+- `icon` / `cover_image` はファイルパスまたは data URI、`undef` で解除
 
 アプリケーション ID は Bot のユーザー ID と同じです
 （CLI では `DISCORD_APPLICATION_ID` か Bot のユーザー ID を使います）。

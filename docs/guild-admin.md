@@ -7,6 +7,7 @@ Bot がギルドを管理するための補助的な API をまとめます。
 
 - [メンバー審査（Screening）](#メンバー審査screening)
 - [連携（Integrations）](#連携integrations)
+- [ギルドテンプレート](#ギルドテンプレート)
 - [ボイスリージョン](#ボイスリージョン)
 - [一括 BAN](#一括-ban)
 - [Bot の所属ギルド](#bot-の所属ギルド)
@@ -68,18 +69,48 @@ $client->delete_guild_integration($guild_id, $integration_id, reason => '解除'
 
 - 変更できるのは一部の連携種別だけです
 
-## ボイスリージョン
+## ギルドテンプレート
+
+ギルドの構成をテンプレートとして保存・共有できます（`MANAGE_GUILD` が必要）。
 
 ```perl
-my $regions = $client->get_guild_voice_regions($guild_id);
-for my $region (@$regions) {
-    print "$region->{id} $region->{name}\n";
-}
+my $templates = $client->get_guild_templates($guild_id);
+
+my $template = $client->create_guild_template($guild_id,
+    name        => 'テンプレ',
+    description => '説明',
+);
+
+my $public = $client->get_guild_template($template->{code});   # 認証不要
+
+$client->sync_guild_template($guild_id, $template->{code});     # 現在の状態に同期
+$client->update_guild_template($guild_id, $template->{code}, name => '改名');
+$client->delete_guild_template($guild_id, $template->{code});
 ```
 
 | メソッド | 戻り値 | 説明 |
 |---|---|---|
-| `get_guild_voice_regions($guild_id)` | 配列 | 利用可能なリージョン |
+| `get_guild_templates($guild_id)` | 配列 | テンプレート一覧 |
+| `get_guild_template($code)` | ハッシュ | コードから取得（**認証不要**） |
+| `create_guild_template($guild_id, %opts)` | ハッシュ | `name` / `description` |
+| `sync_guild_template($guild_id, $code)` | ハッシュ | 現在のギルド状態に同期 |
+| `update_guild_template($guild_id, $code, %opts)` | ハッシュ | `name` / `description` |
+| `delete_guild_template($guild_id, $code)` | `1` | 削除 |
+
+- `name` は 1〜100 文字、`description` は 120 文字まで
+- テンプレートから**ギルドを新規作成**するのはユーザーアカウントの操作です（Bot 不可）
+
+## ボイスリージョン
+
+```perl
+my $regions      = $client->get_guild_voice_regions($guild_id);   # ギルドで利用可能
+my $all_regions  = $client->get_voice_regions;                    # グローバル
+```
+
+| メソッド | 戻り値 | 説明 |
+|---|---|---|
+| `get_guild_voice_regions($guild_id)` | 配列 | ギルドで利用可能なリージョン |
+| `get_voice_regions()` | 配列 | グローバルなリージョン一覧 |
 
 ## 一括 BAN
 

@@ -25,12 +25,16 @@ $client->edit_message($channel_id, $message_id, $content, \%opts);
 | `components` | `[ action_row(button(...)) ]` | ボタン / セレクトメニュー / Components V2（[components.md](components.md)） |
 | `flags` | `components_v2_flag()` | メッセージフラグ。V2 では必須 |
 | `reply_to` | `'123456789012345678'` | 返信先メッセージ ID |
+| `fail_if_not_exists` | `0` | `reply_to` の参照先が無い場合に失敗させるか（既定は Discord 側で真） |
 | `tts` | `1` | 読み上げメッセージ |
+| `sticker_ids` | `['123456789012345678']` | ステッカー（最大 3 個）。単体でも送信可 |
+| `nonce` | `'abc123'` | 重複検知用の値（25 文字まで） |
+| `enforce_nonce` | `1` | 同じ `nonce` の重複を拒否する |
 | `poll` | `{ question => '...', answers => [...] }` | ネイティブ投票。`content` は省略可 |
 | `attachments` | `[{ id => '...', description => '...' }]` | 編集時に添付を保持する / `[]` で削除 |
 | `allowed_mentions` | `{ parse => ['users'] }` | この呼び出しだけメンション設定を変える |
 
-送信内容は「`content` / `embeds` / `components` / `poll` のいずれか」が必須です。
+送信内容は「`content` / `embeds` / `components` / `poll` / `sticker_ids` のいずれか」が必須です。
 Components V2（`flags => components_v2_flag()`）を使うときは `content` / `embeds` を併用できません（`die`）。
 どれも無い場合は送信前に `die` します（添付ファイル系メソッドは例外で、添付だけ送れます）。
 
@@ -85,8 +89,20 @@ my $message = $client->send_message($channel, undef, {
 # 返信
 $client->send_message($channel, '返信です', { reply_to => $message_id });
 
+# 参照先が消えていたら失敗させる
+$client->send_message($channel, '返信です', {
+    reply_to            => $message_id,
+    fail_if_not_exists  => 0,
+});
+
 # 読み上げ
 $client->send_message($channel, '読み上げます', { tts => 1 });
+
+# ステッカー（最大 3 個）
+$client->send_message($channel, undef, { sticker_ids => [ $sticker_id ] });
+
+# 重複送信を防ぐ
+$client->send_message($channel, '一度だけ', { nonce => 'abc123', enforce_nonce => 1 });
 
 # このメッセージだけユーザーメンションを許可
 $client->send_message($channel, '<@123> さん', {
@@ -170,6 +186,7 @@ my $message = $client->send_message($channel, undef, {
         answers     => [ '犬', '猫' ],
         duration    => 24,        # 時間（1〜768、省略時は Discord の既定）
         multiselect => 1,         # 複数選択を許可（allow_multiselect でも可）
+        layout_type => 'default', # レイアウト（default = 1）
     },
 });
 

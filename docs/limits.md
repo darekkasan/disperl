@@ -20,6 +20,8 @@
 | `footer.text` | 2,048 文字 | 共通 |
 | `author.name` | 256 文字 | 共通 |
 | 全 embed の合計文字数 | 6,000 文字 | 共通 |
+| ステッカー数 | 3 | `send_message` など（`sticker_ids`） |
+| `nonce` | 25 文字 | 共通 |
 | 添付ファイル数 | 10 | `send_file*` / `execute_webhook` / `create_followup_message` |
 | 一括削除の件数 | 2〜100 | `bulk_delete_messages` |
 | 履歴の `limit` | 1〜100 | `get_messages` |
@@ -112,6 +114,8 @@
 | 審査の `label` | 45 文字 | 同上 |
 | 連携の `expire_grace_period` | 0〜30 日 | `update_guild_integration` |
 | 所属ギルドの `limit` | 1〜200 | `get_current_user_guilds` |
+| テンプレートの `name` / `description` | 1〜100 / 120 文字 | `create_guild_template` など |
+| アプリの `description` | 400 文字 | `update_current_application` |
 
 ## チャンネル
 

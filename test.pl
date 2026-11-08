@@ -246,6 +246,7 @@ disperl 動作確認 CLI
       [--guild ID] [--reason 理由]    ステッカーを編集する
   perl test.pl sticker-delete <ID> [--guild ID] [--reason 理由]
                                        ステッカーを削除する
+  perl test.pl sticker-send <ID> ...  ステッカーだけのメッセージを送る
   perl test.pl sounds [--guild ID]    サウンドボード一覧
   perl test.pl sound-create <名前> <ファイル> [--volume 0.0-1.0] [--emoji 名前]
       [--guild ID] [--reason 理由]    サウンドを作る
@@ -325,6 +326,18 @@ disperl 動作確認 CLI
   perl test.pl integration-edit <ID> [--expire-behavior remove_role|kick]
       [--expire-grace-days N] [--emoticons 0|1] [--guild ID]   連携を変更する
   perl test.pl integration-delete <ID> [--guild ID] [--reason 理由]  連携を削除する
+  perl test.pl templates [--guild ID]  ギルドテンプレート一覧
+  perl test.pl template <コード>        テンプレートを表示する
+  perl test.pl template-create <名前> [--description 説明] [--guild ID]
+                                       テンプレートを作る
+  perl test.pl template-sync <コード> [--guild ID]   テンプレートを同期する
+  perl test.pl template-edit <コード> [--name 名前] [--description 説明] [--guild ID]
+                                       テンプレートを編集する
+  perl test.pl template-delete <コード> [--guild ID] テンプレートを削除する
+  perl test.pl app-edit [--description 説明] [--tags a,b] [--icon 画像|none]
+      [--cover 画像|none] [--install-url URL] [--role-url URL]
+      [--interactions-url URL] [--flags N]   現在のアプリを編集する
+  perl test.pl voice-regions          グローバルなボイスリージョン一覧
   perl test.pl channels [ギルドID]     チャンネル一覧（省略時は現在のギルド）
   perl test.pl channel-create <名前> [--type text|voice|category|announcement|stage|forum|media]
       [--parent ID] [--topic 話題] [--slowmode 秒] [--guild ID] [--reason 理由]
@@ -435,6 +448,7 @@ disperl 動作確認 CLI
   perl test.pl upload <ファイル> [<ファイル> ...] [--] [本文]
                                        ファイルを添付して送る（最大 10 個）
   perl test.pl poll <質問> [--answer 選択肢]... [--duration 時間] [--multiselect]
+      [--layout default]
                                        ネイティブ投票を作る（既定は はい / いいえ）
   perl test.pl poll-buttons <質問>     ボタン付きの投票を作る
   perl test.pl poll-end <メッセージID> 投票を終了して結果を表示する
@@ -511,6 +525,10 @@ disperl 動作確認 CLI
   perl test.pl my-guilds --with-counts
   perl test.pl verification-edit --enable --description "規約に同意してください"
   perl test.pl integrations
+  perl test.pl template-create "テンプレ" --description "説明"
+  perl test.pl sticker-send 111111111111111111
+  perl test.pl app-edit --description "説明" --tags bot,utility
+  perl test.pl poll "どちら?" --answer A --answer B --layout default
   perl test.pl watch --status idle --activity "待機中"
   perl test.pl watch --status invisible
   perl test.pl watch --shard 0/2
@@ -2220,6 +2238,163 @@ sub cmd_integration_delete {
         or _api_fail('連携の削除');
 
     out "連携を削除しました: id=$id\n";
+    return 0;
+}
+
+sub cmd_sticker_send {
+    my (@ids) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl sticker-send <ステッカーID> [<ステッカーID> ...]')
+        unless @ids;
+
+    my $message = client()->send_message(channel_id(), undef, { sticker_ids => \@ids })
+        or _api_fail('ステッカーの送信');
+
+    out "ステッカーを送信しました: id=" . ($message->{id} // '?') . "\n";
+    return 0;
+}
+
+sub cmd_templates {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $templates = client()->get_guild_templates(_guild_or_current($opt->{guild}))
+        or _api_fail('テンプレート一覧');
+
+    out sprintf "テンプレート %d 件\n", scalar @$templates;
+    for my $template (@$templates) {
+        out sprintf "  %-24s %s\n",
+            $template->{code} // '?', $template->{name} // '';
+    }
+    return 0;
+}
+
+sub cmd_template {
+    my ($code) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl template <コード>')
+        unless defined $code && length $code;
+
+    my $template = client()->get_guild_template($code) or _api_fail('テンプレート');
+
+    out sprintf "%s (code: %s)\n", $template->{name} // '?', $template->{code} // '?';
+    out "  説明: " . ($template->{description} // '') . "\n";
+    out "  使用回数: " . ($template->{usage_count} // '?') . "\n";
+    return 0;
+}
+
+sub cmd_template_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(description guild)]);
+
+    my $name = join ' ', @$pos;
+    _fatal('使い方: perl test.pl template-create <名前> [--description 説明] [--guild ID]')
+        unless length $name;
+
+    my %opts = (name => $name);
+    $opts{description} = $opt->{description} if defined $opt->{description};
+
+    my $template = client()->create_guild_template(_guild_or_current($opt->{guild}), %opts)
+        or _api_fail('テンプレートの作成');
+
+    out sprintf "テンプレートを作成しました: %s (code: %s)\n",
+        $template->{name} // $name, $template->{code} // '?';
+    return 0;
+}
+
+sub cmd_template_sync {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)]);
+
+    my $code = $pos->[0];
+    _fatal('使い方: perl test.pl template-sync <コード> [--guild ID]')
+        unless defined $code && length $code;
+
+    client()->sync_guild_template(_guild_or_current($opt->{guild}), $code)
+        or _api_fail('テンプレートの同期');
+
+    out "テンプレートを同期しました: code=$code\n";
+    return 0;
+}
+
+sub cmd_template_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(name description guild)]);
+
+    my $code = $pos->[0];
+    _fatal('使い方: perl test.pl template-edit <コード> [--name 名前] [--description 説明] [--guild ID]')
+        unless defined $code && length $code;
+
+    my %opts;
+    $opts{name}        = $opt->{name}        if defined $opt->{name};
+    $opts{description} = $opt->{description} if defined $opt->{description};
+    _fatal('変更する項目がありません（--name / --description）') unless keys %opts;
+
+    my $template = client()->update_guild_template(
+        _guild_or_current($opt->{guild}), $code, %opts,
+    ) or _api_fail('テンプレートの更新');
+
+    out sprintf "テンプレートを更新しました: %s (code: %s)\n",
+        $template->{name} // '', $template->{code} // $code;
+    return 0;
+}
+
+sub cmd_template_delete {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(guild)]);
+
+    my $code = $pos->[0];
+    _fatal('使い方: perl test.pl template-delete <コード> [--guild ID]')
+        unless defined $code && length $code;
+
+    client()->delete_guild_template(_guild_or_current($opt->{guild}), $code)
+        or _api_fail('テンプレートの削除');
+
+    out "テンプレートを削除しました: code=$code\n";
+    return 0;
+}
+
+sub cmd_app_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args,
+        [qw(description tags icon cover install-url role-url interactions-url flags)]);
+
+    my %opts;
+    $opts{description} = $opt->{description} if defined $opt->{description};
+    $opts{tags}        = _id_list($opt->{tags}) if defined $opt->{tags};
+    $opts{custom_install_url} = $opt->{'install-url'} if defined $opt->{'install-url'};
+    $opts{role_connections_verification_url} = $opt->{'role-url'}
+        if defined $opt->{'role-url'};
+    $opts{interactions_endpoint_url} = $opt->{'interactions-url'}
+        if defined $opt->{'interactions-url'};
+    $opts{flags} = $opt->{flags} if defined $opt->{flags};
+
+    for my $pair ([ icon => 'icon' ], [ cover_image => 'cover' ]) {
+        my ($key, $option) = @$pair;
+        next unless defined $opt->{$option};
+        $opts{$key} = lc($opt->{$option}) eq 'none' ? undef : $opt->{$option};
+    }
+
+    _fatal('変更する項目がありません（--description / --tags / --icon など）')
+        unless keys %opts;
+
+    my $app = client()->update_current_application(%opts)
+        or _api_fail('アプリの更新');
+
+    out sprintf "アプリを更新しました: %s (id: %s)\n",
+        $app->{name} // '', $app->{id} // '';
+    return 0;
+}
+
+sub cmd_voice_regions {
+    _parse_options([ map { _decode_arg($_) } @_ ], []);
+
+    my $regions = client()->get_voice_regions or _api_fail('ボイスリージョン');
+
+    out sprintf "ボイスリージョン %d 件（グローバル）\n", scalar @$regions;
+    for my $region (@$regions) {
+        out sprintf "  %-20s %s%s\n",
+            $region->{id} // '?', $region->{name} // '',
+            $region->{deprecated} ? ' (非推奨)' : '';
+    }
     return 0;
 }
 
@@ -4088,7 +4263,7 @@ sub cmd_poll {
     my (@args) = map { _decode_arg($_) } @_;
 
     my (@question, @answers);
-    my ($duration, $multiselect);
+    my ($duration, $multiselect, $layout);
 
     while (@args) {
         my $arg = shift @args;
@@ -4103,6 +4278,11 @@ sub cmd_poll {
             $duration = shift @args;
         } elsif ($arg =~ /^--duration=(.+)\z/) {
             $duration = $1;
+        } elsif ($arg eq '--layout') {
+            _fatal('--layout には値が必要です') unless @args;
+            $layout = shift @args;
+        } elsif ($arg =~ /^--layout=(.+)\z/) {
+            $layout = $1;
         } elsif ($arg eq '--multiselect') {
             $multiselect = 1;
         } elsif ($arg eq '--') {
@@ -4114,13 +4294,14 @@ sub cmd_poll {
     }
 
     my $text = join ' ', @question;
-    _fatal('使い方: perl test.pl poll <質問> [--answer 選択肢]... [--duration 時間] [--multiselect]')
+    _fatal('使い方: perl test.pl poll <質問> [--answer 選択肢]... [--duration 時間] [--multiselect] [--layout default]')
         unless length $text;
 
     @answers = ('はい', 'いいえ') unless @answers;
 
     my %poll = (question => $text, answers => \@answers);
     $poll{duration}    = $duration if defined $duration;
+    $poll{layout_type} = $layout   if defined $layout;
     $poll{multiselect} = 1         if $multiselect;
 
     my $message = client()->send_message(
@@ -4780,6 +4961,15 @@ my %COMMANDS = (
     integrations    => \&cmd_integrations,
     'integration-edit'   => \&cmd_integration_edit,
     'integration-delete' => \&cmd_integration_delete,
+    'sticker-send'  => \&cmd_sticker_send,
+    templates        => \&cmd_templates,
+    template         => \&cmd_template,
+    'template-create' => \&cmd_template_create,
+    'template-sync'   => \&cmd_template_sync,
+    'template-edit'   => \&cmd_template_edit,
+    'template-delete' => \&cmd_template_delete,
+    'app-edit'      => \&cmd_app_edit,
+    'voice-regions' => \&cmd_voice_regions,
     channels  => \&cmd_channels,
     'channel-create'      => \&cmd_channel_create,
     'channel-edit'        => \&cmd_channel_edit,

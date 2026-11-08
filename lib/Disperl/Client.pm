@@ -1182,6 +1182,15 @@ sub get_guild_voice_regions {
     return $self->_finish($res, 'array');
 }
 
+# 利用可能なボイスリージョン一覧（グローバル）。
+sub get_voice_regions {
+    my ($self) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/voice/regions");
+    return $self->_finish($res, 'array');
+}
+
 # ---------------------------------------------------------------- membership screening
 
 # メンバー審査フォームを取得する（MANAGE_GUILD が必要）。
@@ -1361,6 +1370,125 @@ sub delete_guild_integration {
         "$API_BASE/guilds/$guild_id/integrations/$integration_id",
         undef,
         $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'none');
+}
+
+# ---------------------------------------------------------------- guild templates
+
+# ギルドのテンプレート一覧（MANAGE_GUILD が必要）。
+sub get_guild_templates {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$API_BASE/guilds/$guild_id/templates");
+    return $self->_finish($res, 'array');
+}
+
+# テンプレートをコードから取得する（認証不要）。
+sub get_guild_template {
+    my ($self, $code) = @_;
+
+    die "template code is required\n" unless defined $code && length $code;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guild-templates/" . _uri_escape($code),
+        undef, { auth => 0 },
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# テンプレートを作る（MANAGE_GUILD が必要）。
+#   create_guild_template($guild_id, name => 'テンプレ', description => '説明')
+sub create_guild_template {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $name = $opts{name};
+    die "template name is required\n" unless defined $name && length $name;
+    die "template name must be 1-100 characters\n"
+        unless length($name) >= 1 && length($name) <= 100;
+
+    my %payload = (name => $name);
+    if (defined $opts{description}) {
+        die "template description must be 120 characters or less\n"
+            if length($opts{description}) > 120;
+        $payload{description} = $opts{description};
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST', "$API_BASE/guilds/$guild_id/templates", \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub _template_payload {
+    my (%opts) = @_;
+
+    my %payload;
+
+    if (defined $opts{name}) {
+        die "template name must be 1-100 characters\n"
+            unless length($opts{name}) >= 1 && length($opts{name}) <= 100;
+        $payload{name} = $opts{name};
+    }
+
+    if (defined $opts{description}) {
+        die "template description must be 120 characters or less\n"
+            if length($opts{description}) > 120;
+        $payload{description} = $opts{description};
+    }
+
+    return \%payload;
+}
+
+# テンプレートを現在のギルドの状態に同期する（MANAGE_GUILD が必要）。
+sub sync_guild_template {
+    my ($self, $guild_id, $code) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "template code is required\n" unless defined $code && length $code;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT', "$API_BASE/guilds/$guild_id/templates/" . _uri_escape($code),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# テンプレートの名前 / 説明を変更する。
+sub update_guild_template {
+    my ($self, $guild_id, $code, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "template code is required\n" unless defined $code && length $code;
+
+    my $payload = _template_payload(%opts);
+    die "no template fields to update\n" unless keys %$payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH', "$API_BASE/guilds/$guild_id/templates/" . _uri_escape($code),
+        $payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# テンプレートを削除する。成功時は 1。
+sub delete_guild_template {
+    my ($self, $guild_id, $code) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "template code is required\n" unless defined $code && length $code;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE', "$API_BASE/guilds/$guild_id/templates/" . _uri_escape($code),
     );
     return $self->_finish($res, 'none');
 }
@@ -2864,6 +2992,62 @@ sub get_application {
 
     $self->{last_error} = undef;
     my $res = $self->_request('GET', "$API_BASE/applications/$application_id");
+    return $self->_finish($res, 'hash');
+}
+
+# 現在のアプリの設定を変更する（アプリ所有者 / チーム権限が必要な項目あり）。
+#   update_current_application(description => '説明', tags => ['bot', 'utility'])
+#   update_current_application(icon => 'icon.png', cover_image => 'cover.png')
+sub update_current_application {
+    my ($self, %opts) = @_;
+
+    my %payload;
+
+    if (defined $opts{description}) {
+        die "application description must be 400 characters or less\n"
+            if length($opts{description}) > 400;
+        $payload{description} = $opts{description};
+    }
+
+    for my $key (qw(icon cover_image)) {
+        next unless exists $opts{$key};
+        $payload{$key} = defined $opts{$key}
+            ? _image_data_uri($opts{$key}, "$key image")
+            : undef;
+    }
+
+    for my $key (qw(
+        custom_install_url role_connections_verification_url
+        interactions_endpoint_url
+    )) {
+        next unless exists $opts{$key};
+        my $value = $opts{$key};
+        die "$key must be a string or undef\n"
+            if defined $value && (ref $value || !length $value);
+        $payload{$key} = defined $value ? "$value" : undef;
+    }
+
+    if (defined $opts{tags}) {
+        $payload{tags} = _id_array($opts{tags}, 'tags');
+    }
+
+    if (defined $opts{flags}) {
+        die "flags must be an integer\n"
+            unless !ref $opts{flags} && $opts{flags} =~ /^\d+\z/;
+        $payload{flags} = $opts{flags} + 0;
+    }
+
+    for my $key (qw(install_params integration_types_config)) {
+        next unless exists $opts{$key};
+        die "$key must be a hash reference\n"
+            unless ref $opts{$key} eq 'HASH';
+        $payload{$key} = $opts{$key};
+    }
+
+    die "no application fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('PATCH', "$API_BASE/applications/\@me", \%payload);
     return $self->_finish($res, 'hash');
 }
 
@@ -5173,6 +5357,21 @@ sub _message_payload {
 
     $payload{components} = $opts->{components} if $opts->{components};
 
+    if (defined $opts->{sticker_ids}) {
+        my $stickers = $opts->{sticker_ids};
+        die "sticker_ids must be an array reference\n"
+            unless ref $stickers eq 'ARRAY';
+        die "at most 3 stickers are allowed\n" if @$stickers > 3;
+
+        my @ids;
+        for my $sticker (@$stickers) {
+            die "sticker id must be a non-empty string\n"
+                if ref $sticker || !defined $sticker || !length $sticker;
+            push @ids, "$sticker";
+        }
+        $payload{sticker_ids} = \@ids if @ids;
+    }
+
     if (defined $opts->{flags}) {
         my $flags = $opts->{flags};
         die "flags must be an integer\n"
@@ -5202,8 +5401,23 @@ sub _message_payload {
         $payload{tts} = $opts->{tts} ? JSON::PP::true : JSON::PP::false;
     }
 
+    if (defined $opts->{nonce}) {
+        my $nonce = $opts->{nonce};
+        die "nonce must be a string or an integer\n"
+            if ref $nonce || !length $nonce;
+        die "nonce must be 25 characters or less\n" if length($nonce) > 25;
+        $payload{nonce} = "$nonce";
+        $payload{enforce_nonce} = $opts->{enforce_nonce} ? JSON::PP::true : JSON::PP::false
+            if exists $opts->{enforce_nonce};
+    }
+
     if ($opts->{reply_to}) {
-        $payload{message_reference} = { message_id => $opts->{reply_to} };
+        my %reference = (message_id => $opts->{reply_to});
+        if (exists $opts->{fail_if_not_exists}) {
+            $reference{fail_if_not_exists} =
+                $opts->{fail_if_not_exists} ? JSON::PP::true : JSON::PP::false;
+        }
+        $payload{message_reference} = \%reference;
     }
 
     my $allowed = exists $opts->{allowed_mentions}
@@ -5211,11 +5425,12 @@ sub _message_payload {
         : $self->{allowed_mentions};
     $payload{allowed_mentions} = $allowed if defined $allowed;
 
-    die "content, embeds or components is required (or poll)\n"
+    die "content, embeds or components is required (or poll / stickers)\n"
         unless (defined $payload{content} && length $payload{content})
             || $payload{embeds}
             || $payload{components}
             || $payload{poll}
+            || $payload{sticker_ids}
             || $opts->{allow_empty};
 
     return \%payload;
@@ -5398,6 +5613,15 @@ sub _validate_poll {
 
     $out{allow_multiselect} = $multiselect ? JSON::PP::true : JSON::PP::false
         if defined $multiselect;
+
+    if (defined $poll->{layout_type}) {
+        my $layout = $poll->{layout_type};
+        $layout = 1 if !ref $layout && $layout =~ /\D/ && lc($layout) eq 'default';
+        die "Unknown poll layout: " . ($poll->{layout_type} // 'undef') . "\n"
+            unless defined $layout && !ref $layout && $layout =~ /^\d+\z/
+                && $layout == 1;
+        $out{layout_type} = $layout + 0;
+    }
 
     return \%out;
 }

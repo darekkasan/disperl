@@ -288,6 +288,18 @@ perl test.pl integrations [--guild ID]
 perl test.pl integration-edit <ID> --expire-behavior kick --expire-grace-days 7
 perl test.pl integration-edit <ID> --emoticons 0
 perl test.pl integration-delete <ID> --reason "解除"
+
+perl test.pl templates [--guild ID]
+perl test.pl template <コード>
+perl test.pl template-create "テンプレ" --description "説明"
+perl test.pl template-sync <コード>
+perl test.pl template-edit <コード> --name "改名"
+perl test.pl template-delete <コード>
+
+perl test.pl sticker-send <ステッカーID> ...
+perl test.pl app-edit --description "説明" --tags bot,utility --icon icon.png
+perl test.pl voice-regions
+perl test.pl poll "質問" --answer A --answer B --layout default
 ```
 
 - `verification-edit --fields` は審査フォームの配列 JSON（[ギルド管理](guild-admin.md#メンバー審査screening) 参照）
