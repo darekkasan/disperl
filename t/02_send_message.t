@@ -67,14 +67,23 @@ subtest 'failure sets last_error' => sub {
 };
 
 subtest 'non-JSON error body' => sub {
-    my $fake   = FakeUA->new(FakeUA->err_response(404, 'not found'));
-    my $client = Disperl::Client->new(token => 'dummy', ua => $fake);
+    my $fake   = FakeUA->new(
+        FakeUA->err_response(404, 'not found'),
+        FakeUA->err_response(502, ''),
+    );
+    my $client = Disperl::Client->new(
+        token => 'dummy', ua => $fake, on_error => sub { },
+        max_retries => 0,
+    );
 
-    local $SIG{__WARN__} = sub { };
     my $msg = $client->send_message('999', 'x');
 
     ok !defined $msg, 'returns undef';
     is $client->last_error->{status}, 404, 'status';
+    is $client->last_error->{message}, 'not found', 'uses the plain body';
+
+    # 本文が無ければ reason にフォールバックする
+    $client->send_message('999', 'x');
     is $client->last_error->{message}, 'Error', 'falls back to reason';
 };
 

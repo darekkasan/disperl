@@ -60,6 +60,8 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `reconnect` | `1` | 自動再接続するか |
 | `max_reconnects` | `5` | 連続エラーの上限（READY でリセット） |
 | `reconnect_delay` | `5` | 4008（レート制限）で再接続するまでの待ち秒 |
+| `error_backoff` | `1` | エラー再接続の指数バックオフの基準秒 |
+| `max_backoff` | `30` | エラー再接続の待ち時間の上限（秒） |
 | `timeout` | `60` | 受信のタイムアウト秒 |
 | `url` | `wss://gateway.discord.gg/?v=10&encoding=json` | 接続先 |
 | `ws_class` | `Disperl::WebSocket` | 差し替え可能（テスト用） |
@@ -297,6 +299,7 @@ my $gw = Disperl::Gateway->new(
 |---|---|
 | 正常な切断 / Resume 可能 | Resume（`op 6`）で再開 |
 | `4006` / `4007` / `4009` | セッションを破棄して Identify からやり直す |
+| Invalid Session（Resume 不可） | 1〜5 秒待ってからやり直す |
 | `4008`（レート制限） | `reconnect_delay` 秒待ってから再接続 |
 | `4004` / `4010`〜`4014` | **再接続しない**（トークン・Intent 不正） |
 | Heartbeat の ACK が返らない | ゾンビ接続とみなして再接続 |
@@ -304,12 +307,26 @@ my $gw = Disperl::Gateway->new(
 
 - 連続失敗回数は READY / RESUMED で 0 に戻る
 - 失敗が `max_reconnects` を超えると `run` は戻る（`die` はしない）
+- エラー時の再接続待ちは**指数バックオフ**: `error_backoff * 2^(失敗回数-1)`、上限 `max_backoff`
 - `reconnect => 0` で自動再接続を無効化
 - Resume 時は READY で受け取った `resume_gateway_url` を使う
 - 初回 Heartbeat は `heartbeat_interval` の範囲でランダムにずらす
 
 エラーは `on_error` に文字列で渡されます（未指定なら `warn`）。
-`on_error => sub {}` で無音にできます。
+`on_error => sub {}` で無音にできます。`on_error` 自体が `die` しても接続は維持されます。
+
+### コールバックのエラー隔離
+
+`on_message` などのコールバックが `die` しても、接続は切れません。
+`on_error` に `Error in on_message callback: ...` の形で渡され、後続のイベントは処理され続けます。
+
+```perl
+my $gw = Disperl::Gateway->new(
+    token      => $ENV{DISCORD_TOKEN},
+    on_message => sub { die "boom\n" },
+    on_error   => sub { warn "handler error: $_[0]\n" },
+);
+```
 
 ## プレゼンス
 

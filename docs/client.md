@@ -28,6 +28,8 @@ my $client = Disperl::Client->new(
 | `ua` | `HTTP::Tiny` | 差し替え可能（テスト用） |
 | `timeout` | `10` | 1 リクエストのタイムアウト秒。`ua` を渡した場合は無視 |
 | `max_retries` | `2` | 429 / 5xx の最大リトライ回数。`0` で無効 |
+| `retry_backoff` | `1` | 5xx の指数バックオフの基準秒（`retry_backoff * 2^attempt`） |
+| `max_retry_delay` | `30` | 5xx の待ち時間の上限（秒） |
 | `sleep` | `sub { sleep $_[0] }` | 待機処理のフック（テスト用） |
 | `on_error` | 未指定なら `warn` | `sub { my ($err) = @_ }`。`sub {}` で無音にできる |
 | `allowed_mentions` | `{ parse => [] }` | 既定でメンションを解決しない。`undef` で Discord の既定に戻す |
@@ -65,12 +67,16 @@ if (!$message) {
 |---|---|
 | `status` | HTTP ステータス（例: `404`） |
 | `code` | Discord のエラーコード（例: `10008`） |
-| `message` | Discord のメッセージ。無ければ HTTP の理由句 |
+| `message` | Discord のメッセージ。無ければ応答本文 → HTTP の理由句の順にフォールバック |
+| `errors` | バリデーションエラーの詳細（Discord が `errors` を返したときだけ） |
 | `retry_after` | 429 のときだけ。待つべき秒数 |
 | `global` | 429 のときだけ。グローバル制限なら `1` |
 
 `last_error` は**成功すると `undef` に戻ります**。失敗の直後に読んでください。
 Discord 側のエラーは `on_error`（既定 `warn`）にも渡されます。`sub {}` を渡すと無音になります。
+`on_error` 自体が `die` しても呼び出し元は止まりません（警告だけ出して継続）。
+
+接続エラーなど JSON でない失敗では、応答本文（例: `Could not connect...`）が `message` に入ります。
 
 > 引数不足や上限超過などの**ローカルな検証エラーは `die`** します。
 > API エラー（`undef` + `last_error`）とは扱いが違う点に注意してください。
@@ -92,7 +98,7 @@ Discord の制限は「バケット（`X-RateLimit-Bucket`）」＋「major para
 | 応答 | 待ち時間 | リトライ |
 |---|---|---|
 | 429 | `retry_after`（無ければ `Retry-After`、それも無ければ 1 秒） | する（`max_retries` まで） |
-| 5xx | 1 秒 | する（`max_retries` まで） |
+| 5xx | `retry_backoff * 2^attempt`（上限 `max_retry_delay`） | する（`max_retries` まで） |
 | その他の 4xx | — | しない |
 
 待機には `sleep` フックが使われるため、テストでは 0 秒にできます。

@@ -37,9 +37,10 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - AutoMod ルールの作成・取得・変更・削除（キーワード / スパム / メンション / プロフィール）
 - スケジュールイベント（ボイス / ステージ / 外部）の作成・変更・削除・参加者取得
 - 権限名とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）
-- レート制限（バケット単位・429）対応と事前スロットリング
+- レート制限（バケット単位・429）対応と事前スロットリング。5xx は指数バックオフでリトライ
 - Gateway（WebSocket）でイベントを受信。Identify / Resume / Heartbeat / 自動再接続
 - イベント別コールバック（`on_guild_member_add` など）・member chunking・シャーディング
+- ゾンビ接続の検出・指数バックオフ再接続・コールバックのエラー隔離（落ちても接続維持）
 - ステータス（online / idle / dnd / invisible）とアクティビティの変更
 - ボタン／セレクトメニュー（`Disperl::Components`）とインタラクション応答
 - Components V2（Container / Section / Text Display / Media Gallery / File / モーダル V2）

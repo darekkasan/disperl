@@ -68,6 +68,9 @@ sub new {
         token       => $args{token},
         ua          => $ua,
         max_retries => $args{max_retries} // 2,
+        # 5xx のリトライ間隔（指数バックオフ）。retry_backoff * 2^attempt、上限 max_retry_delay
+        retry_backoff   => $args{retry_backoff} // 1,
+        max_retry_delay => $args{max_retry_delay} // 30,
         # テストで 0 秒にするためのフック
         sleep      => $args{sleep} // sub { sleep $_[0] },
         # 失敗時の通知先。未指定なら warn する（sub {} を渡せば無音）
@@ -6794,7 +6797,7 @@ sub _request {
             # どうかにかかわらず先に記録しておく。
             $self->_note_429($res, $method, $url, 1);
 
-            my $wait = $self->_retry_delay($res);
+            my $wait = $self->_retry_delay($res, $attempt);
 
             # まだリトライできるなら、その場で待ってやり直す。
             # 打ち切る場合だけバケットを閉じて、次のリクエストに引き継ぐ。
@@ -6813,7 +6816,7 @@ sub _request {
 
         last if $res->{success};
 
-        my $wait = $self->_retry_delay($res);
+        my $wait = $self->_retry_delay($res, $attempt);
         last unless defined $wait;
         last if $attempt >= $self->{max_retries};
 
@@ -6843,10 +6846,26 @@ sub _finish {
     my $err = $self->_decode($res->{content});
     my $h   = $res->{headers} || {};
 
+    my $message = ref $err eq 'HASH' ? $err->{message} : undef;
+
+    # JSON でない失敗（接続エラー・プロキシのエラーページなど）は本文を使う
+    if (!defined $message || !length $message) {
+        my $content = $res->{content};
+        if (defined $content && length $content && $content =~ /\S/
+            && $content !~ /\A\s*</) {    # HTML は避ける
+            ($message = $content) =~ s/\s+\z//;
+            $message =~ s/\s+/ /g;
+            $message = substr($message, 0, 300) . '...' if length($message) > 300;
+        } else {
+            $message = $res->{reason};
+        }
+    }
+
     $self->{last_error} = {
         status  => $res->{status},
         code    => (ref $err eq 'HASH' ? $err->{code}    : undef),
-        message => (ref $err eq 'HASH' ? $err->{message} : undef) // $res->{reason},
+        message => $message,
+        errors  => (ref $err eq 'HASH' ? $err->{errors}  : undef),
     };
 
     if ($res->{status} == 429) {
@@ -6895,12 +6914,20 @@ sub _retry_after_seconds {
 }
 
 # 429 / 5xx のときだけ待ち時間（秒）を返す。それ以外は undef（=リトライしない）
+#   $attempt は 0 始まり（初回の失敗で 0）。5xx は指数バックオフする。
 sub _retry_delay {
-    my ($self, $res) = @_;
+    my ($self, $res, $attempt) = @_;
     my $status = $res->{status};
 
     return $self->_retry_after_seconds($res) // 1 if $status == 429;
-    return 1 if $status >= 500 && $status < 600;
+
+    if ($status >= 500 && $status < 600) {
+        my $delay = $self->{retry_backoff} * (2 ** ($attempt // 0));
+        my $max   = $self->{max_retry_delay};
+        $delay = $max if defined $max && $delay > $max;
+        return $delay;
+    }
+
     return undef;
 }
 
@@ -7082,8 +7109,13 @@ sub _api_path {
 sub _report_error {
     my ($self, $err) = @_;
 
+    $err->{message} = 'unknown error'
+        unless defined $err->{message} && length $err->{message};
+
     if ($self->{on_error}) {
-        $self->{on_error}->($err);
+        # on_error 自体が die しても呼び出し元は止めない
+        my $ok = eval { $self->{on_error}->($err); 1 };
+        warn "on_error callback failed: $@" unless $ok;
         return;
     }
     warn "Request failed: $err->{status} - $err->{message}\n";

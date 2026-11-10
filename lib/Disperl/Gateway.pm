@@ -217,6 +217,9 @@ sub new {
         failures       => 0,
         # 4008（レート制限）で再接続するまでの待ち時間（秒）
         reconnect_delay => $args{reconnect_delay} // 5,
+        # エラー時の再接続待ち（指数バックオフ。error_backoff * 2^(failures-1)、上限 max_backoff）
+        error_backoff => $args{error_backoff} // 1,
+        max_backoff   => $args{max_backoff} // 30,
         timeout        => $args{timeout} // 60,
         ws_class       => $args{ws_class} // 'Disperl::WebSocket',
         sleep          => $args{sleep} // sub { sleep $_[0] },
@@ -566,17 +569,34 @@ sub run {
         last unless $self->{reconnect};
         last if $self->{failures} > $self->{max_reconnects};
 
-        my $wait = 0;
-        if (defined $reason && $reason eq 'error') {
-            $wait = 1;
-        } elsif (defined $reason && $reason eq 'rate_limited') {
-            $wait = $self->{reconnect_delay};
-        }
+        my $wait = $self->_reconnect_wait($reason);
         $self->{sleep}->($wait) if $wait;
     }
 
     $self->{running} = 0;
     return 1;
+}
+
+# 再接続までの待ち時間（秒）。理由に応じて変える。
+#   error           => 指数バックオフ（error_backoff * 2^(failures-1)、上限 max_backoff）
+#   rate_limited    => reconnect_delay
+#   invalid_session => 1〜5 秒（Discord の推奨）
+sub _reconnect_wait {
+    my ($self, $reason) = @_;
+
+    return 0 unless defined $reason;
+
+    if ($reason eq 'error') {
+        my $failures = $self->{failures} > 0 ? $self->{failures} : 1;
+        my $wait = $self->{error_backoff} * (2 ** ($failures - 1));
+        $wait = $self->{max_backoff} if $wait > $self->{max_backoff};
+        return $wait;
+    }
+
+    return $self->{reconnect_delay} if $reason eq 'rate_limited';
+    return 1 + rand(4) if $reason eq 'invalid_session';
+
+    return 0;
 }
 
 sub stop {
@@ -600,8 +620,19 @@ sub _run_once {
     $self->{awaiting_ack} = 0;
     $self->{ready} = 0;
 
-    my $hello = $self->_recv_json($ws, $self->{timeout});
-    die "Expected Hello (op 10) from the gateway\n"
+    my $frame = $ws->recv_frame(timeout => $self->{timeout});
+    die "Timed out waiting for Hello (op 10) from the gateway\n"
+        unless $frame;
+
+    if ($frame->{opcode} == 8) {
+        my $code = $frame->{code} // '?';
+        my $reason = $frame->{reason} // '';
+        die "Gateway closed during handshake (code $code"
+            . (length $reason ? " $reason" : '') . ")\n";
+    }
+
+    my $hello = eval { $JSON->decode($frame->{payload}) };
+    die "Invalid Hello (op 10) payload from the gateway\n"
         unless ref $hello eq 'HASH' && ($hello->{op} // -1) == 10;
 
     my $interval = ($hello->{d}{heartbeat_interval} // 41250) / 1000;
@@ -710,31 +741,31 @@ sub _handle {
             $self->{failures}    = 0;
             # Identify 後に set_presence されていれば、ここで反映する
             $self->_flush_presence;
-            $self->{on_ready}->($data) if $self->{on_ready};
+            $self->_dispatch('on_ready', $self->{on_ready}, $data);
         } elsif ($type eq 'RESUMED') {
             $self->{ready}    = 1;
             $self->{failures} = 0;
             $self->{presence_pending} = 1 if $self->{presence};
             $self->_apply_presence;
         } elsif ($type eq 'INTERACTION_CREATE') {
-            $self->{on_interaction}->($data) if $self->{on_interaction};
+            $self->_dispatch('on_interaction', $self->{on_interaction}, $data);
 
             # type 2 = スラッシュコマンド、type 3 = ボタン / セレクト、
             # type 4 = オートコンプリート、type 5 = モーダル送信
             my $kind = $data->{type} // 0;
-            $self->{on_command}->($data)
-                if $kind == 2 && $self->{on_command};
-            $self->{on_component}->($data)
-                if $kind == 3 && $self->{on_component};
-            $self->{on_autocomplete}->($data)
-                if $kind == 4 && $self->{on_autocomplete};
-            $self->{on_modal}->($data)
-                if $kind == 5 && $self->{on_modal};
+            $self->_dispatch('on_command', $self->{on_command}, $data)
+                if $kind == 2;
+            $self->_dispatch('on_component', $self->{on_component}, $data)
+                if $kind == 3;
+            $self->_dispatch('on_autocomplete', $self->{on_autocomplete}, $data)
+                if $kind == 4;
+            $self->_dispatch('on_modal', $self->{on_modal}, $data)
+                if $kind == 5;
         } elsif (my $callback = $TYPED_CALLBACK{$type}) {
-            $self->{$callback}->($data, $msg) if $self->{$callback};
+            $self->_dispatch($callback, $self->{$callback}, $data, $msg);
         }
 
-        $self->{on_event}->($type, $data, $msg) if $self->{on_event};
+        $self->_dispatch('on_event', $self->{on_event}, $type, $data, $msg);
         return undef;
     }
 
@@ -829,21 +860,28 @@ sub _heartbeat {
     $ws->send_text($JSON->encode({ op => 1, d => $self->{seq} }));
 }
 
-sub _recv_json {
-    my ($self, $ws, $timeout) = @_;
+# コールバックを安全に呼ぶ。die しても接続を切らず on_error に流す。
+sub _dispatch {
+    my ($self, $label, $callback, @args) = @_;
 
-    my $frame = $ws->recv_frame(timeout => $timeout);
-    return undef unless $frame;
-    return undef if $frame->{opcode} == 8;
+    return 0 unless $callback;
 
-    return eval { $JSON->decode($frame->{payload}) };
+    my $ok = eval { $callback->(@args); 1 };
+    unless ($ok) {
+        my $err = $@ || 'unknown error';
+        $err =~ s/\s+\z//;
+        $self->_report("Error in $label callback: $err");
+    }
+    return 1;
 }
 
 sub _report {
     my ($self, $message) = @_;
 
     if ($self->{on_error}) {
-        $self->{on_error}->($message);
+        # on_error 自体が die しても接続は維持する
+        my $ok = eval { $self->{on_error}->($message); 1 };
+        warn "on_error callback failed: $@" unless $ok;
         return;
     }
     warn(($message =~ /\n\z/) ? $message : "$message\n");

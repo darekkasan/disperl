@@ -6,6 +6,7 @@
 
 - [接続できない](#接続できない)
 - [イベントが来ない・本文が空](#イベントが来ない本文が空)
+- [コールバックのエラー](#コールバックのエラー)
 - [インタラクションが失敗する](#インタラクションが失敗する)
 - [API エラー](#api-エラー)
 - [Webhook](#webhook)
@@ -67,6 +68,31 @@ intents => [qw(GUILDS GUILD_MESSAGES MESSAGE_CONTENT)],
 ### DM のイベントが来ない
 
 `DIRECT_MESSAGES` / `DIRECT_MESSAGE_REACTIONS` などの Intent を追加してください。
+
+## コールバックのエラー
+
+### `Error in on_xxx callback: ...` と出る
+
+コールバックの中で `die` しています。接続は切れず、後続のイベントは処理され続けます。
+`on_error` で受け取れるので、原因をログに出してください。
+
+```perl
+on_error => sub {
+    my ($message) = @_;
+    warn "[gateway] $message\n";
+},
+```
+
+### 再接続を繰り返す（`max_reconnects` に達する）
+
+- トークン・Intent が不正な場合は `4004` / `4010`〜`4014` で**再接続しません**（`on_error` を確認）
+- ネットワーク不安定時は指数バックオフで待ちます（`error_backoff` / `max_backoff`）
+- `Heartbeat ACK not received` はゾンビ接続の検出です。頻発する場合は回線を確認してください
+
+### ハンドシェイクで止まる
+
+`Timed out waiting for Hello (op 10)` は Gateway との初期通信が `timeout` 秒以内に
+完了しなかった場合です。プロキシ環境では `timeout` を延ばしてください。
 
 ## インタラクションが失敗する
 
