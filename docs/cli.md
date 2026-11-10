@@ -345,6 +345,22 @@ perl test.pl github-webhook <ID> <トークン> payload.json
 - `messages-search` は `MESSAGE_CONTENT`（Privileged Intent）が必要です
 - `pins` は新しいピン API を使います（`--limit` / `--before` 対応）
 
+### OAuth2・グループ DM
+
+```sh
+perl test.pl oauth-token <クライアントID> <シークレット> [--scope S]
+perl test.pl oauth-me --bearer <アクセストークン>
+perl test.pl connections --bearer <アクセストークン>
+perl test.pl group-dm-add <チャンネルID> <ユーザーID> <アクセストークン> [--nick 名前]
+perl test.pl group-dm-remove <チャンネルID> <ユーザーID>
+perl test.pl member-add <ユーザーID> --token <アクセストークン> [--nick 名前] [--roles ID,ID]
+perl test.pl activity-instance <インスタンスID>
+perl test.pl member-nick [名前|none]
+```
+
+- Bearer トークンは正規の OAuth2 フローで得たものを渡してください（[OAuth2](oauth2.md) 参照）
+- `member-nick` は自分のニックネームのみ変更します
+
 ### Gateway の capabilities
 
 ```sh
@@ -650,5 +666,6 @@ perl test.pl history
 - [ギルド管理（審査・連携・所属）](guild-admin.md)
 - [Entitlements / SKU](entitlements.md)
 - [ロール連携メタデータ](role-connections.md)
+- [OAuth2 / ユーザー連携](oauth2.md)
 - [スケジュールイベント](events.md)
 - [トラブルシューティング](troubleshooting.md)

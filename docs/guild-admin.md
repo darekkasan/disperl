@@ -103,6 +103,7 @@ $client->delete_guild_template($guild_id, $template->{code});
 
 - `name` は 1〜100 文字、`description` は 120 文字まで
 - テンプレートから**ギルドを新規作成**するのはユーザーアカウントの操作です（Bot 不可）
+- 2026 年時点の公開取得パスは `GET /guilds/templates/{code}` です（本実装もこちらを使用）
 
 ## ボイスリージョン
 

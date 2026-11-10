@@ -32,6 +32,7 @@ use Disperl::Integration qw(
 );
 
 my $API_BASE    = 'https://discord.com/api/v10';
+my $OAUTH_BASE  = 'https://discord.com/api';    # OAuth2 はバージョンなし
 my $MAX_CONTENT = 2000;
 
 # embed の制限（Discord API）
@@ -1630,6 +1631,7 @@ sub get_guild_templates {
 }
 
 # テンプレートをコードから取得する（認証不要）。
+# 2026 年時点の公式パスは /guilds/templates/{code}。
 sub get_guild_template {
     my ($self, $code) = @_;
 
@@ -1637,7 +1639,7 @@ sub get_guild_template {
 
     $self->{last_error} = undef;
     my $res = $self->_request(
-        'GET', "$API_BASE/guild-templates/" . _uri_escape($code),
+        'GET', "$API_BASE/guilds/templates/" . _uri_escape($code),
         undef, { auth => 0 },
     );
     return $self->_finish($res, 'hash');
@@ -2052,6 +2054,27 @@ sub modify_current_member {
         'PATCH',
         "$API_BASE/guilds/$guild_id/members/\@me",
         $payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 自分のニックネームだけを変える（旧エンドポイント。modify_current_member でも可）。
+#   update_current_member_nick($guild_id, '新しい名前')
+#   update_current_member_nick($guild_id, undef);    # ニックネームを削除
+sub update_current_member_nick {
+    my ($self, $guild_id, $nick) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "nick must be a string or undef\n"
+        if defined $nick && ref $nick;
+    die "nick must be 32 characters or less\n"
+        if defined $nick && length($nick) > 32;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH',
+        "$API_BASE/guilds/$guild_id/members/\@me/nick",
+        { nick => $nick },
     );
     return $self->_finish($res, 'hash');
 }
@@ -3348,7 +3371,7 @@ sub update_current_application {
 
     for my $key (qw(
         custom_install_url role_connections_verification_url
-        interactions_endpoint_url
+        interactions_endpoint_url event_webhooks_url
     )) {
         next unless exists $opts{$key};
         my $value = $opts{$key};
@@ -3359,6 +3382,20 @@ sub update_current_application {
 
     if (defined $opts{tags}) {
         $payload{tags} = _id_array($opts{tags}, 'tags');
+        die "tags accepts at most 5 tags\n" if @{ $payload{tags} } > 5;
+    }
+
+    if (defined $opts{event_webhooks_status}) {
+        my $status = $opts{event_webhooks_status};
+        die "event_webhooks_status must be 1 (disabled) or 2 (enabled)\n"
+            unless !ref $status && $status =~ /^\d+\z/
+                && ($status == 1 || $status == 2);
+        $payload{event_webhooks_status} = $status + 0;
+    }
+
+    if (defined $opts{event_webhooks_types}) {
+        $payload{event_webhooks_types} =
+            _id_array($opts{event_webhooks_types}, 'event_webhooks_types');
     }
 
     if (defined $opts{flags}) {
@@ -5574,6 +5611,7 @@ my %INTERACTION_RESPONSE = (
     update          => 7,
     autocomplete    => 8,
     modal           => 9,
+    launch_activity => 12,
 );
 
 # インタラクションに応答する（3 秒以内に呼ぶ）。
@@ -5619,6 +5657,12 @@ sub reply_interaction {
     $data->{flags} = $opts{ephemeral} ? 64 : 0 if exists $opts{ephemeral};
 
     return $self->interaction_callback($interaction_id, $token, 4, $data);
+}
+
+# Activity を起動する（type 12。Activities 有効なアプリのみ）。
+sub launch_activity_interaction {
+    my ($self, $interaction_id, $token) = @_;
+    return $self->interaction_callback($interaction_id, $token, 12, undef);
 }
 
 # ボタンなどが付いたメッセージをその場で書き換える（type 7）。
@@ -6083,6 +6127,324 @@ sub _register_commands {
     return $self->_finish($res, 'array');
 }
 
+# ---------------------------------------------------------------- oauth2
+
+# OAuth2 の Bearer トークンを要求する（引数チェック用）。
+sub _bearer {
+    my ($opts) = @_;
+
+    my $bearer = $opts->{bearer};
+    die "bearer token is required (OAuth2 access token)\n"
+        unless defined $bearer && length $bearer;
+    return $bearer;
+}
+
+# application/x-www-form-urlencoded の本文を作る。
+sub _form_body {
+    my ($params) = @_;
+    return join '&', map {
+        _uri_escape($_) . '=' . _uri_escape($params->{$_})
+    } sort keys %$params;
+}
+
+# クライアントクレデンシャルズでアクセストークンを取得する（Bot トークン不要）。
+#   get_client_credentials_token($client_id, $client_secret,
+#       scope => 'applications.commands.update')
+sub get_client_credentials_token {
+    my ($self, $client_id, $client_secret, %opts) = @_;
+
+    die "client id is required\n"
+        unless defined $client_id && length $client_id;
+    die "client secret is required\n"
+        unless defined $client_secret && length $client_secret;
+
+    my %params = (
+        grant_type    => 'client_credentials',
+        scope         => $opts{scope} // 'applications.commands.update',
+        client_id     => $client_id,
+        client_secret => $client_secret,
+    );
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST', "$OAUTH_BASE/oauth2/token", undef,
+        {
+            raw          => _form_body(\%params),
+            content_type => 'application/x-www-form-urlencoded',
+            auth         => 0,
+        },
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# アクセストークンを失効させる。
+#   revoke_token($token, $client_id, $client_secret)
+sub revoke_token {
+    my ($self, $token, $client_id, $client_secret) = @_;
+
+    die "token is required\n" unless defined $token && length $token;
+    die "client id is required\n"
+        unless defined $client_id && length $client_id;
+    die "client secret is required\n"
+        unless defined $client_secret && length $client_secret;
+
+    my %params = (
+        token           => $token,
+        token_type_hint => 'access_token',
+        client_id       => $client_id,
+        client_secret   => $client_secret,
+    );
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST', "$OAUTH_BASE/oauth2/token/revoke", undef,
+        {
+            raw          => _form_body(\%params),
+            content_type => 'application/x-www-form-urlencoded',
+            auth         => 0,
+        },
+    );
+    return $self->_finish($res, 'none');
+}
+
+# 現在の認可情報（OAuth2 の Bearer トークンが必要）。
+#   get_oauth2_authorization(bearer => $access_token)
+sub get_oauth2_authorization {
+    my ($self, %opts) = @_;
+
+    my $bearer = _bearer(\%opts);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$OAUTH_BASE/oauth2/\@me", undef, { bearer => $bearer },
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 現在の Bot アプリケーション情報（旧 OAuth2 エンドポイント。Bot トークンで可）。
+sub get_bot_application {
+    my ($self) = @_;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', "$OAUTH_BASE/oauth2/applications/\@me");
+    return $self->_finish($res, 'hash');
+}
+
+# 現在のユーザーの外部アカウント連携（connections スコープの Bearer が必要）。
+sub get_current_user_connections {
+    my ($self, %opts) = @_;
+
+    my $bearer = _bearer(\%opts);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/users/\@me/connections", undef, { bearer => $bearer },
+    );
+    return $self->_finish($res, 'array');
+}
+
+# ユーザーのロール連携（role_connections.write スコープの Bearer が必要）。
+sub get_user_role_connection {
+    my ($self, $application_id, %opts) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    my $bearer = _bearer(\%opts);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET',
+        "$API_BASE/users/\@me/applications/$application_id/role-connection",
+        undef,
+        { bearer => $bearer },
+    );
+    return $self->_finish($res, 'hash');
+}
+
+#   update_user_role_connection($app_id,
+#       bearer            => $access_token,
+#       platform_name     => 'example',
+#       platform_username => 'kama',
+#       metadata          => { level => '5' },
+#   )
+sub update_user_role_connection {
+    my ($self, $application_id, %opts) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    my $bearer = _bearer(\%opts);
+
+    my %payload;
+
+    if (defined $opts{platform_name}) {
+        die "platform_name must be 50 characters or less\n"
+            if length($opts{platform_name}) > 50;
+        $payload{platform_name} = $opts{platform_name};
+    }
+
+    if (defined $opts{platform_username}) {
+        die "platform_username must be 100 characters or less\n"
+            if length($opts{platform_username}) > 100;
+        $payload{platform_username} = $opts{platform_username};
+    }
+
+    if (defined $opts{metadata}) {
+        die "metadata must be a hash reference\n"
+            unless ref $opts{metadata} eq 'HASH';
+        $payload{metadata} = $opts{metadata};
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT',
+        "$API_BASE/users/\@me/applications/$application_id/role-connection",
+        \%payload,
+        { bearer => $bearer },
+    );
+    return $self->_finish($res, 'hash');
+}
+
+sub delete_user_role_connection {
+    my ($self, $application_id, %opts) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    my $bearer = _bearer(\%opts);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE',
+        "$API_BASE/users/\@me/applications/$application_id/role-connection",
+        undef,
+        { bearer => $bearer },
+    );
+    return $self->_finish($res, 'none');
+}
+
+# ---------------------------------------------------------------- group dm / oauth2 members
+
+# グループ DM を作る（各ユーザーの gdm.join 付きアクセストークンが必要）。
+#   create_group_dm(access_tokens => [ $tok1, $tok2 ], nicks => { $uid => '名前' })
+sub create_group_dm {
+    my ($self, %opts) = @_;
+
+    my $tokens = $opts{access_tokens};
+    die "access_tokens must be a non-empty array reference\n"
+        unless ref $tokens eq 'ARRAY' && @$tokens;
+
+    my %payload = (
+        access_tokens => [
+            map {
+                die "access token must be a non-empty string\n"
+                    if ref $_ || !defined $_ || !length $_;
+                "$_"
+            } @$tokens
+        ],
+    );
+
+    if (defined $opts{nicks}) {
+        die "nicks must be a hash reference\n"
+            unless ref $opts{nicks} eq 'HASH';
+        $payload{nicks} = $opts{nicks};
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST', "$API_BASE/users/\@me/channels", \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# グループ DM にユーザーを追加する（gdm.join 付きアクセストークンが必要）。
+#   add_group_dm_recipient($channel_id, $user_id, access_token => $tok, nick => '名前')
+sub add_group_dm_recipient {
+    my ($self, $channel_id, $user_id, %opts) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+    die "user id is required\n" unless defined $user_id && length $user_id;
+
+    my $access_token = $opts{access_token};
+    die "access token is required\n"
+        unless defined $access_token && length $access_token;
+
+    my %payload = (access_token => "$access_token");
+    $payload{nick} = $opts{nick} if defined $opts{nick};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT', "$API_BASE/channels/$channel_id/recipients/$user_id", \%payload,
+    );
+    return $self->_finish($res, 'none');
+}
+
+# グループ DM からユーザーを外す。成功時は 1。
+sub remove_group_dm_recipient {
+    my ($self, $channel_id, $user_id) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+    die "user id is required\n" unless defined $user_id && length $user_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'DELETE', "$API_BASE/channels/$channel_id/recipients/$user_id",
+    );
+    return $self->_finish($res, 'none');
+}
+
+# OAuth2 の guilds.join でメンバーを追加する。
+#   add_guild_member($guild_id, $user_id,
+#       access_token => $tok, nick => '名前', roles => [ $role_id ], mute => 0, deaf => 0)
+sub add_guild_member {
+    my ($self, $guild_id, $user_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "user id is required\n"  unless defined $user_id  && length $user_id;
+
+    my $access_token = $opts{access_token};
+    die "access token is required\n"
+        unless defined $access_token && length $access_token;
+
+    my %payload = (access_token => "$access_token");
+
+    $payload{nick} = $opts{nick} if defined $opts{nick};
+
+    if (defined $opts{roles}) {
+        $payload{roles} = _id_array($opts{roles}, 'roles');
+    }
+
+    for my $key (qw(mute deaf)) {
+        next unless exists $opts{$key};
+        $payload{$key} = $opts{$key} ? JSON::PP::true : JSON::PP::false;
+    }
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT', "$API_BASE/guilds/$guild_id/members/$user_id", \%payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ---------------------------------------------------------------- activities
+
+# アプリのアクティビティインスタンスを取得する。
+sub get_application_activity_instance {
+    my ($self, $application_id, $instance_id) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "instance id is required\n"
+        unless defined $instance_id && length $instance_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET',
+        "$API_BASE/applications/$application_id/activity-instances/$instance_id",
+    );
+    return $self->_finish($res, 'hash');
+}
+
 # ---------------------------------------------------------------- internals
 
 # 送信・編集で共通の JSON ボディを作る。
@@ -6398,6 +6760,11 @@ sub _request {
     my %args = (headers => {});
     $args{headers}{'Authorization'} = "Bot $self->{token}"
         unless exists $opts->{auth} && !$opts->{auth};
+
+    # OAuth2 の Bearer トークン（Bot 認証より優先）
+    if (defined $opts->{bearer} && length $opts->{bearer}) {
+        $args{headers}{'Authorization'} = "Bearer $opts->{bearer}";
+    }
 
     if ($opts->{headers}) {
         %{ $args{headers} } = (

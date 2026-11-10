@@ -110,7 +110,7 @@ subtest 'ギルドテンプレート' => sub {
     is $templates->[0]{code}, 'abc', 'returns templates';
 
     $client->get_guild_template('abc');
-    is $fake->last_call->{url}, "$API/guild-templates/abc", 'get endpoint';
+    is $fake->last_call->{url}, "$API/guilds/templates/abc", 'get endpoint';
     ok !exists $fake->last_call->{args}{headers}{Authorization},
         'get template needs no auth';
 

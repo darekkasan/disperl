@@ -123,6 +123,10 @@
 | アプリの `description` | 400 文字 | `update_current_application` |
 | 招待 `target_user_ids` / 一括操作の `user_ids` | 最大 1000 件 | `create_invite` / `bulk_*_invite_target_users` |
 | `get_current_user_guilds` の `limit` | 1〜200 | `get_current_user_guilds` |
+| アプリの `tags` | 最大 5 個 | `update_current_application` |
+| `event_webhooks_status` | 1（無効）/ 2（有効） | `update_current_application` |
+| ロール連携の `platform_name` / `platform_username` | 50 / 100 文字 | `update_user_role_connection` |
+| グループ DM | 最大 10 件（Discord 側） | `create_group_dm` |
 
 ## チャンネル
 
@@ -264,6 +268,7 @@
 - [ギルド管理（審査・連携・所属）](guild-admin.md)
 - [Entitlements / SKU](entitlements.md)
 - [ロール連携メタデータ](role-connections.md)
+- [OAuth2 / ユーザー連携](oauth2.md)
 - [ロール管理](roles.md)
 - [メンバー管理](members.md)
 - [監査ログ](audit-log.md)

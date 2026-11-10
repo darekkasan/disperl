@@ -33,10 +33,28 @@ $client->update_current_application(
 |---|---|---|
 | `get_current_application()` | ハッシュ | Bot 自身のアプリ情報 |
 | `get_application($application_id)` | ハッシュ | アプリの公開情報（認証不要） |
-| `update_current_application(%opts)` | ハッシュ | `description` / `tags` / `icon` / `cover_image` / `custom_install_url` / `role_connections_verification_url` / `interactions_endpoint_url` / `flags` / `install_params` / `integration_types_config` |
+| `update_current_application(%opts)` | ハッシュ | `description` / `tags` / `icon` / `cover_image` / `custom_install_url` / `role_connections_verification_url` / `interactions_endpoint_url` / `event_webhooks_url` / `event_webhooks_status` / `event_webhooks_types` / `flags` / `install_params` / `integration_types_config` |
 
-- `description` は 400 文字まで、`tags` は配列
+- `description` は 400 文字まで、`tags` は配列（最大 5 個）
 - `icon` / `cover_image` はファイルパスまたは data URI、`undef` で解除
+- `event_webhooks_status` は `1`（無効）/ `2`（有効）
+
+### Activities
+
+埋め込みアプリ（Activities）向けの補助です。
+
+```perl
+my $instance = $client->get_application_activity_instance($app_id, $instance_id);
+print "$instance->{location}{kind}\n";
+
+# Entry Point コマンドから Activity を起動する（type 12）
+$client->launch_activity_interaction($interaction_id, $token);
+```
+
+| メソッド | 戻り値 | 説明 |
+|---|---|---|
+| `get_application_activity_instance($app_id, $instance_id)` | ハッシュ | インスタンス情報（`location` / `users` など） |
+| `launch_activity_interaction($id, $token)` | `1` | 応答 type `12`（`LAUNCH_ACTIVITY`） |
 
 アプリケーション ID は Bot のユーザー ID と同じです
 （CLI では `DISCORD_APPLICATION_ID` か Bot のユーザー ID を使います）。
@@ -159,5 +177,6 @@ command_permission_name(2);            # USER
 - [インタラクション](interactions.md)
 - [Entitlements / SKU](entitlements.md)
 - [ロール連携メタデータ](role-connections.md)
+- [OAuth2 / ユーザー連携](oauth2.md)
 - [ギルド・ユーザー・招待](guilds.md)
 - [CLI](cli.md)

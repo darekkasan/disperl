@@ -156,6 +156,7 @@ if ($message) {
 | [ギルド管理（審査・連携・所属）](docs/guild-admin.md) | メンバー審査・連携・ボイスリージョン・一括 BAN・所属ギルド |
 | [Entitlements / SKU](docs/entitlements.md) | 課金・Entitlement・SKU・サブスクリプション |
 | [ロール連携メタデータ](docs/role-connections.md) | Linked Roles のメタデータ設定 |
+| [OAuth2 / ユーザー連携](docs/oauth2.md) | Bearer トークン・連携アカウント・ユーザーのロール連携 |
 | [ロール管理](docs/roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
 | [メンバー管理](docs/members.md) | 一覧・検索・変更・ロール付与・キック / BAN・プルーン・実効権限 |
 | [監査ログ](docs/audit-log.md) | 取得・絞り込み・ページング・イベント種別・変更内容 |
@@ -454,6 +455,8 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - 招待のターゲットユーザー（Community Invites）・コマンド単体の作成 / 編集 / 取得
 - ピン留め（新 API）・ギルド内メッセージ検索・インシデントアクション・ロールのメンバー数
 - サブスクリプション単体取得・サウンドボード再生・Slack / GitHub 互換 Webhook
+- OAuth2: クライアントクレデンシャルズ・Bearer エンドポイント・グループ DM・OAuth2 メンバー追加
+- Activities: アクティビティインスタンス・`LAUNCH_ACTIVITY`（type 12）
 - チャンネルフォロー・ボイスステータス・Bot プロフィール変更・アプリ編集
 - メッセージ小物: ステッカー・nonce・クロスポスト・リアクション単位の削除・元の応答の取得 / 削除・ステッカーパック取得
 - ロール: 取得・作成・編集・並び替え・削除・色 / アイコン / Unicode 絵文字
@@ -473,7 +476,6 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 ### 未対応
 
 - 音声（Voice）接続
-- OAuth2
+- OAuth2 の認可コードフロー本体（トークン交換は外部で行い、Bearer を渡す設計）
 - ギルドの作成 / 削除（ユーザーアカウントの操作）
-- アプリのアクティビティインスタンス
 - ユーザーアプリ / 埋め込みアプリ

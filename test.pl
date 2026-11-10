@@ -379,6 +379,19 @@ disperl 動作確認 CLI
                                        Slack 互換 Webhook で送る
   perl test.pl github-webhook <ID> <トークン> <JSONファイル>
                                        GitHub 互換 Webhook で送る
+  perl test.pl oauth-token <ID> <シークレット> [--scope S]
+                                       クライアントクレデンシャルズでトークンを取る
+  perl test.pl oauth-me --bearer <トークン>  認可情報を表示する
+  perl test.pl connections --bearer <トークン>  連携アカウント一覧
+  perl test.pl group-dm-add <チャンネルID> <ユーザーID> <アクセストークン> [--nick 名前]
+                                       グループ DM に追加する
+  perl test.pl group-dm-remove <チャンネルID> <ユーザーID>
+                                       グループ DM から削除する
+  perl test.pl member-add <ユーザーID> --token <アクセストークン> [--nick 名前]
+      [--roles ID,ID] [--guild ID]      OAuth2 でメンバーを追加する
+  perl test.pl activity-instance <インスタンスID>
+                                       アクティビティインスタンスを表示する
+  perl test.pl member-nick [名前|none]  自分のニックネームを変更する
   perl test.pl channels [ギルドID]     チャンネル一覧（省略時は現在のギルド）
   perl test.pl channel-create <名前> [--type text|voice|category|announcement|stage|forum|media]
       [--parent ID] [--topic 話題] [--slowmode 秒] [--guild ID] [--reason 理由]
@@ -2883,6 +2896,140 @@ sub cmd_github_webhook {
         or _api_fail('GitHub 互換 Webhook');
 
     out "送信しました: id=" . ($message->{id} // '?') . "\n";
+    return 0;
+}
+
+sub cmd_oauth_token {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(scope)]);
+
+    my ($client_id, $client_secret) = @$pos;
+    _fatal('使い方: perl test.pl oauth-token <クライアントID> <クライアントシークレット> [--scope S]')
+        unless defined $client_id && defined $client_secret;
+
+    my %opts;
+    $opts{scope} = $opt->{scope} if defined $opt->{scope};
+
+    my $token = client()->get_client_credentials_token(
+        $client_id, $client_secret, %opts,
+    ) or _api_fail('トークンの取得');
+
+    out "access_token: " . ($token->{access_token} // '?') . "\n";
+    out "  expires_in: " . ($token->{expires_in} // '?') . " 秒\n";
+    out "  scope: " . ($token->{scope} // '') . "\n";
+    return 0;
+}
+
+sub cmd_oauth_me {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(bearer)]);
+
+    _fatal('使い方: perl test.pl oauth-me --bearer <アクセストークン>')
+        unless defined $opt->{bearer};
+
+    my $me = client()->get_oauth2_authorization(bearer => $opt->{bearer})
+        or _api_fail('認可情報');
+
+    out "application: " . ($me->{application}{name} // '?') . "\n";
+    out "  scopes: " . join(', ', @{ $me->{scopes} || [] }) . "\n";
+    out "  user:   " . ($me->{user}{username} // '(なし)') . "\n";
+    return 0;
+}
+
+sub cmd_connections {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(bearer)]);
+
+    _fatal('使い方: perl test.pl connections --bearer <アクセストークン>')
+        unless defined $opt->{bearer};
+
+    my $connections = client()->get_current_user_connections(bearer => $opt->{bearer})
+        or _api_fail('連携アカウント');
+
+    out sprintf "連携アカウント %d 件\n", scalar @$connections;
+    for my $c (@$connections) {
+        out sprintf "  %-12s %s%s\n",
+            $c->{type} // '?', $c->{name} // '',
+            $c->{verified} ? ' (verified)' : '';
+    }
+    return 0;
+}
+
+sub cmd_group_dm_add {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(nick)]);
+
+    my ($channel_id, $user_id, $access_token) = @$pos;
+    _fatal('使い方: perl test.pl group-dm-add <チャンネルID> <ユーザーID> <アクセストークン> [--nick 名前]')
+        unless defined $channel_id && defined $user_id && defined $access_token;
+
+    my %opts = (access_token => $access_token);
+    $opts{nick} = $opt->{nick} if defined $opt->{nick};
+
+    client()->add_group_dm_recipient($channel_id, $user_id, %opts)
+        or _api_fail('グループ DM への追加');
+
+    out "グループ DM に追加しました: $user_id\n";
+    return 0;
+}
+
+sub cmd_group_dm_remove {
+    my ($channel_id, $user_id) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl group-dm-remove <チャンネルID> <ユーザーID>')
+        unless defined $channel_id && defined $user_id;
+
+    client()->remove_group_dm_recipient($channel_id, $user_id)
+        or _api_fail('グループ DM からの削除');
+
+    out "グループ DM から削除しました: $user_id\n";
+    return 0;
+}
+
+sub cmd_member_add {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(token nick roles guild)]);
+
+    my $user_id = $pos->[0];
+    _fatal('使い方: perl test.pl member-add <ユーザーID> --token <アクセストークン> [--nick 名前] [--roles ID,ID] [--guild ID]')
+        unless defined $user_id && length $user_id && defined $opt->{token};
+
+    my %opts = (access_token => $opt->{token});
+    $opts{nick}  = $opt->{nick}  if defined $opt->{nick};
+    $opts{roles} = _id_list($opt->{roles}) if defined $opt->{roles};
+
+    my $member = client()->add_guild_member(
+        _guild_or_current($opt->{guild}), $user_id, %opts,
+    ) or _api_fail('メンバーの追加');
+
+    out "メンバーを追加しました: "
+        . ($member->{user}{username} // $user_id) . "\n";
+    return 0;
+}
+
+sub cmd_activity_instance {
+    my ($instance_id) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl activity-instance <インスタンスID>')
+        unless defined $instance_id && length $instance_id;
+
+    my $instance = client()->get_application_activity_instance(
+        _application_id(), $instance_id,
+    ) or _api_fail('アクティビティインスタンス');
+
+    out "instance: " . ($instance->{instance_id} // '?') . "\n";
+    out "  kind: " . ($instance->{location}{kind} // '?') . "\n";
+    out "  users: " . join(', ', @{ $instance->{users} || [] }) . "\n";
+    return 0;
+}
+
+sub cmd_member_nick {
+    my ($nick) = map { _decode_arg($_) } @_;
+    $nick = undef if defined $nick && lc($nick) eq 'none';
+
+    my $member = client()->update_current_member_nick(_current_guild_id(), $nick)
+        or _api_fail('ニックネームの変更');
+
+    out sprintf "ニックネームを変更しました: %s\n", $member->{nick} // '(なし)';
     return 0;
 }
 
@@ -5493,6 +5640,14 @@ my %COMMANDS = (
     'sound-play'     => \&cmd_sound_play,
     'slack-webhook'  => \&cmd_slack_webhook,
     'github-webhook' => \&cmd_github_webhook,
+    'oauth-token'  => \&cmd_oauth_token,
+    'oauth-me'     => \&cmd_oauth_me,
+    connections    => \&cmd_connections,
+    'group-dm-add'    => \&cmd_group_dm_add,
+    'group-dm-remove' => \&cmd_group_dm_remove,
+    'member-add'      => \&cmd_member_add,
+    'activity-instance' => \&cmd_activity_instance,
+    'member-nick'       => \&cmd_member_nick,
     channels  => \&cmd_channels,
     'channel-create'      => \&cmd_channel_create,
     'channel-edit'        => \&cmd_channel_edit,

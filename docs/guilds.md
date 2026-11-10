@@ -20,6 +20,27 @@ $client->send_message($dm->{id}, 'こんにちは');
 `create_dm` は既に DM があればそのチャンネルを返します。返った `id` をそのまま
 `send_message` に渡せます。
 
+### グループ DM
+
+グループ DM は各ユーザーの `gdm.join` 付きアクセストークンが必要です。
+
+```perl
+my $gdm = $client->create_group_dm(
+    access_tokens => [ $token1, $token2 ],
+    nicks         => { $user_id => 'なまえ' },
+);
+
+$client->add_group_dm_recipient($gdm->{id}, $user_id,
+    access_token => $token, nick => 'なまえ');
+$client->remove_group_dm_recipient($gdm->{id}, $user_id);
+```
+
+| メソッド | 戻り値 | 説明 |
+|---|---|---|
+| `create_group_dm(%opts)` | ハッシュ | `access_tokens`（必須）/ `nicks` |
+| `add_group_dm_recipient($channel_id, $user_id, %opts)` | `1` | `access_token`（必須）/ `nick` |
+| `remove_group_dm_recipient($channel_id, $user_id)` | `1` | 削除 |
+
 ## ユーザー・チャンネル
 
 | メソッド | 戻り値 | 説明 |

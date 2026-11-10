@@ -104,6 +104,40 @@ $client->remove_guild_member_role($guild_id, $user_id, $role_id);
 - Bot の最上位ロールより上のロールは操作できません
 - `@everyone` は付与・剥奪の対象にできません
 
+## OAuth2 でのメンバー追加
+
+`guilds.join` スコープのアクセストークンがあるユーザーをギルドに追加できます
+（Bot が既にそのギルドにいる必要があります）。
+
+```perl
+my $member = $client->add_guild_member($guild_id, $user_id,
+    access_token => $token,
+    nick         => '名前',
+    roles        => [ $role_id ],
+    mute         => 0,
+    deaf         => 1,
+);
+```
+
+| メソッド | 戻り値 | 説明 |
+|---|---|---|
+| `add_guild_member($guild_id, $user_id, %opts)` | ハッシュ | `access_token`（必須）/ `nick` / `roles` / `mute` / `deaf` |
+
+- 既にメンバーの場合は 204（空のハッシュ）が返ります
+
+## 自分のニックネーム（旧エンドポイント）
+
+```perl
+$client->update_current_member_nick($guild_id, '新しい名前');
+$client->update_current_member_nick($guild_id, undef);    # 削除
+```
+
+| メソッド | 戻り値 | 説明 |
+|---|---|---|
+| `update_current_member_nick($guild_id, $nick)` | ハッシュ | ニックネームのみ変更 |
+
+`modify_current_member(nick => ...)` でも同じことができます。
+
 ## キック
 
 ```perl
