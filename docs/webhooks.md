@@ -40,6 +40,27 @@ $client->execute_webhook($webhook_id, $webhook_token, 'ログです',
 - `wait => 0` のときは `1` を返す（204）
 - このエンドポイントは**認証ヘッダを付けません**
 
+### Slack / GitHub 互換
+
+既存の Slack / GitHub 連携からそのまま送れます（payload は各サービスの形式）。
+
+```perl
+# Slack 互換（text / username / attachments など）
+$client->execute_slack_webhook($id, $token,
+    { text => '通知です', username => 'disperl' });
+
+# GitHub 互換（リポジトリの Webhook にそのまま使える）
+$client->execute_github_webhook($id, $token, $github_payload);
+```
+
+| メソッド | 説明 |
+|---|---|
+| `execute_slack_webhook($id, $token, \%payload, %opts)` | `/slack` に送信 |
+| `execute_github_webhook($id, $token, \%payload, %opts)` | `/github` に送信 |
+
+- `%opts` は `wait` / `thread_id`
+- payload は検証せずそのまま送信します
+
 ## 管理
 
 ```perl

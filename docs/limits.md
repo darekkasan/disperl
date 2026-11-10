@@ -25,6 +25,10 @@
 | 添付ファイル数 | 10 | `send_file*` / `execute_webhook` / `create_followup_message` |
 | 一括削除の件数 | 2〜100 | `bulk_delete_messages` |
 | 履歴の `limit` | 1〜100 | `get_messages` |
+| ピン一覧の `limit` | 1〜50 | `get_channel_pins` |
+| 検索の `limit` / `offset` | 1〜25 / 0〜9975 | `search_guild_messages` |
+| 検索の `content` | 1,024 文字 | `search_guild_messages` |
+| 検索の配列（`channel_id` 等） | 最大 100〜500 件 | `search_guild_messages` |
 
 ## 投票
 
@@ -112,6 +116,7 @@
 | ボイスステータス | 1〜500 文字 | `set_channel_voice_status` |
 | 審査の `description` | 300 文字 | `update_guild_member_verification` |
 | 審査の `label` | 45 文字 | 同上 |
+| インシデントの停止時間 | 最大 24 時間先まで | `update_guild_incident_actions` |
 | 連携の `expire_grace_period` | 0〜30 日 | `update_guild_integration` |
 | 所属ギルドの `limit` | 1〜200 | `get_current_user_guilds` |
 | テンプレートの `name` / `description` | 1〜100 / 120 文字 | `create_guild_template` など |

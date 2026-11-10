@@ -106,6 +106,10 @@ $client->update_guild_soundboard_sound($guild_id, $sound_id,
     emoji_name => undef, emoji_id => undef);    # 絵文字を外す
 
 $client->delete_guild_soundboard_sound($guild_id, $sound_id, reason => '削除');
+
+# VC 接続中に再生する
+$client->send_soundboard_sound($voice_channel_id, $sound_id);
+$client->send_soundboard_sound($voice_channel_id, $sound_id, source_guild_id => $other_guild_id);
 ```
 
 | メソッド | 戻り値 | 説明 |
@@ -116,6 +120,7 @@ $client->delete_guild_soundboard_sound($guild_id, $sound_id, reason => '削除')
 | `create_guild_soundboard_sound($guild_id, %opts)` | ハッシュ | `name` / `sound` / `volume` / `emoji_id` / `emoji_name` / `reason` |
 | `update_guild_soundboard_sound($guild_id, $sound_id, %opts)` | ハッシュ | 同上 |
 | `delete_guild_soundboard_sound($guild_id, $sound_id, %opts)` | `1` | `reason` |
+| `send_soundboard_sound($channel_id, $sound_id, %opts)` | `1` | VC 接続中に再生。`source_guild_id` で他ギルドの音源も指定可 |
 
 - `name` は 1〜32 文字、`volume` は 0〜1
 - `sound` は JSON の data URI（multipart ではない）

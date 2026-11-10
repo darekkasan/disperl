@@ -86,11 +86,14 @@ my $subs = $client->get_sku_subscriptions($sku_id,
     user_id => $user_id,
     limit   => 100,
 );
+
+my $one = $client->get_subscription($sku_id, $subscription_id);
 ```
 
 | メソッド | 戻り値 | 説明 |
 |---|---|---|
 | `get_sku_subscriptions($sku_id, %opts)` | 配列 | `user_id` / `before` / `after` / `limit` |
+| `get_subscription($sku_id, $subscription_id)` | ハッシュ | サブスクリプション 1 件 |
 
 ## Disperl::Entitlement
 

@@ -327,6 +327,24 @@ perl test.pl target-users-job <招待コード>
 
 - `target-users-set` は非同期です。`target-users-job` で完了を確認してください
 
+### コマンド・検索・ギルド管理
+
+```sh
+perl test.pl command-create <名前> --description 説明 [--type N] [--guild ID | --global]
+perl test.pl command-edit <ID> [--name 名前] [--description 説明] [--guild ID | --global]
+perl test.pl messages-search "hello" [--channel ID,ID] [--author ID,ID]
+perl test.pl incident --invites-until 2026-12-01T20:00:00Z
+perl test.pl incident --invites-until none --dms-until none
+perl test.pl role-counts [--guild ID]
+perl test.pl subscription <SKU_ID> <サブスクリプションID>
+perl test.pl sound-play <サウンドID> [--source-guild ID] [--channel ID]
+perl test.pl slack-webhook <ID> <トークン> "通知です" [--username 名前]
+perl test.pl github-webhook <ID> <トークン> payload.json
+```
+
+- `messages-search` は `MESSAGE_CONTENT`（Privileged Intent）が必要です
+- `pins` は新しいピン API を使います（`--limit` / `--before` 対応）
+
 ### Gateway の capabilities
 
 ```sh

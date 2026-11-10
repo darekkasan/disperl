@@ -232,13 +232,35 @@ $client->delete_guild_command($app_id, $guild_id, $command_id);
 | `get_global_commands($app_id)` | 一覧 |
 | `get_guild_command($app_id, $guild_id, $command_id)` | 1 件取得 |
 | `get_global_command($app_id, $command_id)` | 1 件取得 |
+| `create_guild_command($app_id, $guild_id, \%command)` | 1 件作成（upsert） |
+| `create_global_command($app_id, \%command)` | 1 件作成（upsert） |
+| `edit_guild_command($app_id, $guild_id, $command_id, \%command)` | 1 件編集 |
+| `edit_global_command($app_id, $command_id, \%command)` | 1 件編集 |
 | `delete_guild_command($app_id, $guild_id, $command_id)` | 1 件削除 |
 | `delete_global_command($app_id, $command_id)` | 1 件削除 |
 
 - アプリケーション ID は Bot のユーザー ID と同じ（`$client->get_current_user->{id}`）
 - 登録は `PUT`（**配列を丸ごと置き換え**）。既存コマンドは消えるので注意
-- `name` と `description` は必須（無いと `die`）
+- `name` と `description` は必須（無いと `die`）。`type` が `USER` (2) / `MESSAGE` (3) のときは `description` 不要
 - ギルド登録は即時反映、グローバル登録は最大 1 時間かかる
+
+### 1 件ずつ作成・編集する
+
+```perl
+# 作成（同名があれば更新される upsert）
+my $command = $client->create_global_command($app_id, {
+    name        => 'ping',
+    description => 'pong を返します',
+});
+
+$client->edit_global_command($app_id, $command->{id}, {
+    description => 'pong を返します（更新）',
+});
+
+# ギルドコマンドも同様
+$client->create_guild_command($app_id, $guild_id, { name => 'test', description => 'テスト' });
+$client->edit_guild_command($app_id, $guild_id, $command_id, { description => '更新' });
+```
 
 ## 関連ページ
 

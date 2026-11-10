@@ -26,6 +26,14 @@ my $role  = $client->get_guild_role($guild_id, $role_id);
 |---|---|---|
 | `get_guild_roles($guild_id)` | 配列 | ロール一覧 |
 | `get_guild_role($guild_id, $role_id)` | ハッシュ | ロール 1 件 |
+| `get_guild_role_member_counts($guild_id)` | ハッシュ | `{ ロールID => 人数 }`（`@everyone` は含まない） |
+
+```perl
+my $counts = $client->get_guild_role_member_counts($guild_id);
+for my $role_id (sort { $counts->{$b} <=> $counts->{$a} } keys %$counts) {
+    print "$role_id: $counts->{$role_id}\n";
+}
+```
 
 ロールの主なフィールド:
 

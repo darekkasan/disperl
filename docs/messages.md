@@ -10,6 +10,7 @@
 - [返信・TTS・メンション](#返信ttsメンション)
 - [添付ファイル](#添付ファイル)
 - [投票（Poll）](#投票poll)
+- [ギルド内検索](#ギルド内検索)
 - [関連ページ](#関連ページ)
 
 ## 共通オプション
@@ -224,6 +225,42 @@ my $voters = $client->get_poll_answer_voters(
 
 - 結果は `$message->{poll}{results}{answer_counts}` に入る
 - 投票は**作成時のみ**指定できる（編集では変更できない）
+
+## ギルド内検索
+
+ギルド内のメッセージを検索します（`READ_MESSAGE_HISTORY` と
+**`MESSAGE_CONTENT`（Privileged Intent）** が必要）。
+
+```perl
+my $result = $client->search_guild_messages($guild_id,
+    content    => 'hello',
+    channel_id => [ $channel_id ],
+    author_id  => [ $user_id ],
+    pinned     => 1,
+    limit      => 25,
+);
+
+print $result->{total_results};
+for my $group (@{ $result->{messages} || [] }) {
+    for my $m (@$group) { print "$m->{id}\n" }
+}
+```
+
+| キー | 説明 |
+|---|---|
+| `content` | 検索語（最大 1024 文字） |
+| `limit` / `offset` | 1〜25 / 0〜9975 |
+| `max_id` / `min_id` | メッセージ ID の範囲 |
+| `channel_id` / `author_id` / `mentions` / `mentions_role_id` | ID の配列（最大 500 / 100） |
+| `author_type` / `has` / `embed_type` / `embed_provider` / `link_hostname` | 文字列の配列 |
+| `replied_to_user_id` / `replied_to_message_id` | ID の配列 |
+| `mention_everyone` / `pinned` / `include_nsfw` | 真偽値 |
+| `sort_by` / `sort_order` | 並び順（`asc` / `desc`） |
+| `slop` | 語間の許容（0〜100） |
+
+- 配列は `channel_id=1&channel_id=2` の形式で送信されます
+- 索引が未作成だと `{ code => 110000, retry_after => ... }` が返ります。少し待って再試行してください
+- 返り値は `{ messages => [[...]], total_results => n }`（`messages` はグループの配列）
 
 ## 関連ページ
 

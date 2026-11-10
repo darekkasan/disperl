@@ -159,6 +159,65 @@ sub get_messages {
     return $self->_finish($res, 'array');
 }
 
+# ギルド内のメッセージを検索する（READ_MESSAGE_HISTORY と MESSAGE_CONTENT が必要）。
+#   search_guild_messages($guild_id, content => 'hello', limit => 25)
+#   search_guild_messages($guild_id, channel_id => [ $id1, $id2 ], author_id => [ $uid ])
+# 返り値は { messages => [...], total_results => n }（索引未作成時は code 110000）。
+sub search_guild_messages {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my @query;
+
+    for my $key (qw(max_id min_id content sort_by sort_order)) {
+        push @query, "$key=" . _uri_escape($opts{$key}) if defined $opts{$key};
+    }
+
+    if (defined $opts{limit}) {
+        die "limit must be between 1 and 25\n"
+            unless !ref $opts{limit} && $opts{limit} =~ /^\d+\z/
+                && $opts{limit} >= 1 && $opts{limit} <= 25;
+        push @query, 'limit=' . ($opts{limit} + 0);
+    }
+
+    if (defined $opts{offset}) {
+        die "offset must be between 0 and 9975\n"
+            unless !ref $opts{offset} && $opts{offset} =~ /^\d+\z/
+                && $opts{offset} <= 9975;
+        push @query, 'offset=' . ($opts{offset} + 0);
+    }
+
+    if (defined $opts{slop}) {
+        die "slop must be between 0 and 100\n"
+            unless !ref $opts{slop} && $opts{slop} =~ /^\d+\z/
+                && $opts{slop} <= 100;
+        push @query, 'slop=' . ($opts{slop} + 0);
+    }
+
+    for my $key (qw(
+        channel_id author_type author_id mentions mentions_role_id
+        replied_to_user_id replied_to_message_id has embed_type
+        embed_provider link_hostname attachment_filename attachment_extension
+    )) {
+        next unless defined $opts{$key};
+        my $values = _id_array($opts{$key}, $key);
+        push @query, map { "$key=" . _uri_escape($_) } @$values;
+    }
+
+    for my $key (qw(mention_everyone pinned include_nsfw)) {
+        next unless exists $opts{$key};
+        push @query, "$key=" . ($opts{$key} ? 'true' : 'false');
+    }
+
+    my $url = "$API_BASE/guilds/$guild_id/messages/search";
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'hash');
+}
+
 # 「入力中...」を表示する。成功時は 1。
 sub send_typing {
     my ($self, $channel_id) = @_;
@@ -263,37 +322,72 @@ sub crosspost_message {
 
 # ---------------------------------------------------------------- pins / bulk
 
-# ピン留めする。成功時は 1（権限 MANAGE_MESSAGES が必要）。
+# ピン留めする。成功時は 1（PIN_MESSAGES が必要。reason 対応）。
 sub pin_message {
-    my ($self, $channel_id, $message_id) = @_;
+    my ($self, $channel_id, $message_id, %opts) = @_;
+
+    die "message id is required\n"
+        unless defined $message_id && length $message_id;
 
     $self->{last_error} = undef;
     my $res = $self->_request(
         'PUT',
-        "$API_BASE/channels/$channel_id/pins/$message_id",
+        "$API_BASE/channels/$channel_id/messages/pins/$message_id",
+        undef,
+        $self->_audit_opts(\%opts),
     );
     return $self->_finish($res, 'none');
 }
 
-# ピン留めを外す。成功時は 1。
+# ピン留めを外す。成功時は 1（reason 対応）。
 sub unpin_message {
-    my ($self, $channel_id, $message_id) = @_;
+    my ($self, $channel_id, $message_id, %opts) = @_;
+
+    die "message id is required\n"
+        unless defined $message_id && length $message_id;
 
     $self->{last_error} = undef;
     my $res = $self->_request(
         'DELETE',
-        "$API_BASE/channels/$channel_id/pins/$message_id",
+        "$API_BASE/channels/$channel_id/messages/pins/$message_id",
+        undef,
+        $self->_audit_opts(\%opts),
     );
     return $self->_finish($res, 'none');
 }
 
-# ピン留めされたメッセージの一覧。
-sub get_pinned_messages {
-    my ($self, $channel_id) = @_;
+# ピン留め一覧（新 API）。返り値は { items => [ { pinned_at, message } ], has_more }。
+#   get_channel_pins($channel_id, before => '2026-01-01T00:00:00Z', limit => 50)
+sub get_channel_pins {
+    my ($self, $channel_id, %opts) = @_;
+
+    my @query;
+    push @query, 'before=' . _uri_escape($opts{before}) if defined $opts{before};
+
+    if (defined $opts{limit}) {
+        die "limit must be between 1 and 50\n"
+            unless !ref $opts{limit} && $opts{limit} =~ /^\d+\z/
+                && $opts{limit} >= 1 && $opts{limit} <= 50;
+        push @query, 'limit=' . ($opts{limit} + 0);
+    }
+
+    my $url = "$API_BASE/channels/$channel_id/messages/pins";
+    $url .= '?' . join('&', @query) if @query;
 
     $self->{last_error} = undef;
-    my $res = $self->_request('GET', "$API_BASE/channels/$channel_id/pins");
-    return $self->_finish($res, 'array');
+    my $res = $self->_request('GET', $url);
+    return $self->_finish($res, 'hash');
+}
+
+# ピン留めされたメッセージの一覧（メッセージ本体の配列）。
+# 旧 API 互換のラッパー。詳細（pinned_at / has_more）は get_channel_pins を使う。
+sub get_pinned_messages {
+    my ($self, $channel_id, %opts) = @_;
+
+    my $result = $self->get_channel_pins($channel_id, %opts);
+    return undef unless $result;
+
+    return [ map { $_->{message} } @{ $result->{items} || [] } ];
 }
 
 # 2〜100 件をまとめて削除する（14 日以内のメッセージのみ）。
@@ -1002,6 +1096,49 @@ sub update_guild {
     my $res = $self->_request(
         'PATCH', "$API_BASE/guilds/$guild_id", \%payload,
         $self->_audit_opts(\%opts),
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ロールごとのメンバー数を取得する（{ ロールID => 人数 }。@everyone は含まない）。
+sub get_guild_role_member_counts {
+    my ($self, $guild_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/roles/member-counts",
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# 荒らし対策のインシデントアクション（招待 / DM の一時停止、最大 24 時間）。
+#   update_guild_incident_actions($guild_id,
+#       invites_disabled_until => '2026-12-01T20:00:00Z',
+#       dms_disabled_until     => '2026-12-01T18:00:00Z',
+#   )
+#   update_guild_incident_actions($guild_id, invites_disabled_until => undef);  # 解除
+sub update_guild_incident_actions {
+    my ($self, $guild_id, %opts) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my %payload;
+
+    for my $key (qw(invites_disabled_until dms_disabled_until)) {
+        next unless exists $opts{$key};
+        my $value = $opts{$key};
+        $payload{$key} = defined $value
+            ? _iso8601_time($value, $key)
+            : undef;
+    }
+
+    die "no incident action fields to update\n" unless keys %payload;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PUT', "$API_BASE/guilds/$guild_id/incident-actions", \%payload,
     );
     return $self->_finish($res, 'hash');
 }
@@ -2298,6 +2435,20 @@ sub get_channel_member_permissions {
     return $self->_finish($res, 'hash');
 }
 
+# ギルドでのロール（+ @everyone）の実効権限。
+sub get_guild_role_permissions {
+    my ($self, $guild_id, $role_id) = @_;
+
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "role id is required\n"  unless defined $role_id  && length $role_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/guilds/$guild_id/permissions/role/$role_id",
+    );
+    return $self->_finish($res, 'hash');
+}
+
 # チャンネルでのロール（+ @everyone）の実効権限。
 #   get_channel_role_permissions($channel_id, $role_id, implicit => 0)
 sub get_channel_role_permissions {
@@ -3051,6 +3202,27 @@ sub _soundboard_payload {
     return %payload;
 }
 
+# VC 接続中にサウンドボードの音源を再生する。
+#   send_soundboard_sound($channel_id, $sound_id)
+#   send_soundboard_sound($channel_id, $sound_id, source_guild_id => $guild_id)
+sub send_soundboard_sound {
+    my ($self, $channel_id, $sound_id, %opts) = @_;
+
+    die "channel id is required\n"
+        unless defined $channel_id && length $channel_id;
+    die "sound id is required\n" unless defined $sound_id && length $sound_id;
+
+    my %payload = (sound_id => "$sound_id");
+    $payload{source_guild_id} = "$opts{source_guild_id}"
+        if defined $opts{source_guild_id};
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST', "$API_BASE/channels/$channel_id/send-soundboard-sound", \%payload,
+    );
+    return $self->_finish($res, 'none');
+}
+
 # ---------------------------------------------------------------- stage instances
 
 # ステージインスタンスを作る（ステージチャンネルで MUTE_MEMBERS 等が必要）。
@@ -3455,6 +3627,21 @@ sub get_sku_subscriptions {
     $self->{last_error} = undef;
     my $res = $self->_request('GET', $url);
     return $self->_finish($res, 'array');
+}
+
+# サブスクリプションを 1 件取得する。
+sub get_subscription {
+    my ($self, $sku_id, $subscription_id) = @_;
+
+    die "sku id is required\n" unless defined $sku_id && length $sku_id;
+    die "subscription id is required\n"
+        unless defined $subscription_id && length $subscription_id;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'GET', "$API_BASE/skus/$sku_id/subscriptions/$subscription_id",
+    );
+    return $self->_finish($res, 'hash');
 }
 
 # ---------------------------------------------------------------- role connections
@@ -3937,17 +4124,19 @@ sub get_channel_voice_status {
     return $self->_finish($res, 'hash');
 }
 
-# ボイスチャンネルのステータスを設定する（1〜500 文字）。成功時は 1。
+# ボイスチャンネルのステータスを設定する（1〜500 文字、undef で解除）。成功時は 1。
 #   set_channel_voice_status($channel_id, '会議中', reason => '定例')
+#   set_channel_voice_status($channel_id, undef);    # 解除
 sub set_channel_voice_status {
     my ($self, $channel_id, $status, %opts) = @_;
 
     die "channel id is required\n"
         unless defined $channel_id && length $channel_id;
-    die "voice status is required\n"
-        unless defined $status && length $status;
+    die "voice status is required (pass undef to clear)\n" unless @_ >= 3;
+    die "voice status must be a string or undef\n"
+        if defined $status && ref $status;
     die "voice status must be 500 characters or less\n"
-        if length($status) > 500;
+        if defined $status && length($status) > 500;
 
     $self->{last_error} = undef;
     my $res = $self->_request(
@@ -4793,6 +4982,40 @@ sub execute_webhook {
         $res = $self->_request('POST', $url, $payload, { auth => 0 });
     }
 
+    return $self->_finish($res, $wait ? 'hash' : 'none');
+}
+
+# Slack 互換 Webhook を送る（payload は Slack の形式）。
+#   execute_slack_webhook($id, $token, { text => 'hi', username => 'bot' })
+sub execute_slack_webhook {
+    my ($self, $webhook_id, $token, $payload, %opts) = @_;
+    return $self->_execute_compat_webhook('slack', $webhook_id, $token, $payload, %opts);
+}
+
+# GitHub 互換 Webhook を送る（payload は GitHub のイベント形式）。
+sub execute_github_webhook {
+    my ($self, $webhook_id, $token, $payload, %opts) = @_;
+    return $self->_execute_compat_webhook('github', $webhook_id, $token, $payload, %opts);
+}
+
+sub _execute_compat_webhook {
+    my ($self, $kind, $webhook_id, $token, $payload, %opts) = @_;
+
+    $self->_check_webhook_token($webhook_id, $token);
+    die "payload must be a hash reference\n" unless ref $payload eq 'HASH';
+
+    my $wait = exists $opts{wait} ? $opts{wait} : 1;
+
+    my @query = ('wait=1') if $wait;
+    push @query, 'thread_id=' . _uri_escape($opts{thread_id})
+        if defined $opts{thread_id};
+
+    my $url = "$API_BASE/webhooks/$webhook_id/" . _uri_escape($token)
+        . "/$kind";
+    $url .= '?' . join('&', @query) if @query;
+
+    $self->{last_error} = undef;
+    my $res = $self->_request('POST', $url, $payload, { auth => 0 });
     return $self->_finish($res, $wait ? 'hash' : 'none');
 }
 
@@ -5730,6 +5953,115 @@ sub delete_guild_command {
         "$API_BASE/applications/$application_id/guilds/$guild_id/commands/$command_id",
     );
     return $self->_finish($res, 'none');
+}
+
+# グローバルコマンドを 1 件作成する（upsert）。
+sub create_global_command {
+    my ($self, $application_id, $command) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+
+    my $payload = _command_payload($command);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST', "$API_BASE/applications/$application_id/commands", $payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# グローバルコマンドを 1 件編集する。
+sub edit_global_command {
+    my ($self, $application_id, $command_id, $command) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "command id is required\n"
+        unless defined $command_id && length $command_id;
+
+    my $payload = _command_payload($command);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH',
+        "$API_BASE/applications/$application_id/commands/$command_id",
+        $payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ギルドコマンドを 1 件作成する（upsert）。
+sub create_guild_command {
+    my ($self, $application_id, $guild_id, $command) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+
+    my $payload = _command_payload($command);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'POST',
+        "$API_BASE/applications/$application_id/guilds/$guild_id/commands",
+        $payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# ギルドコマンドを 1 件編集する。
+sub edit_guild_command {
+    my ($self, $application_id, $guild_id, $command_id, $command) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "guild id is required\n" unless defined $guild_id && length $guild_id;
+    die "command id is required\n"
+        unless defined $command_id && length $command_id;
+
+    my $payload = _command_payload($command);
+
+    $self->{last_error} = undef;
+    my $res = $self->_request(
+        'PATCH',
+        "$API_BASE/applications/$application_id/guilds/$guild_id/commands/$command_id",
+        $payload,
+    );
+    return $self->_finish($res, 'hash');
+}
+
+# コマンドの JSON を検証する（name / description の必須チェック中心）。
+sub _command_payload {
+    my ($command) = @_;
+
+    die "command must be a hash reference\n" unless ref $command eq 'HASH';
+
+    my %payload = %$command;
+
+    my $name = $payload{name};
+    die "command name is required\n"
+        unless defined $name && !ref $name && length $name;
+    die "command name must be 1-32 characters\n" if length($name) > 32;
+
+    my $type = exists $payload{type} ? $payload{type} : 1;
+    if (defined $type && !ref $type && $type =~ /^\d+\z/) {
+        $type += 0;
+        $payload{type} = $type;
+    } else {
+        $type = 1;
+    }
+
+    # USER (2) / MESSAGE (3) 以外は description が必須
+    if ($type != 2 && $type != 3) {
+        my $description = $payload{description};
+        die "command description is required\n"
+            unless defined $description && !ref $description && length $description;
+        die "command description must be 1-100 characters\n"
+            if length($description) > 100;
+    }
+
+    return \%payload;
 }
 
 sub _register_commands {

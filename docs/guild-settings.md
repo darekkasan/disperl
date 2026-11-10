@@ -6,6 +6,7 @@
 ## 目次
 
 - [ギルド設定の変更](#ギルド設定の変更)
+- [インシデントアクション](#インシデントアクション)
 - [ウェルカム画面](#ウェルカム画面)
 - [オンボーディング](#オンボーディング)
 - [Disperl::Guild](#disperlguild)
@@ -58,6 +59,31 @@ my $guild = $client->update_guild($guild_id,
 
 - 1 つも項目が無いと `die`（`no guild fields to update`）
 - `icon` などはファイルパスから data URI を自動生成します
+
+## インシデントアクション
+
+荒らし対策として、招待や DM を一時的に停止できます（`MANAGE_GUILD` が必要、最大 24 時間）。
+
+```perl
+my $incidents = $client->update_guild_incident_actions($guild_id,
+    invites_disabled_until => '2026-12-01T20:00:00Z',
+    dms_disabled_until     => '2026-12-01T18:00:00Z',
+);
+
+# 解除する
+$client->update_guild_incident_actions($guild_id,
+    invites_disabled_until => undef,
+    dms_disabled_until     => undef,
+);
+```
+
+| キー | 説明 |
+|---|---|
+| `invites_disabled_until` | 招待を再有効化する時刻。`undef` で解除 |
+| `dms_disabled_until` | DM を再有効化する時刻。`undef` で解除 |
+
+- 返り値は incidents data（`invites_disabled_until` / `dms_disabled_until` / `raid_detected_at` など）
+- 現在時刻から最大 24 時間先まで指定できます
 
 ## ウェルカム画面
 

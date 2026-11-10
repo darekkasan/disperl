@@ -101,7 +101,9 @@ if ($message) {
 - ギルド設定の変更・ウェルカム画面・オンボーディング（`Disperl::Guild`）
 - メンバー審査・連携（Integrations）・ギルドテンプレート・ボイスリージョン・一括 BAN・所属ギルド管理（`Disperl::Integration`）
 - 権限のサーバー側計算（ギルド / チャンネル / ロール）・ボイスステートの取得 / 変更
-- 招待のターゲットユーザー（Community Invites）・コマンド単体取得
+- 招待のターゲットユーザー（Community Invites）・コマンド単体の作成 / 編集 / 取得
+- ピン留め（新 API）・ギルド内メッセージ検索・インシデントアクション・ロールのメンバー数
+- サブスクリプション単体取得・サウンドボード再生・Slack / GitHub 互換 Webhook
 - Entitlements / SKU / Subscriptions（`Disperl::Entitlement`）
 - ロール連携メタデータ（`Disperl::RoleConnection`）
 - チャンネルフォロー・ボイスステータス・Bot プロフィール変更・アプリ編集

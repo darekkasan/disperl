@@ -153,11 +153,13 @@ $client->leave_guild($guild_id);
 | メソッド | 戻り値 | 説明 |
 |---|---|---|
 | `get_current_user_guilds(%opts)` | 配列 | `before` / `after` / `limit` (1〜200) / `with_counts` / `shard` |
-| `get_current_user_guild_member($guild_id)` | ハッシュ | 自分のメンバー情報 |
+| `get_current_user_guild_member($guild_id)` | ハッシュ | 自分のメンバー情報（※） |
 | `leave_guild($guild_id)` | `1` | 退出 |
 
 - Large Bot Sharding を使う場合は `get_current_user_guilds(shard => $n)` で
   シャードごとに取得します（`$n` は `max_concurrency - 1` まで）
+- ※ `get_current_user_guild_member` は公式には **`guilds.members.read`（OAuth2）必須**と
+  記載されています。Bot トークンでは動かない可能性があります
 
 ## Disperl::Integration
 

@@ -34,23 +34,40 @@ sub body_of {
 }
 
 subtest 'pin / unpin / pinned list' => sub {
+    my %pins_body = (
+        items => [
+            { pinned_at => '2026-01-01T00:00:00Z', message => { id => '1' } },
+            { pinned_at => '2026-01-02T00:00:00Z', message => { id => '2' } },
+        ],
+        has_more => JSON::PP::false,
+    );
+
     my ($client, $fake) = client_with(
         ok_json({}),
         ok_json({}),
-        ok_json([ { id => '1' }, { id => '2' } ]),
+        ok_json(\%pins_body),
+        ok_json(\%pins_body),
     );
 
     is $client->pin_message('111', '42'), 1, 'pin returns 1';
     is $fake->last_call->{method}, 'PUT', 'pin is PUT';
-    is $fake->last_call->{url}, "$API/channels/111/pins/42", 'pin endpoint';
+    is $fake->last_call->{url}, "$API/channels/111/messages/pins/42",
+        'pin endpoint';
 
     is $client->unpin_message('111', '42'), 1, 'unpin returns 1';
     is $fake->last_call->{method}, 'DELETE', 'unpin is DELETE';
-    is $fake->last_call->{url}, "$API/channels/111/pins/42", 'unpin endpoint';
+    is $fake->last_call->{url}, "$API/channels/111/messages/pins/42",
+        'unpin endpoint';
+
+    my $result = $client->get_channel_pins('111');
+    is scalar @{ $result->{items} }, 2, 'pins';
+    ok !$result->{has_more}, 'has_more';
+    is $fake->last_call->{url}, "$API/channels/111/messages/pins",
+        'pins endpoint';
 
     my $pins = $client->get_pinned_messages('111');
-    is scalar @$pins, 2, 'pinned messages';
-    is $fake->last_call->{url}, "$API/channels/111/pins", 'pins endpoint';
+    is scalar @$pins, 2, 'legacy wrapper returns messages';
+    is $pins->[0]{id}, '1', 'legacy wrapper message';
 };
 
 subtest 'bulk_delete_messages' => sub {

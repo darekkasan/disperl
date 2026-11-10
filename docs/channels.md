@@ -268,6 +268,12 @@ $client->delete_channel_voice_status($channel_id);          # 消す
 
 - ボイスチャンネル以外では API エラーになります
 - `set_channel_voice_status` / `delete_channel_voice_status` は `reason`（監査ログ）に対応
+- `set_channel_voice_status($channel_id, undef)` で解除できます
+
+> **仕様変更（2026 年時点）**: 公式ドキュメントは **PUT のみ**を記載しています
+> （解除は `status: null`）。`get_channel_voice_status` / `delete_channel_voice_status` は
+> 旧仕様の名残で残しています。取得は Gateway の
+> `VOICE_CHANNEL_STATUS_UPDATE` や op 43（`request_channel_info`）でも可能です。
 
 ## ボイスステート
 

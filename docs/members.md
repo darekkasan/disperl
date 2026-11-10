@@ -210,6 +210,9 @@ Discord 側に計算させることもできます（`{ permissions => 'ビッ�
 ```perl
 my $result = $client->get_guild_member_permissions($guild_id, $user_id);
 print "$result->{permissions}\n";
+
+# ロール（+ @everyone）のギルド権限
+my $role = $client->get_guild_role_permissions($guild_id, $role_id);
 ```
 
 チャンネル単位・ロール単位の計算は

@@ -211,7 +211,8 @@ disperl 動作確認 CLI
   perl test.pl delete <ID>           メッセージを削除する
   perl test.pl pin <ID>               メッセージをピン留めする
   perl test.pl unpin <ID>             ピン留めを外す
-  perl test.pl pins                   ピン留めされたメッセージの一覧
+  perl test.pl pins [--limit N] [--before ISO8601] [--channel ID]
+                                       ピン留めされたメッセージの一覧
   perl test.pl purge <ID> <ID> ...    2〜100 件をまとめて削除する
   perl test.pl reactions <ID> <絵文字> リアクションしたユーザー一覧
   perl test.pl dm <ユーザーID> <本文>   DM を送る
@@ -360,6 +361,24 @@ disperl 動作確認 CLI
   perl test.pl target-users-bulk-delete <招待コード> <ID,ID>
                                        ターゲットユーザーを一括削除する
   perl test.pl target-users-job <招待コード>  CSV 取り込みジョブの状態
+  perl test.pl command-create <名前> --description 説明 [--type N]
+      [--guild ID | --global]          コマンドを作成する
+  perl test.pl command-edit <ID> [--name 名前] [--description 説明]
+      [--guild ID | --global]          コマンドを編集する
+  perl test.pl messages-search [本文] [--channel ID,ID] [--author ID,ID]
+      [--mentions ID,ID] [--pinned] [--include-nsfw] [--limit N] [--offset N] [--guild ID]
+                                       ギルド内を検索する（MESSAGE_CONTENT が必要）
+  perl test.pl incident [--invites-until ISO8601|none] [--dms-until ISO8601|none] [--guild ID]
+                                       インシデントアクションを変更する
+  perl test.pl role-counts [--guild ID]  ロールごとのメンバー数
+  perl test.pl subscription <SKU_ID> <サブスクリプションID>
+                                       サブスクリプションを表示する
+  perl test.pl sound-play <サウンドID> [--source-guild ID] [--channel ID]
+                                       サウンドボードを再生する（VC 接続中）
+  perl test.pl slack-webhook <ID> <トークン> <テキスト> [--username 名前]
+                                       Slack 互換 Webhook で送る
+  perl test.pl github-webhook <ID> <トークン> <JSONファイル>
+                                       GitHub 互換 Webhook で送る
   perl test.pl channels [ギルドID]     チャンネル一覧（省略時は現在のギルド）
   perl test.pl channel-create <名前> [--type text|voice|category|announcement|stage|forum|media]
       [--parent ID] [--topic 話題] [--slowmode 秒] [--guild ID] [--reason 理由]
@@ -559,6 +578,9 @@ disperl 動作確認 CLI
   perl test.pl watch --capabilities CHANNEL_OBFUSCATION
   perl test.pl perms-member 123456789012345678 --channel 111111111111111111
   perl test.pl target-users-bulk-add AbCdEf 111111111111111111,222222222222222222
+  perl test.pl messages-search "hello" --author 111111111111111111
+  perl test.pl role-counts
+  perl test.pl sound-play 111111111111111111 --channel 222222222222222222
 
 ステータスは Gateway に接続している間だけ有効（切断すると通常のオフラインに戻る）。
 watch 中は Discord から !status idle / !activity "作業中" でも変更できる。
@@ -728,21 +750,31 @@ sub cmd_unpin {
 }
 
 sub cmd_pins {
-    my $pins = client()->get_pinned_messages(channel_id());
-    _api_fail('ピン一覧の取得') unless defined $pins;
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(channel limit before)]);
 
-    if (!@$pins) {
+    my %opts;
+    $opts{limit}  = $opt->{limit}  if defined $opt->{limit};
+    $opts{before} = $opt->{before} if defined $opt->{before};
+
+    my $result = client()->get_channel_pins($opt->{channel} // channel_id(), %opts);
+    _api_fail('ピン一覧の取得') unless defined $result;
+
+    my $items = $result->{items} || [];
+    if (!@$items) {
         out "ピン留めされたメッセージはありません\n";
         return 0;
     }
 
-    for my $m (reverse @$pins) {
+    for my $pin (reverse @$items) {
+        my $m = $pin->{message} || {};
         out sprintf "%s  %s: %s\n",
             _format_time(_snowflake_time($m->{id})),
             _author_name($m->{author}),
             _clip($m->{content}, 100);
     }
-    out sprintf "(%d 件)\n", scalar @$pins;
+    out sprintf "(%d 件%s)\n", scalar @$items,
+        $result->{has_more} ? '（続きあり）' : '';
     return 0;
 }
 
@@ -2461,17 +2493,26 @@ sub cmd_perms_member {
 
 sub cmd_perms_role {
     my @args = map { _decode_arg($_) } @_;
-    my ($opt, $pos) = _parse_options(\@args, [qw(channel implicit)]);
+    my ($opt, $pos) = _parse_options(\@args, [qw(channel implicit guild)]);
 
     my $role_id = $pos->[0];
-    _fatal('使い方: perl test.pl perms-role <ロールID> --channel ID [--implicit 0|1]')
-        unless defined $role_id && length $role_id && defined $opt->{channel};
+    _fatal('使い方: perl test.pl perms-role <ロールID> [--channel ID] [--guild ID] [--implicit 0|1]')
+        unless defined $role_id && length $role_id;
 
     my %extra = exists $opt->{implicit} ? (implicit => $opt->{implicit}) : ();
 
-    my $result = client()->get_channel_role_permissions(
-        $opt->{channel}, $role_id, %extra,
-    ) or _api_fail('ロール権限の計算');
+    my $result;
+    if (defined $opt->{channel}) {
+        $result = client()->get_channel_role_permissions(
+            $opt->{channel}, $role_id, %extra,
+        );
+    } else {
+        $result = client()->get_guild_role_permissions(
+            _guild_or_current($opt->{guild}), $role_id,
+        );
+    }
+
+    $result or _api_fail('ロール権限の計算');
 
     _print_permissions($result->{permissions});
     return 0;
@@ -2638,6 +2679,210 @@ sub cmd_target_users_job {
         $job->{processed_users} // '?',
         $job->{total_users} // '?';
     out "  error: $job->{error_message}\n" if defined $job->{error_message};
+    return 0;
+}
+
+sub cmd_command_create {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(description type guild)], [qw(global)]);
+
+    my $name = join ' ', @$pos;
+    _fatal('使い方: perl test.pl command-create <名前> --description 説明 [--type N] [--guild ID | --global]')
+        unless length $name;
+
+    my %command = (name => $name);
+    $command{description} = $opt->{description} if defined $opt->{description};
+    $command{type}        = $opt->{type} + 0     if defined $opt->{type};
+
+    my $app_id = _application_id();
+    my $command = $opt->{global}
+        ? client()->create_global_command($app_id, \%command)
+        : client()->create_guild_command($app_id, _guild_or_current($opt->{guild}), \%command);
+
+    $command or _api_fail('コマンドの作成');
+
+    out sprintf "コマンドを作成しました: %s (id: %s)\n",
+        $command->{name} // $name, $command->{id} // '?';
+    return 0;
+}
+
+sub cmd_command_edit {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(name description guild)], [qw(global)]);
+
+    my $command_id = $pos->[0];
+    _fatal('使い方: perl test.pl command-edit <コマンドID> [--name 名前] [--description 説明] [--guild ID | --global]')
+        unless defined $command_id && length $command_id;
+
+    my %command;
+    $command{name}        = $opt->{name}        if defined $opt->{name};
+    $command{description} = $opt->{description} if defined $opt->{description};
+    _fatal('変更する項目がありません（--name / --description）') unless keys %command;
+
+    my $app_id = _application_id();
+    my $command = $opt->{global}
+        ? client()->edit_global_command($app_id, $command_id, \%command)
+        : client()->edit_guild_command(
+            $app_id, _guild_or_current($opt->{guild}), $command_id, \%command,
+        );
+
+    $command or _api_fail('コマンドの編集');
+
+    out sprintf "コマンドを更新しました: %s (id: %s)\n",
+        $command->{name} // '', $command->{id} // $command_id;
+    return 0;
+}
+
+sub cmd_messages_search {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args,
+        [qw(channel author mentions limit offset guild)],
+        [],
+        [qw(pinned include-nsfw)]);
+
+    my $content = join ' ', @$pos;
+
+    my %opts;
+    $opts{content} = $content if length $content;
+    $opts{limit}   = $opt->{limit}  if defined $opt->{limit};
+    $opts{offset}  = $opt->{offset} if defined $opt->{offset};
+    $opts{channel_id} = _id_list($opt->{channel}) if defined $opt->{channel};
+    $opts{author_id}  = _id_list($opt->{author})  if defined $opt->{author};
+    $opts{mentions}   = _id_list($opt->{mentions}) if defined $opt->{mentions};
+    $opts{pinned}       = 1 if $opt->{pinned};
+    $opts{include_nsfw} = 1 if $opt->{'include-nsfw'};
+
+    _fatal('検索条件を指定してください（本文 / --author / --channel など）')
+        unless keys %opts;
+
+    my $result = client()->search_guild_messages(
+        _guild_or_current($opt->{guild}), %opts,
+    ) or _api_fail('メッセージ検索');
+
+    if (($result->{code} // 0) == 110000) {
+        out "索引が未作成です。少し待って再試行してください\n";
+        return 0;
+    }
+
+    my $rows = $result->{messages} || [];
+    out sprintf "検索結果 %s 件\n", $result->{total_results} // scalar @$rows;
+    for my $group (@$rows) {
+        for my $m (@$group) {
+            out sprintf "  %s  %s: %s\n",
+                _format_time(_snowflake_time($m->{id})),
+                _author_name($m->{author}),
+                _clip($m->{content}, 100);
+        }
+    }
+    return 0;
+}
+
+sub cmd_incident {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args,
+        [qw(invites-until dms-until guild)]);
+
+    my %opts;
+    for my $pair (
+        [ 'invites-until', 'invites_disabled_until' ],
+        [ 'dms-until',     'dms_disabled_until' ],
+    ) {
+        my ($option, $key) = @$pair;
+        next unless defined $opt->{$option};
+        $opts{$key} = lc($opt->{$option}) eq 'none' ? undef : $opt->{$option};
+    }
+
+    _fatal('変更する項目がありません（--invites-until / --dms-until）')
+        unless keys %opts;
+
+    my $result = client()->update_guild_incident_actions(
+        _guild_or_current($opt->{guild}), %opts,
+    ) or _api_fail('インシデントアクションの更新');
+
+    out sprintf "招待停止: %s / DM停止: %s\n",
+        $result->{invites_disabled_until} // '(なし)',
+        $result->{dms_disabled_until}     // '(なし)';
+    return 0;
+}
+
+sub cmd_role_counts {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(guild)]);
+
+    my $counts = client()->get_guild_role_member_counts(_guild_or_current($opt->{guild}))
+        or _api_fail('ロールのメンバー数');
+
+    out sprintf "ロール %d 種\n", scalar keys %$counts;
+    for my $role_id (sort { $counts->{$b} <=> $counts->{$a} } keys %$counts) {
+        out sprintf "  %-20s %s 人\n", $role_id, $counts->{$role_id};
+    }
+    return 0;
+}
+
+sub cmd_subscription {
+    my ($sku_id, $subscription_id) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl subscription <SKU_ID> <サブスクリプションID>')
+        unless defined $sku_id && defined $subscription_id;
+
+    my $sub = client()->get_subscription($sku_id, $subscription_id)
+        or _api_fail('サブスクリプション');
+
+    out sprintf "id=%s status=%s user=%s\n",
+        $sub->{id} // '?', $sub->{status} // '?', $sub->{user_id} // '-';
+    out "  期間: " . ($sub->{current_period_start} // '?') . " 〜 "
+        . ($sub->{current_period_end} // '?') . "\n";
+    return 0;
+}
+
+sub cmd_sound_play {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(source-guild channel)]);
+
+    my $sound_id = $pos->[0];
+    _fatal('使い方: perl test.pl sound-play <サウンドID> [--source-guild ID] [--channel ID]')
+        unless defined $sound_id && length $sound_id;
+
+    my %opts;
+    $opts{source_guild_id} = $opt->{'source-guild'} if defined $opt->{'source-guild'};
+
+    client()->send_soundboard_sound(
+        $opt->{channel} // channel_id(), $sound_id, %opts,
+    ) or _api_fail('サウンドの再生');
+
+    out "サウンドを再生しました: id=$sound_id\n";
+    return 0;
+}
+
+sub cmd_slack_webhook {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(username)]);
+
+    my ($webhook_id, $token, @words) = @$pos;
+    _fatal('使い方: perl test.pl slack-webhook <Webhook ID> <トークン> <テキスト> [--username 名前]')
+        unless defined $webhook_id && defined $token && @words;
+
+    my %payload = (text => join ' ', @words);
+    $payload{username} = $opt->{username} if defined $opt->{username};
+
+    my $message = client()->execute_slack_webhook($webhook_id, $token, \%payload)
+        or _api_fail('Slack 互換 Webhook');
+
+    out "送信しました: id=" . ($message->{id} // '?') . "\n";
+    return 0;
+}
+
+sub cmd_github_webhook {
+    my ($webhook_id, $token, $path) = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl github-webhook <Webhook ID> <トークン> <JSONファイル>')
+        unless defined $webhook_id && defined $token && defined $path;
+
+    my $payload = _read_json_file($path);
+    _fatal('JSON はオブジェクトにしてください') unless ref $payload eq 'HASH';
+
+    my $message = client()->execute_github_webhook($webhook_id, $token, $payload)
+        or _api_fail('GitHub 互換 Webhook');
+
+    out "送信しました: id=" . ($message->{id} // '?') . "\n";
     return 0;
 }
 
@@ -5239,6 +5484,15 @@ my %COMMANDS = (
     'target-users-bulk-add' => \&cmd_target_users_bulk_add,
     'target-users-bulk-delete' => \&cmd_target_users_bulk_delete,
     'target-users-job'      => \&cmd_target_users_job,
+    'command-create' => \&cmd_command_create,
+    'command-edit'   => \&cmd_command_edit,
+    'messages-search' => \&cmd_messages_search,
+    incident         => \&cmd_incident,
+    'role-counts'    => \&cmd_role_counts,
+    subscription     => \&cmd_subscription,
+    'sound-play'     => \&cmd_sound_play,
+    'slack-webhook'  => \&cmd_slack_webhook,
+    'github-webhook' => \&cmd_github_webhook,
     channels  => \&cmd_channels,
     'channel-create'      => \&cmd_channel_create,
     'channel-edit'        => \&cmd_channel_edit,

@@ -167,9 +167,23 @@ my $published = $client->crosspost_message($channel, $message_id);
 
 | メソッド | 成功時 | 説明 |
 |---|---|---|
-| `pin_message($channel_id, $message_id)` | `1` | ピン留め（`MANAGE_MESSAGES` が必要） |
-| `unpin_message($channel_id, $message_id)` | `1` | 解除 |
-| `get_pinned_messages($channel_id)` | 配列 | ピン留め一覧 |
+| `pin_message($channel_id, $message_id, %opts)` | `1` | ピン留め（`PIN_MESSAGES` が必要）。`reason` 対応 |
+| `unpin_message($channel_id, $message_id, %opts)` | `1` | 解除。`reason` 対応 |
+| `get_channel_pins($channel_id, %opts)` | ハッシュ | `{ items => [ { pinned_at, message } ], has_more }`。`before` / `limit` (1〜50) |
+| `get_pinned_messages($channel_id, %opts)` | 配列 | `items` から `message` だけを取り出した旧互換ラッパー |
+
+```perl
+$client->pin_message($channel, $message_id, reason => '重要');
+$client->unpin_message($channel, $message_id);
+
+my $pins = $client->get_channel_pins($channel, limit => 50);
+for my $pin (@{ $pins->{items} }) {
+    print "$pin->{pinned_at}  $pin->{message}{id}\n";
+}
+```
+
+> 2026 年時点で旧 `GET/PUT/DELETE /channels/{id}/pins` は**非推奨**です。
+> このライブラリは新しい `/channels/{id}/messages/pins` を使います。
 
 ## 一括削除
 
