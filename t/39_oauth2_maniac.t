@@ -7,42 +7,17 @@ use Test::More;
 use JSON::PP;
 use Disperl::Client;
 use FakeUA;
+use TestDiscord qw(client_with ok_json no_content form_of);
 
 my $json = JSON::PP->new->utf8(1);
 my $API  = 'https://discord.com/api/v10';
 my $OAUTH = 'https://discord.com/api';
-
-sub client_with {
-    my (@responses) = @_;
-    my $fake = FakeUA->new(@responses);
-    my $client = Disperl::Client->new(
-        token => 'secret', ua => $fake, sleep => sub { },
-        on_error => sub { },
-    );
-    return ($client, $fake);
-}
-
-sub ok_json { return FakeUA->ok_response($json->encode($_[0])) }
-sub no_content { return FakeUA->ok_response('', status => 204) }
 
 sub body_of {
     my ($fake) = @_;
     my $call = $fake->last_call;
     return undef unless defined $call && defined $call->{args}{content};
     return $json->decode($call->{args}{content});
-}
-
-sub form_of {
-    my ($fake) = @_;
-    my $body = $fake->last_call->{args}{content} // '';
-    my %form;
-    for my $pair (split /&/, $body) {
-        my ($k, $v) = split /=/, $pair, 2;
-        $v //= '';
-        $v =~ s/%([0-9A-Fa-f]{2})/chr hex $1/ge;
-        $form{$k} = $v;
-    }
-    return \%form;
 }
 
 # ---------------------------------------------------------------- oauth2 token

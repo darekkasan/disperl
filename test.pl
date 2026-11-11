@@ -196,11 +196,37 @@ sub _resolve_emoji {
 
 # ---------------------------------------------------------------- コマンド
 
+# ヘルプのカテゴリ（コマンド名の正規表現 => 説明）。上から順に判定する。
+my @HELP_CATEGORIES = (
+    [ basic       => qr/^(check)$/, 'トークン・チャンネルの確認' ],
+    [ message     => qr/^(send|embed|history|typing|react|edit|delete|pin|unpin|pins|purge|reactions|upload|dm|crosspost)$/, 'メッセージ' ],
+    [ poll        => qr/^poll/, '投票' ],
+    [ thread      => qr/^(thread|threads|thread-join|thread-leave|thread-archive|thread-members|thread-delete|forum-post|forum-tags)$/, 'スレッド / フォーラム' ],
+    [ channel     => qr/^(channels|channel-|invite$)/, 'チャンネル・招待' ],
+    [ role        => qr/^role/, 'ロール' ],
+    [ member      => qr/^(members|member|kick|ban|unban|bans|prune|perms-member|perms-role)$/, 'メンバー' ],
+    [ moderation  => qr/^(audit-log|automod|incident|verification)/, '監査ログ・AutoMod・審査' ],
+    [ guild       => qr/^(events|event|guild-edit|welcome|onboarding|application|app-|templates|template|widget|preview|vanity|regions|voice-regions|integrations|role-counts|subscription|skus|entitlements|role-connections)/, 'ギルド設定・アプリ・課金' ],
+    [ emoji       => qr/^(emojis|emoji-|stickers|sticker|sounds|sound-)/, '絵文字・ステッカー・サウンド' ],
+    [ webhook     => qr/^(webhook|slack-webhook|github-webhook)/, 'Webhook' ],
+    [ interaction => qr/^(commands|command)/, 'コマンド登録・権限' ],
+    [ voice       => qr/^(voice-status|voice-state|stage|follow|me(-edit)?$|my-guilds|my-member|leave-guild|activity-instance)/, 'ボイス・ステージ・プロフィール' ],
+    [ oauth       => qr/^(oauth-|connections|group-dm-)/, 'OAuth2・グループ DM' ],
+    [ invite      => qr/^target-/, '招待のターゲットユーザー' ],
+    [ watch       => qr/^watch$/, 'Gateway 受信（watch）' ],
+    [ misc        => qr/.*/, 'その他' ],
+);
+
+my $USAGE;
+
 sub cmd_help {
-    out <<'USAGE';
+    my (@args) = map { _decode_arg($_) } @_;
+
+    $USAGE = <<'USAGE';
 disperl 動作確認 CLI
 
 使い方:
+  perl test.pl help [カテゴリ]        ヘルプを表示する（help commands でカテゴリ一覧）
   perl test.pl check                 トークンとチャンネルを確認する
   perl test.pl send <本文>            メッセージを送信する（標準入力も可）
   perl test.pl embed                 embed を送信する
@@ -606,7 +632,51 @@ watch 中は Discord から !status idle / !activity "作業中" でも変更で
 
 watch は MESSAGE_CONTENT（Privileged Intent）が必要。Developer Portal で有効にする。
 USAGE
+
+    if (@args) {
+        my $category = lc $args[0];
+
+        if ($category eq 'commands') {
+            out "カテゴリ一覧（perl test.pl help <カテゴリ>）:\n\n";
+            out sprintf "  %-12s %s\n", $_->[0], $_->[2] for @HELP_CATEGORIES;
+            return 0;
+        }
+
+        my ($found) = grep { $_->[0] eq $category } @HELP_CATEGORIES;
+        _fatal("不明なカテゴリ: $args[0]（perl test.pl help commands を参照）")
+            unless $found;
+
+        out "disperl 動作確認 CLI - $found->[2]\n\n";
+        my $printed = _print_help_category($found->[1]);
+        out "該当するコマンドはありません\n" unless $printed;
+        out "\n全コマンドは perl test.pl help で表示できます。\n";
+        return 0;
+    }
+
+    out $USAGE;
     return 0;
+}
+
+# カテゴリに一致するコマンドのヘルプだけを表示する。
+sub _print_help_category {
+    my ($regex) = @_;
+
+    my $printed = 0;
+    my $current = 0;
+
+    for my $line (split /\n/, $USAGE) {
+        if ($line =~ /^  perl test\.pl ([a-z][a-z0-9-]*)/) {
+            $current = ($1 =~ $regex) ? 1 : 0;
+            next unless $current;
+            out "$line\n";
+            $printed++;
+            next;
+        }
+
+        out "$line\n" if $current && $line =~ /^\s{4,}\S/;
+    }
+
+    return $printed;
 }
 
 sub cmd_check {

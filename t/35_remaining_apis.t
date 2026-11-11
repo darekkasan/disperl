@@ -15,22 +15,10 @@ use Disperl::Guild qw(
     guild_screening_field_map guild_screening_field_name guild_screening_field_value
 );
 use FakeUA;
+use TestDiscord qw(client_with ok_json no_content);
 
 my $json = JSON::PP->new->utf8(1);
 my $API  = 'https://discord.com/api/v10';
-
-sub client_with {
-    my (@responses) = @_;
-    my $fake = FakeUA->new(@responses);
-    my $client = Disperl::Client->new(
-        token => 'secret', ua => $fake, sleep => sub { },
-        on_error => sub { },
-    );
-    return ($client, $fake);
-}
-
-sub ok_json { return FakeUA->ok_response($json->encode($_[0])) }
-sub no_content { return FakeUA->ok_response('', status => 204) }
 
 sub body_of {
     my ($fake) = @_;

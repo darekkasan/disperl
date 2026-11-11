@@ -31,6 +31,17 @@ use Disperl::Integration qw(
     integration_expire_behavior_value
 );
 
+# このファイルは意図的に 1 モジュール（Disperl::Client）のままにしている。
+# 内部ヘルパーと公開メソッドの相互参照が多いため分割の利点が小さい。
+# 目次（`# ----` コメントで検索できます）:
+#
+#   messages / pins / bulk / polls / threads / direct messages
+#   users / channels / gateway / guilds / permission calculations / automod
+#   guild emojis / stickers / soundboard / stage instances / applications
+#   application emojis / entitlements / role connections / command permissions
+#   guild widget / channel management / invites / scheduled events / webhooks
+#   files / interactions / application commands / oauth2 / group dm / activities
+#   pagination / internals
 my $API_BASE    = 'https://discord.com/api/v10';
 my $OAUTH_BASE  = 'https://discord.com/api';    # OAuth2 はバージョンなし
 my $MAX_CONTENT = 2000;
@@ -426,8 +437,8 @@ sub get_channel_pins {
     return $self->_finish($res, 'hash');
 }
 
-# ピン留めされたメッセージの一覧（メッセージ本体の配列）。
-# 旧 API 互換のラッパー。詳細（pinned_at / has_more）は get_channel_pins を使う。
+# DEPRECATED: 旧 API 互換のラッパー。詳細（pinned_at / has_more）は
+# get_channel_pins を使う。
 sub get_pinned_messages {
     my ($self, $channel_id, %opts) = @_;
 
@@ -4199,7 +4210,9 @@ sub follow_channel {
     return $self->_finish($res, 'hash');
 }
 
-# ボイスチャンネルのステータス（「会議中」等）を取得する。
+# DEPRECATED: 現行の公式ドキュメントには GET /voice-status は載っていない
+# （取得は Gateway の VOICE_CHANNEL_STATUS_UPDATE / op 43 を使う）。
+# 後方互換のため残している。
 sub get_channel_voice_status {
     my ($self, $channel_id) = @_;
 
@@ -4235,7 +4248,8 @@ sub set_channel_voice_status {
     return $self->_finish($res, 'none');
 }
 
-# ボイスチャンネルのステータスを消す。成功時は 1。
+# DEPRECATED: 現行の公式ドキュメントには DELETE /voice-status は載っていない。
+# 代わりに set_channel_voice_status($channel_id, undef) を使う。
 sub delete_channel_voice_status {
     my ($self, $channel_id, %opts) = @_;
 

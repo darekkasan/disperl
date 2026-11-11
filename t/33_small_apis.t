@@ -16,6 +16,7 @@ use Disperl::Commands qw(
     command_permission_map command_permission_name command_permission_value
 );
 use FakeUA;
+use TestDiscord qw(client_with ok_json no_content boundary_of payload_of);
 
 my $json = JSON::PP->new->utf8(1);
 my $API  = 'https://discord.com/api/v10';
@@ -30,46 +31,11 @@ sub write_file {
     return $path;
 }
 
-sub client_with {
-    my (@responses) = @_;
-    my $fake = FakeUA->new(@responses);
-    my $client = Disperl::Client->new(
-        token => 'secret', ua => $fake, sleep => sub { },
-        on_error => sub { },
-    );
-    return ($client, $fake);
-}
-
-sub ok_json { return FakeUA->ok_response($json->encode($_[0])) }
-sub no_content { return FakeUA->ok_response('', status => 204) }
-
 sub body_of {
     my ($fake) = @_;
     my $call = $fake->last_call;
     return undef unless defined $call && defined $call->{args}{content};
     return $json->decode($call->{args}{content});
-}
-
-sub boundary_of {
-    my ($fake) = @_;
-    my $type = $fake->last_call->{args}{headers}{'Content-Type'} // '';
-    return $1 if $type =~ /boundary=(.+)\z/;
-    return undef;
-}
-
-sub payload_of {
-    my ($fake) = @_;
-    my $body     = $fake->last_call->{args}{content};
-    my $boundary = boundary_of($fake);
-    return undef unless defined $body && defined $boundary;
-
-    my ($part) = $body =~ /--\Q$boundary\E\r\n
-        Content-Disposition:\ form-data;\ name="payload_json"\r\n
-        Content-Type:\ application\/json\r\n\r\n
-        (.*?)\r\n--\Q$boundary\E/xs;
-
-    return undef unless defined $part;
-    return $json->decode($part);
 }
 
 # ---------------------------------------------------------------- type modules

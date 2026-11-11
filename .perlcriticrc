@@ -1,0 +1,18 @@
+# Perl::Critic の設定（ゆるめ）。
+#   perlcritic -1 lib test.pl
+# インストールされていない場合は `cpanm Perl::Critic` などで導入します。
+
+severity = 3
+theme    = core
+verbose  = %f:%l:%c:%m (%p)\n
+
+# 日本語コメント・意図的な return undef などを許容する
+[-Subroutines::ProhibitExplicitReturnUndef]
+[-Documentation::PodSpelling]
+[-Documentation::RequirePodAtEnd]
+[-Documentation::RequirePodSections]
+[-ValuesAndExpressions::ProhibitConstantPragma]
+[-ValuesAndExpressions::ProhibitEmptyQuotes]
+[-ValuesAndExpressions::ProhibitMagicNumbers]
+[-CodeLayout::ProhibitHardTabs]
+[-Variables::ProhibitPunctuationVars]

@@ -7,51 +7,16 @@ use Test::More;
 use JSON::PP;
 use Disperl::Client;
 use FakeUA;
+use TestDiscord qw(client_with ok_json boundary_of payload_of);
 
 my $json = JSON::PP->new->utf8(1);
 my $API  = 'https://discord.com/api/v10';
-
-sub client_with {
-    my (@responses) = @_;
-    my $fake = FakeUA->new(@responses);
-    my $client = Disperl::Client->new(
-        token => 'secret', ua => $fake, sleep => sub { },
-    );
-    return ($client, $fake);
-}
-
-sub ok_json {
-    my ($data, %opt) = @_;
-    return FakeUA->ok_response($json->encode($data), %opt);
-}
 
 sub body_of {
     my ($fake) = @_;
     my $call = $fake->last_call;
     return undef unless defined $call && defined $call->{args}{content};
     return $json->decode($call->{args}{content});
-}
-
-sub boundary_of {
-    my ($fake) = @_;
-    my $type = $fake->last_call->{args}{headers}{'Content-Type'} // '';
-    return $1 if $type =~ /boundary=(.+)\z/;
-    return undef;
-}
-
-sub payload_of {
-    my ($fake) = @_;
-    my $body     = $fake->last_call->{args}{content};
-    my $boundary = boundary_of($fake);
-    return undef unless defined $body && defined $boundary;
-
-    my ($part) = $body =~ /--\Q$boundary\E\r\n
-        Content-Disposition:\ form-data;\ name="payload_json"\r\n
-        Content-Type:\ application\/json\r\n\r\n
-        (.*?)\r\n--\Q$boundary\E/xs;
-
-    return undef unless defined $part;
-    return $json->decode($part);
 }
 
 subtest 'create_followup_message' => sub {

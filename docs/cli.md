@@ -28,7 +28,9 @@
 ## 基本
 
 ```sh
-perl test.pl help                  # ヘルプ
+perl test.pl help                  # ヘルプ（全コマンド）
+perl test.pl help commands         # カテゴリ一覧
+perl test.pl help poll             # カテゴリで絞り込む
 perl test.pl check                 # トークンとチャンネルの確認
 perl test.pl send "こんにちは"       # 送信（引数が無ければ標準入力から）
 perl test.pl embed                 # embed を送信

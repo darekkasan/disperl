@@ -8,6 +8,7 @@ use JSON::PP;
 use File::Temp qw(tempdir);
 use Disperl::Client;
 use FakeUA;
+use TestDiscord qw(client_with ok_json boundary_of payload_of file_parts);
 
 my $json = JSON::PP->new->utf8(1);
 my $API  = 'https://discord.com/api/v10';
@@ -23,45 +24,9 @@ sub write_file {
     return $path;
 }
 
-sub client_with {
-    my (@responses) = @_;
-    my $fake = FakeUA->new(@responses);
-    my $client = Disperl::Client->new(
-        token => 'secret', ua => $fake, sleep => sub { },
-    );
-    return ($client, $fake);
-}
-
-sub ok_json {
-    my ($data, %opt) = @_;
-    return FakeUA->ok_response($json->encode($data), %opt);
-}
-
 sub body_of {
     my ($fake) = @_;
     return $fake->last_call->{args}{content};
-}
-
-sub boundary_of {
-    my ($fake) = @_;
-    my $type = $fake->last_call->{args}{headers}{'Content-Type'} // '';
-    return $1 if $type =~ /boundary=(.+)\z/;
-    return undef;
-}
-
-sub payload_of {
-    my ($fake) = @_;
-    my $body = body_of($fake);
-    my $boundary = boundary_of($fake);
-    return undef unless defined $body && defined $boundary;
-
-    my ($part) = $body =~ /--\Q$boundary\E\r\n
-        Content-Disposition:\ form-data;\ name="payload_json"\r\n
-        Content-Type:\ application\/json\r\n\r\n
-        (.*?)\r\n--\Q$boundary\E/xs;
-
-    return undef unless defined $part;
-    return $json->decode($part);
 }
 
 subtest 'send_file builds a multipart body' => sub {
@@ -148,28 +113,6 @@ subtest 'validation' => sub {
     eval { $client->send_file_data('111', 'a.txt', undef) };
     like $@, qr/file data is required/, 'data is required';
 };
-
-sub file_parts {
-    my ($fake) = @_;
-    my $body     = body_of($fake);
-    my $boundary = boundary_of($fake);
-    return () unless defined $body && defined $boundary;
-
-    my @parts;
-    while ($body =~ /--\Q$boundary\E\r\n
-        Content-Disposition:\ form-data;\ name="files\[(\d+)\]";\ filename="([^"]*)"\r\n
-        Content-Type:\ ([^\r\n]+)\r\n\r\n
-        (.*?)\r\n(?=--\Q$boundary\E)/xsg) {
-        push @parts, {
-            index    => $1,
-            filename => $2,
-            type     => $3,
-            bytes    => $4,
-        };
-    }
-
-    return @parts;
-}
 
 subtest 'send_files attaches several files' => sub {
     my ($client, $fake) = client_with(ok_json({ id => '5' }));

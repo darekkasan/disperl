@@ -10,24 +10,10 @@ use Disperl::AuditLog qw(
     audit_action_map audit_action_name audit_action_type
 );
 use FakeUA;
+use TestDiscord qw(client_with ok_json);
 
 my $json = JSON::PP->new->utf8(1);
 my $API  = 'https://discord.com/api/v10';
-
-sub client_with {
-    my (@responses) = @_;
-    my $fake = FakeUA->new(@responses);
-    my $client = Disperl::Client->new(
-        token => 'secret', ua => $fake, sleep => sub { },
-        on_error => sub { },
-    );
-    return ($client, $fake);
-}
-
-sub ok_json {
-    my ($data, %opt) = @_;
-    return FakeUA->ok_response($json->encode($data), %opt);
-}
 
 subtest 'action map' => sub {
     my $map = audit_action_map();

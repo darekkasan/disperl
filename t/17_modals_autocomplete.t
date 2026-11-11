@@ -9,20 +9,10 @@ use Disperl::Client;
 use Disperl::Components qw(label modal text_input);
 use Disperl::Gateway;
 use FakeUA;
+use TestDiscord qw(client_with no_content);
 
 my $json = JSON::PP->new->utf8(1);
 my $API  = 'https://discord.com/api/v10';
-
-sub client_with {
-    my (@responses) = @_;
-    my $fake = FakeUA->new(@responses);
-    my $client = Disperl::Client->new(
-        token => 'secret', ua => $fake, sleep => sub { },
-    );
-    return ($client, $fake);
-}
-
-sub no_content { return FakeUA->ok_response('', status => 204) }
 
 sub body_of {
     my ($fake) = @_;

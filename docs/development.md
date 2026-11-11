@@ -8,6 +8,7 @@
 - [環境構築](#環境構築)
 - [テスト](#テスト)
 - [手動での動作確認](#手動での動作確認)
+- [コード品質](#コード品質)
 - [Makefile.PL について](#makefilepl-について)
 - [リリース作業](#リリース作業)
 - [関連ページ](#関連ページ)
@@ -34,6 +35,7 @@ lib/Disperl/Config.pm        .env ローダー
 
 t/                           単体テスト（ネットワーク不要）
 t/lib/FakeUA.pm              テスト用の偽 HTTP クライアント
+t/lib/TestDiscord.pm         テスト共通ヘルパー（client_with / ok_json など）
 
 test.pl                      動作確認 CLI
 .env.example                 .env のテンプレート
@@ -144,8 +146,29 @@ prove -l t
 
 ### テストを書くとき
 
+- 共通ヘルパーは `t/lib/TestDiscord.pm` から使う
+
+  ```perl
+  use TestDiscord qw(client_with ok_json no_content payload_of);
+
+  my ($client, $fake) = client_with(ok_json({ id => '1' }));
+  ```
+
+  | ヘルパー | 内容 |
+  |---|---|
+  | `client_with(@responses)` | FakeUA + `sleep => sub {}` + `on_error => sub {}` のクライアント |
+  | `ok_json($data, %opt)` | JSON の成功応答 |
+  | `no_content()` | 204 No Content |
+  | `boundary_of($fake)` | multipart の boundary |
+  | `payload_of($fake)` | multipart の `payload_json` をデコード |
+  | `file_parts($fake)` | multipart の `files[n]` を解析 |
+  | `form_of($fake)` | form-urlencoded の本文をハッシュに |
+
+  `body_of`（本文の取り出し）は**デコード済みを返すファイルと生バイトを返すファイルがある**ため、
+  各テストファイルに残しています。
+
 - `ua` に偽オブジェクトを渡す（`HTTP::Tiny` を継承して `request` を差し替え）
-- `sleep => sub {}` で待機を 0 秒にする
+- `sleep => sub {}` で待機を 0 秒にする（`client_with` は設定済み）
 - Gateway は `ws_class` に偽クラスを渡す
 - ローカル検証（`die`）と API エラー（`undef`）を分けて確認する
 
@@ -163,6 +186,45 @@ perl test.pl watch      # Gateway（SSL / Identify / Heartbeat）
 
 `watch` を起動したまま Discord から `/ping`・`/form`・`!ping` を試すと、
 インタラクションまで一通り確認できます。
+
+## コード品質
+
+### 方針: `Disperl::Client` は分割しない
+
+`Client.pm` は 7,000 行を超えますが、**意図的に 1 モジュールのまま**にしています。
+
+- 内部ヘルパーと公開メソッドの相互参照が多く、分割しても結合が残る
+- 「公開 API が 1 クラス」であることの分かりやすさを優先する
+- 種類ごとの変換は `Disperl::Permissions` / `Disperl::AutoMod` など別モジュールに分離済み
+
+ファイル先頭にセクションの目次コメントがあり、`# ----` で検索できます。
+
+### perlcritic / perltidy
+
+設定ファイル（`.perlcriticrc` / `.perltidyrc`）を置いています。実行は任意です。
+
+```sh
+# 静的解析（要 Perl::Critic。未導入なら cpanm Perl::Critic）
+perlcritic -1 lib test.pl
+
+# 整形（差分の確認）
+perltidy -st lib/Disperl/Client.pm
+
+# その場で整形（.bak が作られます）
+perltidy -b lib/Disperl/*.pm test.pl
+```
+
+- 整形結果をそのままコミットすると差分が大きくなるため、必要な箇所だけに留めてください
+
+### 非推奨のメソッド
+
+後方互換のため残しているメソッドは `# DEPRECATED:` コメント付きです。
+
+| メソッド | 代わりに使うもの |
+|---|---|
+| `get_channel_voice_status` | Gateway の `VOICE_CHANNEL_STATUS_UPDATE` / `request_channel_info` |
+| `delete_channel_voice_status` | `set_channel_voice_status($id, undef)` |
+| `get_pinned_messages` | `get_channel_pins` |
 
 ## Makefile.PL について
 

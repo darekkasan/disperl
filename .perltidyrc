@@ -1,0 +1,15 @@
+# Perl::Tidy の設定。
+#   perltidy -b lib/Disperl/*.pm test.pl   # その場で整形（.bak を作る）
+#   perltidy -st lib/Disperl/Client.pm     # 差分だけ確認
+
+-l=100      # 1 行の最大長
+-i=4        # インデント幅
+-ci=4       # 継続行のインデント
+-ce         # } else { を同じ行に
+-nbl        # } の後に改行を入れない
+-pt=2       # 演算子の前後に空白
+-sbt=2      # サブルーチン呼び出しの前後に空白
+-bt=2       # 括弧の内側に空白
+-bbt=1      # 空の括弧は詰める
+-ola        # ラベルを左寄せ
+-wn         # 警告を出す
