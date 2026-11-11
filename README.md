@@ -146,6 +146,7 @@ if ($message) {
 | ページ | 内容 |
 |---|---|
 | [Client](docs/client.md) | コンストラクタ・戻り値・エラー・レート制限 |
+| [ページネーション](docs/pagination.md) | `each_*` で一覧を自動で辿る |
 | [メッセージ](docs/messages.md) | embed・コンポーネント・添付ファイル・投票 |
 | [スレッド](docs/threads.md) | 作成・一覧・参加・メンバー・アーカイブ |
 | [フォーラム / メディア](docs/forums.md) | 投稿の作成・本文・添付・タグ・レイアウト設定 |
@@ -460,6 +461,8 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - Activities: アクティビティインスタンス・`LAUNCH_ACTIVITY`（type 12）
 - チャンネルフォロー・ボイスステータス・Bot プロフィール変更・アプリ編集
 - メッセージ小物: ステッカー・nonce・クロスポスト・リアクション単位の削除・元の応答の取得 / 削除・ステッカーパック取得
+- ページネーション（`each_message` / `each_guild_member` / `each_guild_ban` / `each_audit_log_entry`）
+- `send_message` / `edit_message` への添付統合（`files` / `files_data`）・添付メタデータの自動生成・MIME 表の拡充
 - ロール: 取得・作成・編集・並び替え・削除・色 / アイコン / Unicode 絵文字
 - メンバー: 一覧・検索・ニックネーム・ロール付与 / 剥奪・タイムアウト・キック / BAN / プルーン
 - 権限: 名前とビットマスクの相互変換・実効権限の計算（`Disperl::Permissions`）

@@ -114,9 +114,36 @@ $client->send_message($channel, '<@123> さん', {
 `allowed_mentions` の既定は `{ parse => [] }`（メンションを解決しない）です。
 `undef` を渡すと Discord の既定に戻ります。
 
+```perl
+$client->send_message($channel, '<@123> <@&456>', {
+    allowed_mentions => {
+        parse        => ['users'],      # users / roles / everyone
+        users        => ['123'],        # 個別に許可するユーザー ID
+        roles        => ['456'],
+        replied_user => 1,              # 返信先へのメンションを許可
+    },
+});
+```
+
+- `parse` の値は小文字化されます（`USERS` でも可）。未知の値は `die`
+- `users` / `roles` の ID は文字列に正規化されます
+- `replied_user` は真偽値に変換されます
+- 型が違う場合（配列でない `roles` など）は送信前に `die`
+
 ## 添付ファイル
 
 multipart/form-data を自前で組み立てるため、追加モジュールは不要です。
+
+`send_message` / `edit_message` に `files` / `files_data` を渡すこともできます
+（`send_file*` と同じ指定方法で、添付メタデータは自動生成されます）。
+
+```perl
+# send_message に統合（どちらでも同じ）
+$client->send_message($channel, 'ログです', { files => ['memo.txt'] });
+$client->send_message($channel, undef, {
+    files_data => [ { filename => 'a.txt', data => "hello\n" } ],
+});
+```
 
 ```perl
 # ファイルを添付して送る
@@ -146,6 +173,8 @@ $client->send_files_data($channel, [
 
 | メソッド | 説明 |
 |---|---|
+| `send_message($channel_id, $content, { files => [...] })` | 添付つき送信（統合版） |
+| `edit_message($channel_id, $message_id, $content, { files => [...] })` | 添付つき編集 |
 | `send_file($channel_id, $path, %opts)` | ファイルを読んで添付。`content` / `embeds` / `reply_to` / `tts` / `components` / `allowed_mentions` が使える |
 | `send_file_data($channel_id, $filename, $bytes, %opts)` | バイト列をそのまま添付 |
 | `send_files($channel_id, \@paths, %opts)` | 複数添付。要素はパスか `{ path, filename?, content_type? }` |
@@ -154,6 +183,9 @@ $client->send_files_data($channel, [
 ルール:
 
 - 1 メッセージにつき**最大 10 ファイル**（超えると送信前に `die`）
+- 送信（作成）時は `attachments` を自動生成します（`[{ id => '0', filename => 'memo.txt' }, ...]`）。
+  `attachments` を明示した場合はそちらを優先します
+- **編集**時は自動生成しません（既存の添付を保持するため）。付け替えたい場合は `attachments` を明示してください
 - `filename` で送信時のファイル名を上書きできる（省略時はパスの basename）
 - `content_type` で MIME タイプを明示できる（省略時は拡張子から推定）
 - 本文（`content`）は省略できる（添付だけ送れる）
@@ -164,17 +196,16 @@ $client->send_files_data($channel, [
 
 | 拡張子 | MIME |
 |---|---|
-| `txt` | `text/plain` |
+| `txt` / `log` | `text/plain` |
 | `md` | `text/markdown` |
 | `json` | `application/json` |
-| `csv` | `text/csv` |
-| `html` | `text/html` |
-| `xml` | `application/xml` |
-| `png` / `jpg` / `jpeg` / `gif` / `webp` / `svg` | `image/*` |
-| `pdf` | `application/pdf` |
-| `zip` | `application/zip` |
-| `mp3` / `ogg` / `wav` | `audio/*` |
-| `mp4` / `webm` | `video/*` |
+| `csv` / `tsv` | `text/csv` / `text/tab-separated-values` |
+| `html` / `htm` / `css` / `js` | `text/*` |
+| `xml` / `yaml` / `yml` / `toml` / `sql` | `application/*` |
+| `png` / `apng` / `jpg` / `jpeg` / `jfif` / `gif` / `webp` / `avif` / `heic` / `heif` / `bmp` / `tif` / `tiff` / `ico` / `svg` | `image/*` |
+| `pdf` / `zip` / `gz` / `tar` / `7z` / `rar` | `application/*` |
+| `mp3` / `ogg` / `oga` / `opus` / `wav` / `flac` / `m4a` / `aac` | `audio/*` |
+| `mp4` / `m4v` / `mov` / `mkv` / `avi` / `webm` | `video/*` |
 
 ## 投票（Poll）
 

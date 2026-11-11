@@ -86,6 +86,7 @@ Discord 側のエラーは `on_error`（既定 `warn`）にも渡されます。
 Discord の制限は「バケット（`X-RateLimit-Bucket`）」＋「major parameter」単位です。
 
 - major parameter は**チャンネル ID / ギルド ID / Webhook ID**。別チャンネルなら別枠
+- インタラクション（`/interactions/...`）は**インタラクション ID + トークン**単位で別枠
 - 同じバケットでも `GET` と `POST` などルートが違えば別扱い
 - `X-RateLimit-Remaining: 0` のとき、次のリクエストを `X-RateLimit-Reset-After` 秒待つ
 - 429 は `retry_after` 秒待ってリトライ。上限に達したらバケットを閉じ、次のリクエストで待つ
@@ -227,6 +228,7 @@ my $gw = Disperl::Gateway->new(
 
 ## 関連ページ
 
+- [ページネーション](pagination.md)
 - [Gateway](gateway.md)
 - [メッセージ（embed / 添付 / 投票）](messages.md)
 - [インタラクション](interactions.md)

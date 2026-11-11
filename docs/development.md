@@ -95,7 +95,7 @@ prove -l t
 - **ネットワークを使いません**。`ua` と WebSocket を偽オブジェクトに差し替えます
 - `t/` から `.env` は読みません（実トークンを使わない）
 
-現在のテスト（41 ファイル / 354 件）:
+現在のテスト（42 ファイル / 363 件）:
 
 | ファイル | 内容 |
 |---|---|
@@ -140,6 +140,7 @@ prove -l t
 | `t/38_verified_gaps.t` | 新ピン API / コマンド作成・編集 / 検索 / インシデント / 互換 Webhook |
 | `t/39_oauth2_maniac.t` | OAuth2 / グループ DM / OAuth2 メンバー追加 / Activities / 旧 nick |
 | `t/40_reliability.t` | 5xx 指数バックオフ / last_error 詳細 / コールバック隔離 / 再接続待ち |
+| `t/41_polish.t` | ページネーション / 添付統合 / MIME / allowed_mentions / major parameter / コンポーネント検証 |
 
 ### テストを書くとき
 

@@ -22,6 +22,8 @@
 | 全 embed の合計文字数 | 6,000 文字 | 共通 |
 | ステッカー数 | 3 | `send_message` など（`sticker_ids`） |
 | `nonce` | 25 文字 | 共通 |
+| `allowed_mentions.parse` | `users` / `roles` / `everyone` | 共通 |
+| ページネーションの `limit` | メソッドごと（25 / 50 / 100 / 1000） | `each_*` |
 | 添付ファイル数 | 10 | `send_file*` / `execute_webhook` / `create_followup_message` |
 | 一括削除の件数 | 2〜100 | `bulk_delete_messages` |
 | 履歴の `limit` | 1〜100 | `get_messages` |
@@ -227,9 +229,12 @@
 | `media_gallery` の `items` | 1〜10 |
 | `section` の `components` | 1〜3 |
 | `file_upload` の `min_values` / `max_values` / `file_types` | 0〜10 / 1〜10 / 最大 10 |
+| `string_select` の `options` | 1〜25 個 |
 | `radio_group` の `options` | 2〜10 |
 | `checkbox_group` の `options` | 1〜10 |
 | 選択肢の `value` / `label` / `description` | 各 100 文字 |
+| セレクトの `min_values` / `max_values` | 0〜25（`min <= max`） |
+| `channel_types` | 0〜16 |
 | Container の `accent_color` | 0〜16,777,215 |
 
 ## Discord 側の上限（ローカル検証なし）

@@ -29,6 +29,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | ページ | 内容 |
 |---|---|
 | [Client](client.md) | コンストラクタ・戻り値・エラー・レート制限・基本操作 |
+| [ページネーション](pagination.md) | `each_*` で履歴・メンバー・BAN・監査ログを自動で辿る |
 | [メッセージ](messages.md) | 本文・embed・コンポーネント・添付ファイル・投票 |
 | [スレッド](threads.md) | 作成・一覧・参加・メンバー・アーカイブ |
 | [フォーラム / メディア](forums.md) | 投稿の作成・本文・添付・タグ・レイアウト設定 |
@@ -104,6 +105,8 @@ if ($message) {
 - 権限のサーバー側計算（ギルド / チャンネル / ロール）・ボイスステートの取得 / 変更
 - 招待のターゲットユーザー（Community Invites）・コマンド単体の作成 / 編集 / 取得
 - ピン留め（新 API）・ギルド内メッセージ検索・インシデントアクション・ロールのメンバー数
+- ページネーション（`each_message` / `each_guild_member` / `each_guild_ban` / `each_audit_log_entry`）
+- `send_message` / `edit_message` への添付統合（`files` / `files_data`）・添付メタデータの自動生成・MIME 表の拡充
 - サブスクリプション単体取得・サウンドボード再生・Slack / GitHub 互換 Webhook
 - OAuth2: クライアントクレデンシャルズ・Bearer エンドポイント（連携 / ロール連携）・グループ DM・OAuth2 メンバー追加
 - Activities: アクティビティインスタンス・`LAUNCH_ACTIVITY`（type 12）

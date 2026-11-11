@@ -99,25 +99,68 @@ sub last_error { $_[0]->{last_error} }
 # ---------------------------------------------------------------- messages
 
 # メッセージを送信する。成功時は Discord のレスポンス（ハッシュリファレンス）。
-# 第 3 引数にオプション（embeds / reply_to / tts / allowed_mentions）を渡せる。
+# 第 3 引数にオプション（embeds / reply_to / tts / allowed_mentions / files）を渡せる。
+#   send_message($channel, 'ログです', { files => ['memo.txt'] });
+#   send_message($channel, undef, { files_data => [ { filename => 'a.txt', data => '...' } ] });
 sub send_message {
     my ($self, $channel_id, $content, $opts) = @_;
+    $opts ||= {};
 
-    my $payload = $self->_message_payload($content, $opts);
+    my $files = $self->_files_from_opts($opts);
+    my $payload = $self->_message_payload(
+        $content,
+        { %$opts, ($files ? (allow_empty => 1) : ()) },
+    );
 
     $self->{last_error} = undef;
+
+    if ($files) {
+        _attach_file_metadata($payload, $files, $opts);
+        return $self->_send_multipart(
+            'POST', $self->_messages_url($channel_id), $payload, $files,
+        );
+    }
+
     my $res = $self->_request('POST', $self->_messages_url($channel_id), $payload);
     return $self->_finish($res, 'hash');
 }
 
 # 送信済みメッセージを編集する。成功時は編集後のメッセージ。
+# files / files_data も使える（既存の添付は attachments で明示しない限り保持される）。
 sub edit_message {
     my ($self, $channel_id, $message_id, $content, $opts) = @_;
+    $opts ||= {};
 
-    my $payload = $self->_message_payload($content, $opts);
+    my $files = $self->_files_from_opts($opts);
+    my $payload = $self->_message_payload(
+        $content,
+        { %$opts, ($files ? (allow_empty => 1) : ()) },
+    );
 
     $self->{last_error} = undef;
+
+    if ($files) {
+        return $self->_send_multipart(
+            'PATCH', $self->_message_url($channel_id, $message_id), $payload, $files,
+        );
+    }
+
     my $res = $self->_request('PATCH', $self->_message_url($channel_id, $message_id), $payload);
+    return $self->_finish($res, 'hash');
+}
+
+# multipart/form-data で送る（payload は payload_json に入る）。
+sub _send_multipart {
+    my ($self, $method, $url, $payload, $files) = @_;
+
+    my ($body, $boundary) = _multipart_body($payload, $files);
+    my $res = $self->_request(
+        $method, $url, undef,
+        {
+            raw          => $body,
+            content_type => "multipart/form-data; boundary=$boundary",
+        },
+    );
     return $self->_finish($res, 'hash');
 }
 
@@ -496,7 +539,7 @@ sub create_forum_post {
     die "channel id is required\n"
         unless defined $channel_id && length $channel_id;
 
-    my $files = $self->_forum_files(\%opts);
+    my $files = $self->_files_from_opts(\%opts);
 
     # ファイルだけの投稿でも message を作る（メディアチャンネルの必須要件）。
     my $payload = $self->_thread_payload(
@@ -516,6 +559,10 @@ sub create_forum_post {
     my $url = "$API_BASE/channels/$channel_id/threads";
 
     if ($files) {
+        my $message = $payload->{message} ||= {};
+        _attach_file_metadata($message, $files, {})
+            unless exists $message->{attachments};
+
         my ($body, $boundary) = _multipart_body($payload, $files);
         $res = $self->_request(
             'POST', $url, undef,
@@ -532,8 +579,8 @@ sub create_forum_post {
     return $self->_finish($res, 'hash');
 }
 
-# 投稿に添付するファイルを内部形式に変換する。files / files_data は排他。
-sub _forum_files {
+# 添付ファイルの指定（files / files_data）を内部形式に変換する。両者は排他。
+sub _files_from_opts {
     my ($self, $opts) = @_;
 
     my ($paths, $data) = ($opts->{files}, $opts->{files_data});
@@ -4996,6 +5043,7 @@ sub execute_webhook {
     # ファイルだけを送れるように、添付があるときは本文なしを許可する
     my %payload_opts = (%opts, ($files ? (allow_empty => 1) : ()));
     my $payload = $self->_message_payload($content, \%payload_opts);
+    _attach_file_metadata($payload, $files, \%opts) if $files;
     for my $key (qw(username avatar_url thread_name)) {
         $payload->{$key} = $opts{$key} if defined $opts{$key};
     }
@@ -5325,25 +5373,56 @@ sub _audit_opts {
 # ---------------------------------------------------------------- files
 
 my %MIME = (
-    txt  => 'text/plain',
-    md   => 'text/markdown',
-    json => 'application/json',
-    csv  => 'text/csv',
-    html => 'text/html',
-    xml  => 'application/xml',
-    png  => 'image/png',
-    jpg  => 'image/jpeg',
-    jpeg => 'image/jpeg',
-    gif  => 'image/gif',
-    webp => 'image/webp',
-    svg  => 'image/svg+xml',
-    pdf  => 'application/pdf',
-    zip  => 'application/zip',
-    mp3  => 'audio/mpeg',
-    ogg  => 'audio/ogg',
-    wav  => 'audio/wav',
-    mp4  => 'video/mp4',
-    webm => 'video/webm',
+    txt   => 'text/plain',
+    md    => 'text/markdown',
+    json  => 'application/json',
+    csv   => 'text/csv',
+    tsv   => 'text/tab-separated-values',
+    html  => 'text/html',
+    htm   => 'text/html',
+    css   => 'text/css',
+    js    => 'text/javascript',
+    xml   => 'application/xml',
+    yaml  => 'application/yaml',
+    yml   => 'application/yaml',
+    toml  => 'application/toml',
+    sql   => 'application/sql',
+    log   => 'text/plain',
+    png   => 'image/png',
+    apng  => 'image/apng',
+    jpg   => 'image/jpeg',
+    jpeg  => 'image/jpeg',
+    jfif  => 'image/jpeg',
+    gif   => 'image/gif',
+    webp  => 'image/webp',
+    avif  => 'image/avif',
+    heic  => 'image/heic',
+    heif  => 'image/heif',
+    bmp   => 'image/bmp',
+    tif   => 'image/tiff',
+    tiff  => 'image/tiff',
+    ico   => 'image/vnd.microsoft.icon',
+    svg   => 'image/svg+xml',
+    pdf   => 'application/pdf',
+    zip   => 'application/zip',
+    gz    => 'application/gzip',
+    tar   => 'application/x-tar',
+    '7z'  => 'application/x-7z-compressed',
+    rar   => 'application/vnd.rar',
+    mp3   => 'audio/mpeg',
+    ogg   => 'audio/ogg',
+    oga   => 'audio/ogg',
+    opus  => 'audio/opus',
+    wav   => 'audio/wav',
+    flac  => 'audio/flac',
+    m4a   => 'audio/mp4',
+    aac   => 'audio/aac',
+    mp4   => 'video/mp4',
+    m4v   => 'video/mp4',
+    mov   => 'video/quicktime',
+    mkv   => 'video/x-matroska',
+    avi   => 'video/x-msvideo',
+    webm  => 'video/webm',
 );
 
 # ファイルを添付して送る（multipart/form-data を自前で組む）。
@@ -5488,6 +5567,7 @@ sub _upload {
 
     my %payload_opts = (%$opts, allow_empty => 1);
     my $json = $self->_message_payload($opts->{content}, \%payload_opts);
+    _attach_file_metadata($json, $files, $opts);
 
     my ($body, $boundary) = _multipart_body($json, $files);
 
@@ -5533,6 +5613,20 @@ sub _multipart_body {
     $body .= "--$boundary--\r\n";
 
     return ($body, $boundary);
+}
+
+# multipart 送信時、attachments の指定が無ければファイルから自動生成する。
+# これで添付にファイル名が付き、description も後から編集で指定できる。
+sub _attach_file_metadata {
+    my ($payload, $files, $opts) = @_;
+
+    return 0 unless $files;
+    return 0 if ref $opts eq 'HASH' && exists $opts->{attachments};
+
+    $payload->{attachments} = [
+        map { { id => "$_", filename => $files->[$_]{filename} } } 0 .. $#$files
+    ];
+    return 1;
 }
 
 # payload_json + 名前付きファイル 1 つ（target_users_file など）の multipart。
@@ -5821,6 +5915,7 @@ sub create_followup_message {
     # ファイルだけを送れるように、添付があるときは本文なしを許可する
     my %payload_opts = (%opts, ($files ? (allow_empty => 1) : ()));
     my $payload = $self->_message_payload($content, \%payload_opts);
+    _attach_file_metadata($payload, $files, \%opts) if $files;
     $payload->{flags} = $opts{ephemeral} ? 64 : 0
         if exists $opts{ephemeral};
 
@@ -6448,6 +6543,206 @@ sub get_application_activity_instance {
     return $self->_finish($res, 'hash');
 }
 
+# ---------------------------------------------------------------- pagination
+
+# 末尾のコールバックとオプションを分ける。
+#   (callback => sub {...}) でも、末尾に sub {...} を置いてもよい。
+sub _callback_and_opts {
+    my (@args) = @_;
+
+    # 末尾のコールバックを切り出す。callback => sub {...} の形はそのまま残す。
+    my $callback;
+    if (@args && ref $args[-1] eq 'CODE'
+        && (@args < 2 || $args[-2] ne 'callback')) {
+        $callback = pop @args;
+    }
+
+    my %opts = @args;
+    $callback = delete $opts{callback} unless defined $callback;
+
+    die "callback is required\n" unless ref $callback eq 'CODE';
+    return ($callback, \%opts);
+}
+
+# ページングの共通ループ。
+#   $fetch->(\%cursor)  1 ページ分の配列（undef で失敗）
+#   $next->($items)     次のカーソル（\%cursor）か undef（終端）
+# コールバックが偽を返すと途中で止める。戻り値は処理した件数（失敗時は undef）。
+sub _iterate {
+    my ($self, $fetch, $next, $callback, $max, $page) = @_;
+
+    my $count = 0;
+    my %cursor;
+    my $prev_key;
+
+    while (1) {
+        my $items = $fetch->(\%cursor);
+        return undef unless defined $items;
+        last unless @$items;
+
+        my $stopped = 0;
+        for my $item (@$items) {
+            my $keep = $callback->($item);
+            $count++;
+
+            if (defined $max && $count >= $max) {
+                $stopped = 1;
+                last;
+            }
+
+            # コールバックの戻り値で継続/停止を判定する（偽で停止）
+            unless ($keep) {
+                $stopped = 1;
+                last;
+            }
+        }
+        last if $stopped;
+        return $count if defined $max && $count >= $max;
+
+        # 最終ページ（ページサイズ未満）なら次のリクエストは不要
+        last if defined $page && @$items < $page;
+
+        my $next_cursor = $next->($items);
+        last unless $next_cursor;
+
+        # カーソルが進んでいなければ止める（無限ループ防止）
+        my $key = join '|', map { "$_=$next_cursor->{$_}" } sort keys %$next_cursor;
+        last if defined $prev_key && $key eq $prev_key;
+        $prev_key = $key;
+
+        %cursor = %$next_cursor;
+    }
+
+    return $count;
+}
+
+# メッセージ履歴を古い方へ辿る。$callback は 1 件ごとに呼ばれる。
+#   $client->each_message($channel, before => $id, limit => 100, sub {
+#       my ($message) = @_;
+#       return 0 if $message->{author}{bot};    # 偽で途中終了
+#   });
+sub each_message {
+    my ($self, $channel_id, @args) = @_;
+    my ($callback, $opts) = _callback_and_opts(@args);
+
+    my $page = delete $opts->{limit} // 100;
+    die "limit must be between 1 and 100\n"
+        unless !ref $page && $page =~ /^\d+\z/ && $page >= 1 && $page <= 100;
+    my $max = delete $opts->{max};
+
+    my %base;
+    $base{before} = $opts->{before} if defined $opts->{before};
+
+    return $self->_iterate(
+        sub {
+            my ($cursor) = @_;
+            return $self->get_messages($channel_id, %base, %$cursor, limit => $page);
+        },
+        sub {
+            my ($items) = @_;
+            my $last = $items->[-1];
+            return undef unless defined $last && defined $last->{id};
+            return { before => $last->{id} };
+        },
+        $callback, $max, $page,
+    );
+}
+
+# ギルドメンバーを ID の昇順に辿る（GUILD_MEMBERS が必要）。
+#   $client->each_guild_member($guild_id, limit => 1000, sub { ... });
+sub each_guild_member {
+    my ($self, $guild_id, @args) = @_;
+    my ($callback, $opts) = _callback_and_opts(@args);
+
+    my $page = delete $opts->{limit} // 1000;
+    die "limit must be between 1 and 1000\n"
+        unless !ref $page && $page =~ /^\d+\z/ && $page >= 1 && $page <= 1000;
+    my $max = delete $opts->{max};
+
+    my %base;
+    $base{after} = $opts->{after} if defined $opts->{after};
+
+    return $self->_iterate(
+        sub {
+            my ($cursor) = @_;
+            return $self->get_guild_members($guild_id, %base, %$cursor, limit => $page);
+        },
+        sub {
+            my ($items) = @_;
+            my $user_id = $items->[-1]{user}{id};
+            return undef unless defined $user_id && length $user_id;
+            return { after => $user_id };
+        },
+        $callback, $max, $page,
+    );
+}
+
+# BAN 一覧を辿る。
+#   $client->each_guild_ban($guild_id, limit => 1000, sub { ... });
+sub each_guild_ban {
+    my ($self, $guild_id, @args) = @_;
+    my ($callback, $opts) = _callback_and_opts(@args);
+
+    my $page = delete $opts->{limit} // 1000;
+    die "limit must be between 1 and 1000\n"
+        unless !ref $page && $page =~ /^\d+\z/ && $page >= 1 && $page <= 1000;
+    my $max = delete $opts->{max};
+
+    my %base;
+    for my $key (qw(before after)) {
+        $base{$key} = $opts->{$key} if defined $opts->{$key};
+    }
+
+    return $self->_iterate(
+        sub {
+            my ($cursor) = @_;
+            return $self->get_guild_bans($guild_id, %$cursor, limit => $page);
+        },
+        sub {
+            my ($items) = @_;
+            my $user_id = $items->[-1]{user}{id};
+            return undef unless defined $user_id && length $user_id;
+            return { after => $user_id };
+        },
+        $callback, $max, $page,
+    );
+}
+
+# 監査ログを新しい方から辿る。絞り込み条件（action_type など）はそのまま渡せる。
+#   $client->each_audit_log_entry($guild_id, action_type => 'MEMBER_KICK', sub {
+#       my ($entry) = @_;
+#   });
+sub each_audit_log_entry {
+    my ($self, $guild_id, @args) = @_;
+    my ($callback, $opts) = _callback_and_opts(@args);
+
+    my $page = delete $opts->{limit} // 100;
+    die "limit must be between 1 and 100\n"
+        unless !ref $page && $page =~ /^\d+\z/ && $page >= 1 && $page <= 100;
+    my $max = delete $opts->{max};
+
+    my %base = %$opts;
+    $base{before} = $opts->{before} if defined $opts->{before};
+
+    return $self->_iterate(
+        sub {
+            my ($cursor) = @_;
+            my $result = $self->get_guild_audit_log(
+                $guild_id, %base, %$cursor, limit => $page,
+            );
+            return undef unless defined $result;
+            return $result->{audit_log_entries};
+        },
+        sub {
+            my ($items) = @_;
+            my $last = $items->[-1];
+            return undef unless defined $last && defined $last->{id};
+            return { before => $last->{id} };
+        },
+        $callback, $max, $page,
+    );
+}
+
 # ---------------------------------------------------------------- internals
 
 # 送信・編集で共通の JSON ボディを作る。
@@ -6531,9 +6826,11 @@ sub _message_payload {
         $payload{message_reference} = \%reference;
     }
 
-    my $allowed = exists $opts->{allowed_mentions}
-        ? $opts->{allowed_mentions}
-        : $self->{allowed_mentions};
+    my $allowed = _normalize_allowed_mentions(
+        exists $opts->{allowed_mentions}
+            ? $opts->{allowed_mentions}
+            : $self->{allowed_mentions},
+    );
     $payload{allowed_mentions} = $allowed if defined $allowed;
 
     die "content, embeds or components is required (or poll / stickers)\n"
@@ -6545,6 +6842,60 @@ sub _message_payload {
             || $opts->{allow_empty};
 
     return \%payload;
+}
+
+my %ALLOWED_PARSE = map { $_ => 1 } qw(users roles everyone);
+
+# allowed_mentions を検証して正規化する。
+#   undef                  -> undef（Discord の既定に任せる）
+#   { parse => ['users'] } -> そのまま（値は小文字化）
+#   { users => [...], roles => [...], replied_user => 1 }
+sub _normalize_allowed_mentions {
+    my ($value) = @_;
+
+    return undef unless defined $value;
+    die "allowed_mentions must be a hash reference or undef\n"
+        unless ref $value eq 'HASH';
+
+    my %out;
+
+    if (exists $value->{parse}) {
+        my $parse = $value->{parse};
+        die "allowed_mentions.parse must be an array reference\n"
+            unless ref $parse eq 'ARRAY';
+
+        my @parse;
+        for my $entry (@$parse) {
+            die "allowed_mentions.parse entries must be non-empty strings\n"
+                if ref $entry || !defined $entry || !length $entry;
+            die "Unknown allowed_mentions.parse value: $entry\n"
+                unless $ALLOWED_PARSE{ lc $entry };
+            push @parse, lc $entry;
+        }
+        $out{parse} = \@parse;
+    }
+
+    for my $key (qw(users roles)) {
+        next unless exists $value->{$key};
+        my $list = $value->{$key};
+        die "allowed_mentions.$key must be an array reference\n"
+            unless ref $list eq 'ARRAY';
+
+        my @ids;
+        for my $id (@$list) {
+            die "allowed_mentions.$key entries must be non-empty strings\n"
+                if ref $id || !defined $id || !length $id;
+            push @ids, "$id";
+        }
+        $out{$key} = \@ids;
+    }
+
+    if (exists $value->{replied_user}) {
+        $out{replied_user} = $value->{replied_user}
+            ? JSON::PP::true : JSON::PP::false;
+    }
+
+    return \%out;
 }
 
 # embed の構造と文字数制限を検証する。違反時は die する。
@@ -7089,6 +7440,10 @@ sub _major_param {
     if    (($seg[1] // '') eq 'channels') { ($kind, $id) = ('channel', $seg[2]) }
     elsif (($seg[1] // '') eq 'guilds')   { ($kind, $id) = ('guild',   $seg[2]) }
     elsif (($seg[1] // '') eq 'webhooks') { ($kind, $id) = ('webhook', $seg[2]) }
+    elsif (($seg[1] // '') eq 'interactions') {
+        # インタラクションはトークン単位でバケットが分かれる
+        ($kind, $id) = ('interaction', ($seg[2] // '') . ':' . ($seg[3] // ''));
+    }
 
     return 'global' unless defined $id && length $id;
     return "$kind:$id";

@@ -120,6 +120,7 @@ sub string_select {
     my $options = $args{options};
     die "options must be a non-empty array reference\n"
         unless ref $options eq 'ARRAY' && @$options;
+    die "options accepts at most 25 entries\n" if @$options > 25;
 
     my @options;
     for my $option (@$options) {
@@ -129,6 +130,12 @@ sub string_select {
             unless defined $option->{label} && length $option->{label};
         die "option value is required\n"
             unless defined $option->{value} && length $option->{value};
+        die "option label must be 100 characters or less\n"
+            if length($option->{label}) > 100;
+        die "option value must be 100 characters or less\n"
+            if length($option->{value}) > 100;
+        die "option description must be 100 characters or less\n"
+            if defined $option->{description} && length($option->{description}) > 100;
 
         my %out = (
             label => $option->{label},
@@ -163,14 +170,33 @@ sub _select {
     my %out = (type => $type, custom_id => $args{custom_id});
 
     $out{placeholder} = $args{placeholder} if defined $args{placeholder};
-    $out{min_values}  = $args{min_values} + 0 if defined $args{min_values};
-    $out{max_values}  = $args{max_values} + 0 if defined $args{max_values};
+
+    for my $key (qw(min_values max_values)) {
+        next unless defined $args{$key};
+        my $value = $args{$key};
+        die "$key must be an integer between 0 and 25\n"
+            unless !ref $value && $value =~ /^\d+\z/ && $value <= 25;
+        $out{$key} = $value + 0;
+    }
+
+    if (defined $out{min_values} && defined $out{max_values}
+        && $out{min_values} > $out{max_values}) {
+        die "min_values must be less than or equal to max_values\n";
+    }
+
     $out{required}    = $args{required} ? JSON::PP::true : JSON::PP::false
         if exists $args{required};
     $out{disabled}    = $args{disabled} ? JSON::PP::true : JSON::PP::false
         if exists $args{disabled};
-    $out{channel_types} = $args{channel_types}
-        if ref $args{channel_types} eq 'ARRAY';
+
+    if (ref $args{channel_types} eq 'ARRAY') {
+        for my $channel_type (@{ $args{channel_types} }) {
+            die "channel type must be an integer between 0 and 16\n"
+                unless defined $channel_type && !ref $channel_type
+                    && $channel_type =~ /^\d+\z/ && $channel_type <= 16;
+        }
+        $out{channel_types} = $args{channel_types};
+    }
 
     return \%out;
 }
