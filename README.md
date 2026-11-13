@@ -376,7 +376,7 @@ $gw->run;
 `test.pl` はそのまま使える確認用 CLI です。
 
 ```sh
-perl test.pl check                 # トークンとチャンネルの確認
+perl test.pl check                 # トークン / Gateway / チャンネル / ギルド / 権限の確認
 perl test.pl send "こんにちは"
 perl test.pl embed
 perl test.pl history 20

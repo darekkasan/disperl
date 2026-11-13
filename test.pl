@@ -158,6 +158,17 @@ sub _iso8601 {
     return strftime('%Y-%m-%dT%H:%M:%SZ', gmtime $epoch);
 }
 
+# ミリ秒を「24.0 時間」のような表示にする（session_start_limit 用）。
+sub _duration_text {
+    my ($ms) = @_;
+    return '?' unless defined $ms && $ms =~ /^\d+\z/;
+
+    my $seconds = $ms / 1000;
+    return sprintf '%.1f 秒', $seconds         if $seconds < 60;
+    return sprintf '%.1f 分', $seconds / 60    if $seconds < 3600;
+    return sprintf '%.1f 時間', $seconds / 3600;
+}
+
 sub _clip {
     my ($str, $max) = @_;
     $str = '' unless defined $str;
@@ -227,7 +238,7 @@ disperl 動作確認 CLI
 
 使い方:
   perl test.pl help [カテゴリ]        ヘルプを表示する（help commands でカテゴリ一覧）
-  perl test.pl check                 トークンとチャンネルを確認する
+  perl test.pl check                 トークン / チャンネル / ギルド / 権限 / Gateway を確認する
   perl test.pl send <本文>            メッセージを送信する（標準入力も可）
   perl test.pl embed                 embed を送信する
   perl test.pl history [件数]         履歴を表示する（既定 10 / 最大 100）
@@ -680,12 +691,76 @@ sub _print_help_category {
 }
 
 sub cmd_check {
-    my $me = client()->get_current_user or _api_fail('トークン確認');
+    my $client = client();
+
+    my $me = $client->get_current_user or _api_fail('トークン確認');
     out "トークン OK: $me->{username} (id: $me->{id})\n";
 
+    # セッション開始の残り回数が分かると再接続の余裕を確認できる
+    my $gateway = $client->get_gateway_bot or _api_fail('Gateway 情報の取得');
+    my $limit   = $gateway->{session_start_limit} || {};
+    out sprintf "Gateway OK: 推奨シャード %s / セッション開始 残り %s/%s 回（あと %sで回復）\n",
+        $gateway->{shards} // '?',
+        $limit->{remaining} // '?',
+        $limit->{total} // '?',
+        _duration_text($limit->{reset_after});
+
     my $id = channel_id();
-    my $ch = client()->get_channel($id) or _api_fail('チャンネル確認');
-    out "チャンネル OK: #" . ($ch->{name} // $id) . " (id: $id, type: $ch->{type})\n";
+    my $ch = $client->get_channel($id) or _api_fail('チャンネル確認');
+    out sprintf "チャンネル OK: #%s (id: %s, type: %s)\n",
+        $ch->{name} // $id, $id, _channel_type_name($ch->{type});
+
+    # DM / グループ DM にはギルドがないのでここで終わり
+    my $guild_id = $ch->{guild_id};
+    if (!defined $guild_id || !length $guild_id) {
+        out "ギルド確認: スキップ（DM / グループ DM）\n";
+        return 0;
+    }
+
+    my $guild = $client->get_guild($guild_id) or _api_fail('ギルド確認');
+    out sprintf "ギルド OK: %s (id: %s, オーナー id: %s)\n",
+        $guild->{name} // $guild_id, $guild_id, $guild->{owner_id} // '?';
+
+    # get_current_user_guild_member は Bot では使えない（403）ので、単一メンバー取得を使う
+    my $member = $client->get_guild_member($guild_id, $me->{id});
+    if (!defined $member) {
+        my $err = $client->last_error || {};
+        out sprintf "メンバー確認: 取得できませんでした (%s %s)\n",
+            $err->{status} // '?', $err->{message} // '不明なエラー';
+        return 1;
+    }
+
+    my %role_name = map { $_->{id} => ($_->{name} // $_->{id}) }
+        grep { ref $_ eq 'HASH' && defined $_->{id} }
+        @{ $guild->{roles} || [] };
+    my @roles = map { $role_name{$_} // $_ } @{ $member->{roles} || [] };
+
+    my $shown = join ', ', @roles[ 0 .. (@roles > 5 ? 4 : $#roles) ];
+    $shown .= sprintf ' ほか %d 件', @roles - 5 if @roles > 5;
+
+    out sprintf "メンバー OK: %s（ロール %d 件%s）\n",
+        $member->{nick} // $me->{username},
+        scalar @roles,
+        @roles ? ": $shown" : '';
+
+    # チャンネルでの実効権限を手元で計算する（API 呼び出しは増やさない）
+    my @needed  = qw(VIEW_CHANNEL SEND_MESSAGES EMBED_LINKS ATTACH_FILES READ_MESSAGE_HISTORY);
+    my $bits    = channel_permissions($guild, $member, $ch);
+    my @missing = grep { !($bits & permission_bits($_)) } @needed;
+
+    if (@missing) {
+        out "権限 NG: 不足 @missing\n";
+        return 1;
+    }
+
+    my @extra;
+    push @extra, 'メッセージ管理' if $bits & permission_bits('MANAGE_MESSAGES');
+    push @extra, 'ピン留め'       if $bits & permission_bits('PIN_MESSAGES');
+    push @extra, '投票'           if $bits & permission_bits('SEND_POLLS');
+    push @extra, 'スレッド作成'   if $bits & permission_bits('CREATE_PUBLIC_THREADS');
+
+    out '権限 OK: ' . join(', ', @needed) . "\n";
+    out '（追加で可: ' . join(', ', @extra) . "）\n" if @extra;
 
     return 0;
 }
@@ -3107,7 +3182,9 @@ sub cmd_member_nick {
 
 my %CHANNEL_TYPE = (
     0  => 'text',
+    1  => 'dm',
     2  => 'voice',
+    3  => 'group_dm',
     4  => 'category',
     5  => 'announcement',
     10 => 'announcement_thread',

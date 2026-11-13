@@ -90,14 +90,16 @@ DISCORD_CHANNEL_ID=チャンネル ID
 ## テスト
 
 ```sh
-prove -l t
+prove -l t         # 通常
+prove -l -j4 t     # 並列（Windows でも動作確認済み。30 秒 → 8 秒程度）
 ```
 
 - 追加モジュール不要（`Test::More` は core）
 - **ネットワークを使いません**。`ua` と WebSocket を偽オブジェクトに差し替えます
 - `t/` から `.env` は読みません（実トークンを使わない）
+- テスト同士は独立しているので並列実行できます（`-j` の数字はお好みで）
 
-現在のテスト（42 ファイル / 363 件）:
+現在のテスト（43 ファイル / 370 件）:
 
 | ファイル | 内容 |
 |---|---|
@@ -143,6 +145,7 @@ prove -l t
 | `t/39_oauth2_maniac.t` | OAuth2 / グループ DM / OAuth2 メンバー追加 / Activities / 旧 nick |
 | `t/40_reliability.t` | 5xx 指数バックオフ / last_error 詳細 / コールバック隔離 / 再接続待ち |
 | `t/41_polish.t` | ページネーション / 添付統合 / MIME / allowed_mentions / major parameter / コンポーネント検証 |
+| `t/42_gaps_and_fakeua.t` | Gateway / アプリ情報 / リージョン / ステッカー / サウンド / ギルドコマンド / FakeUA 拡充 |
 
 ### テストを書くとき
 
@@ -172,13 +175,53 @@ prove -l t
 - Gateway は `ws_class` に偽クラスを渡す
 - ローカル検証（`die`）と API エラー（`undef`）を分けて確認する
 
+### FakeUA
+
+`t/lib/FakeUA.pm` は HTTP::Tiny の代わりに差し込む偽クライアントです。
+
+| 機能 | 内容 |
+|---|---|
+| `ok_response($json, %opt)` | 成功応答（status など上書き可） |
+| `err_response($status, $json, %opt)` | エラー応答 |
+| `rate_limited($seconds, %opt)` | 429 応答（本文と `retry-after` ヘッダの両方。`global => 1` で全体制限） |
+| コードリファレンス | キューに `sub { ... }` を積むと `($method, $url, $args)` で呼ばれ、動的に応答を返せる（ページネーション向け） |
+| `calls` / `call_count` / `last_call` | 記録したリクエストの参照 |
+| `clear_calls` | 記録を消す（件数を数え直したいとき） |
+
+```perl
+my $page = 0;
+my $fake = FakeUA->new(sub {
+    $page++;
+    return FakeUA->ok_response($json->encode({ page => $page }));
+});
+```
+
+### カバレッジ（メソッド網羅の監査）
+
+`Devel::Cover` は標準では入っていないため、**公開メソッドがテストから呼ばれているか**を
+名前ベースで監査しています（`t/*.t` から `->メソッド` を集計）。
+
+```perl
+# 監査の考え方: lib/Disperl/Client.pm の `sub 名前`（先頭 _ 以外）を集め、
+# t/*.t に `->名前` が現れないものを探す
+my %tested;
+for my $file (glob 't/*.t') {
+    open my $fh, '<:encoding(UTF-8)', $file or next;
+    local $/; my $text = <$fh>; close $fh;
+    $tested{$1} = 1 while $text =~ /->(\w+)\b/g;
+}
+```
+
+- 現在の未呼び出しは **0 件**（`t/42_gaps_and_fakeua.t` で最後の 9 件を埋めました）
+- `Devel::Cover` を入れる場合は `cover -test` で通常どおり計測できます
+
 ## 手動での動作確認
 
 単体テストでは実際の TLS / 認証 / Intent は確認できません。トークンを入れたら
 CLI で確認します。
 
 ```sh
-perl test.pl check      # トークン / チャンネル
+perl test.pl check      # トークン / Gateway / チャンネル / ギルド / 権限
 perl test.pl send "test"
 perl test.pl commands   # ギルドに /ping /echo /poll /form を登録
 perl test.pl watch      # Gateway（SSL / Identify / Heartbeat）

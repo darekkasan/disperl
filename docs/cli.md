@@ -31,7 +31,7 @@
 perl test.pl help                  # ヘルプ（全コマンド）
 perl test.pl help commands         # カテゴリ一覧
 perl test.pl help poll             # カテゴリで絞り込む
-perl test.pl check                 # トークンとチャンネルの確認
+perl test.pl check                 # トークン / Gateway / チャンネル / ギルド / 権限の確認
 perl test.pl send "こんにちは"       # 送信（引数が無ければ標準入力から）
 perl test.pl embed                 # embed を送信
 perl test.pl history 20            # 履歴を表示（既定 10 / 最大 100）
@@ -40,6 +40,11 @@ perl test.pl typing                # 「入力中...」を表示
 
 - `send` は引数が無いとき標準入力（UTF-8）を読みます
 - 結果にメッセージ ID が出るので、そのまま `edit` / `react` / `delete` に渡せます
+- `check` はトークン・Gateway（セッション開始の残り回数）・チャンネル・ギルド・
+  チャンネルでの実効権限をまとめて確認します
+  - DM / グループ DM ではギルド系の確認をスキップします
+  - 送信に必要な権限（`VIEW_CHANNEL` / `SEND_MESSAGES` / `EMBED_LINKS` /
+    `ATTACH_FILES` / `READ_MESSAGE_HISTORY`）が足りない場合は終了コード 1 で終わります
 
 ```sh
 Get-Content memo.txt -Raw | perl test.pl send
