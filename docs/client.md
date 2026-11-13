@@ -228,6 +228,8 @@ my $gw = Disperl::Gateway->new(
 
 ## 関連ページ
 
+- [チュートリアル](tutorial.md)
+- [逆引き](cookbook.md)
 - [ページネーション](pagination.md)
 - [Gateway](gateway.md)
 - [メッセージ（embed / 添付 / 投票）](messages.md)

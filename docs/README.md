@@ -28,6 +28,8 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 
 | ページ | 内容 |
 |---|---|
+| [チュートリアル](tutorial.md) | はじめての Bot（送信 → ボタン → Gateway → コマンド） |
+| [逆引き](cookbook.md) | やりたいことからメソッドを探す索引 |
 | [Client](client.md) | コンストラクタ・戻り値・エラー・レート制限・基本操作 |
 | [ページネーション](pagination.md) | `each_*` で履歴・メンバー・BAN・監査ログを自動で辿る |
 | [メッセージ](messages.md) | 本文・embed・コンポーネント・添付ファイル・投票 |
@@ -57,6 +59,8 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | [制限値](limits.md) | 送信前に検証される上限の一覧 |
 | [開発](development.md) | 環境構築・テスト・リリース作業 |
 | [トラブルシューティング](troubleshooting.md) | よくある失敗と対処 |
+| [用語集](glossary.md) | Discord API の用語 |
+| [Wiki 移行](wiki.md) | GitHub Wiki へのコピーとリンク置換 |
 
 ## 最小例
 
@@ -135,13 +139,15 @@ if ($message) {
 - ギルドの作成 / 削除（ユーザーアカウントの操作）
 - ユーザーアプリ / 埋め込みアプリ
 
-## Wiki へ移すときのメモ
+## Wiki への移行
 
-- 各ファイルが 1 ページになる想定です（見出し `#` がページタイトル）
-- ページ間リンクは相対パス（`messages.md`）で書いてあります。Wiki ではページ名に置き換えてください
-- コードブロック内のパス（`.env`, `lib/`, `test.pl`）はリポジトリ前提の表現です
-- 目次ページはこの `docs/README.md` をそのまま使えます
+各ファイルが 1 ページになる想定です（見出し `#` がページタイトル）。
+`docs/README.md` は `Home`、ページ間リンクは Wiki のページ名に置き換えます。
+
+コピー手順とリンク置換のスクリプトは [Wiki 移行](wiki.md) を参照してください。
 
 ## 関連
 
-- 利用手順のチュートリアルはリポジトリ直下の `README.md`
+- はじめての Bot は [チュートリアル](tutorial.md)
+- やりたいことから探すときは [逆引き](cookbook.md)
+- リポジトリ直下の `README.md` は「まず動かす」ための入口です

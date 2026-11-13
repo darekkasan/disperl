@@ -379,6 +379,8 @@ $gw->set_presence(activity => {
 
 ## 関連ページ
 
+- [チュートリアル](tutorial.md)
+- [逆引き](cookbook.md)
 - [インタラクション](interactions.md)
 - [メンバー管理](members.md)
 - [Client](client.md)

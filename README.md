@@ -8,6 +8,7 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - ボタン・モーダル・オートコンプリート・スラッシュコマンドに対応
 
 詳しいリファレンスは [`docs/`](docs/README.md) にあります。この README は「まず動かす」ための入口です。
+順を追って試すなら [チュートリアル](docs/tutorial.md)、やりたいことから探すなら [逆引き](docs/cookbook.md) へ。
 
 ## 特徴
 
@@ -145,6 +146,8 @@ if ($message) {
 
 | ページ | 内容 |
 |---|---|
+| [チュートリアル](docs/tutorial.md) | はじめての Bot（送信 → ボタン → Gateway → コマンド） |
+| [逆引き](docs/cookbook.md) | やりたいことからメソッドを探す |
 | [Client](docs/client.md) | コンストラクタ・戻り値・エラー・レート制限 |
 | [ページネーション](docs/pagination.md) | `each_*` で一覧を自動で辿る |
 | [メッセージ](docs/messages.md) | embed・コンポーネント・添付ファイル・投票 |
@@ -174,6 +177,8 @@ if ($message) {
 | [制限値](docs/limits.md) | 送信前に検証される上限 |
 | [開発](docs/development.md) | 環境構築・テスト・リリース |
 | [トラブルシューティング](docs/troubleshooting.md) | 症状別の対処 |
+| [用語集](docs/glossary.md) | Discord API の用語 |
+| [Wiki 移行](docs/wiki.md) | GitHub Wiki へのコピーとリンク置換 |
 
 ## よく使う操作
 
