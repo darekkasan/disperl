@@ -164,7 +164,9 @@ load_dotenv("$FindBin::Bin/.env");
 
 my $client = Disperl::Client->new(token => $ENV{DISCORD_TOKEN});
 
-my $gw = Disperl::Gateway->new(
+# コールバックの中から $gw を使うので、先に宣言しておく
+my $gw;
+$gw = Disperl::Gateway->new(
     token   => $ENV{DISCORD_TOKEN},
     intents => [qw(GUILDS GUILD_MESSAGES MESSAGE_CONTENT)],
     on_ready => sub {
@@ -238,6 +240,7 @@ on_command => sub {
 
 ## 関連ページ
 
+- 動くサンプル: リポジトリの `examples/`
 - [逆引き](cookbook.md)
 - [Client](client.md)
 - [Gateway](gateway.md)

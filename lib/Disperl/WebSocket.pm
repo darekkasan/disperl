@@ -1,6 +1,9 @@
 package Disperl::WebSocket;
 use strict;
 use warnings;
+
+our $VERSION = '0.1.0';
+
 use IO::Socket::SSL;
 use IO::Socket::INET;
 use IO::Select;

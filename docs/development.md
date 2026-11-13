@@ -10,7 +10,7 @@
 - [手動での動作確認](#手動での動作確認)
 - [コード品質](#コード品質)
 - [Makefile.PL について](#makefilepl-について)
-- [リリース作業](#リリース作業)
+- [バージョンとリリース](#バージョンとリリース)
 - [関連ページ](#関連ページ)
 
 ## 構成
@@ -37,7 +37,12 @@ t/                           単体テスト（ネットワーク不要）
 t/lib/FakeUA.pm              テスト用の偽 HTTP クライアント
 t/lib/TestDiscord.pm         テスト共通ヘルパー（client_with / ok_json など）
 
+examples/                    実行サンプル（送信 / Gateway / コマンド / ボタン）
+tools/hooks/pre-commit       pre-commit フック（任意）
+tools/install-hooks.pl       フックのインストーラー
+
 test.pl                      動作確認 CLI
+Changes                      変更履歴（バージョンごと）
 .env.example                 .env のテンプレート
 docs/                        このドキュメント
 ```
@@ -99,7 +104,7 @@ prove -l -j4 t     # 並列（Windows でも動作確認済み。30 秒 → 8 �
 - `t/` から `.env` は読みません（実トークンを使わない）
 - テスト同士は独立しているので並列実行できます（`-j` の数字はお好みで）
 
-現在のテスト（43 ファイル / 370 件）:
+現在のテスト（44 ファイル / 395 件）:
 
 | ファイル | 内容 |
 |---|---|
@@ -146,6 +151,7 @@ prove -l -j4 t     # 並列（Windows でも動作確認済み。30 秒 → 8 �
 | `t/40_reliability.t` | 5xx 指数バックオフ / last_error 詳細 / コールバック隔離 / 再接続待ち |
 | `t/41_polish.t` | ページネーション / 添付統合 / MIME / allowed_mentions / major parameter / コンポーネント検証 |
 | `t/42_gaps_and_fakeua.t` | Gateway / アプリ情報 / リージョン / ステッカー / サウンド / ギルドコマンド / FakeUA 拡充 |
+| `t/43_meta.t` | `$VERSION` の一致 / `Changes` の見出し / `test.pl` と `examples/` の構文 |
 
 ### テストを書くとき
 
@@ -230,6 +236,8 @@ perl test.pl watch      # Gateway（SSL / Identify / Heartbeat）
 `watch` を起動したまま Discord から `/ping`・`/form`・`!ping` を試すと、
 インタラクションまで一通り確認できます。
 
+動くサンプルは `examples/` にあります（`perl examples/send_message.pl` など）。
+
 ## コード品質
 
 ### 方針: `Disperl::Client` は分割しない
@@ -258,6 +266,27 @@ perltidy -b lib/Disperl/*.pm test.pl
 ```
 
 - 整形結果をそのままコミットすると差分が大きくなるため、必要な箇所だけに留めてください
+
+### pre-commit フック
+
+`.git/hooks` はコミットされないため、フック本体を `tools/hooks/` に置いています。
+使う場合はインストールしてください（任意）。
+
+```sh
+perl tools/install-hooks.pl
+```
+
+コミット時に次を実行します。
+
+1. `git diff --cached --check`（空白エラー・コンフリクトマーカー）
+2. `.env` がステージされていないか
+3. ステージされた `.pm` / `.pl` / `.t` の構文チェック
+4. `prove -l -j4 t`（テスト。10 秒ほど）
+
+- テストをスキップするとき: `DISPERL_SKIP_TESTS=1 git commit ...`
+- Git for Windows では Strawberry Perl の `prove.bat` を見つけて `perl.exe` を使います
+  （Git 同梱の Perl と混ざるのを避けるため）
+- 不要になったら `.git/hooks/pre-commit` を削除するだけです
 
 ### 非推奨のメソッド
 
@@ -288,13 +317,22 @@ perltidy -b lib/Disperl/*.pm test.pl
 
 追加する場合は `ExtUtils::MakeMaker`（core）だけで書けます。
 
-## リリース作業
+## バージョンとリリース
 
-現状はバージョン番号・`Changes` を管理していません。必要になったら次を決めます。
+バージョンは**全モジュールの `our $VERSION`**（現在 `0.1.0`）と `Changes` で管理します。
+`t/43_meta.t` が「全モジュールの `$VERSION` が一致している」かつ
+「`Changes` に現在のバージョンの見出しがある」ことをチェックします。
 
-1. 各モジュールに `our $VERSION = '0.01';` を同じ値で入れる
-2. `Changes` を作る（新しいものが上）
-3. リリース時に `git tag -a v0.01 -m "0.01"`
+リリース手順:
+
+1. `lib/Disperl/*.pm` の `$VERSION` を同じ値に更新する
+2. `Changes` に「追加 / 変更 / 修正 / 削除」を書く（新しいものが上）
+3. `prove -l -j4 t` を通す
+4. コミットしてタグを打つ
+
+```sh
+git tag -a v0.1.0 -m "0.1.0"
+```
 
 `Makefile.PL` を置く場合は `VERSION_FROM => 'lib/Disperl/Client.pm'` にすると
 `$VERSION` を 1 か所から読めます。

@@ -179,7 +179,9 @@ my $gw = Disperl::Gateway->new(
 結果は `GUILD_MEMBERS_CHUNK` として `on_guild_members_chunk` に届きます。
 
 ```perl
-my $gw = Disperl::Gateway->new(
+# コールバックの中から $gw を使うので、先に宣言しておく
+my $gw;
+$gw = Disperl::Gateway->new(
     token   => $ENV{DISCORD_TOKEN},
     intents => [qw(GUILDS GUILD_MEMBERS)],
     on_guild_members_chunk => sub {

@@ -1,6 +1,9 @@
 package Disperl::Config;
 use strict;
 use warnings;
+
+our $VERSION = '0.1.0';
+
 use Exporter 'import';
 
 our @EXPORT_OK = qw(load_dotenv);

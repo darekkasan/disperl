@@ -1,6 +1,9 @@
 package Disperl::Entitlement;
 use strict;
 use warnings;
+
+our $VERSION = '0.1.0';
+
 use Exporter 'import';
 
 our @EXPORT_OK = qw(

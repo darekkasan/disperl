@@ -1,6 +1,9 @@
 package Disperl::Client;
 use strict;
 use warnings;
+
+our $VERSION = '0.1.0';
+
 use HTTP::Tiny;
 use JSON::PP;
 use Encode ();

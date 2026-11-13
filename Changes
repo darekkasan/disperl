@@ -1,0 +1,19 @@
+# Changes
+
+リリースごとの変更点です（追加 / 変更 / 修正 / 削除）。
+
+## 0.1.0 - 未リリース
+
+最初のバージョンです。
+
+### 追加
+
+- REST API: メッセージ・添付（multipart）・投票・スレッド・フォーラム / メディア・
+  チャンネル・ロール・メンバー・スケジュールイベント・Webhook・インタラクション応答・
+  コマンド登録・ページネーション（`each_*`）
+- Gateway: Identify / Resume / Heartbeat・自動再接続（指数バックオフ・ゾンビ検出）・
+  プレゼンス・型付きコールバック・member chunking・シャーディング
+- コンポーネント（ボタン / セレクト / Components V2 / モーダル）と `Disperl::Components`
+- 権限計算（`Disperl::Permissions`）・監査ログ・AutoMod・Entitlements・OAuth2 ほか
+- 動作確認 CLI（`test.pl`）と実行サンプル（`examples/`）
+- テストスイート（`prove -l t`。ネットワーク不要）・pre-commit フック（`tools/`）

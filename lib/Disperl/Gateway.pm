@@ -1,6 +1,9 @@
 package Disperl::Gateway;
 use strict;
 use warnings;
+
+our $VERSION = '0.1.0';
+
 use JSON::PP;
 use Time::HiRes qw(time);
 use Disperl::WebSocket;

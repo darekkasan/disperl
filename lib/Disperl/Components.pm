@@ -1,6 +1,9 @@
 package Disperl::Components;
 use strict;
 use warnings;
+
+our $VERSION = '0.1.0';
+
 use Exporter 'import';
 use JSON::PP ();
 

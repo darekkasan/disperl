@@ -1,0 +1,22 @@
+# 改行コードの正規化。
+# リポジトリ内は LF、作業ツリーは OS の既定（Windows なら CRLF）になります。
+* text=auto
+
+*.pm   text
+*.pl   text
+*.t    text
+*.md   text
+*.json text
+*.yml  text
+
+# フックは Git for Windows 同梱の sh で動かすため LF 固定
+tools/hooks/* text eol=lf
+
+# バイナリは変換しない
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.gz   binary
