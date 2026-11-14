@@ -63,6 +63,7 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `error_backoff` | `1` | エラー再接続の指数バックオフの基準秒 |
 | `max_backoff` | `30` | エラー再接続の待ち時間の上限（秒） |
 | `timeout` | `60` | 受信のタイムアウト秒 |
+| `max_message_size` | 32 MiB | 受信メッセージの上限（バイト）。`0` で無制限 |
 | `url` | `wss://gateway.discord.gg/?v=10&encoding=json` | 接続先 |
 | `ws_class` | `Disperl::WebSocket` | 差し替え可能（テスト用） |
 | `sleep` | `sub { sleep $_[0] }` | 再接続待ちのフック（テスト用） |
@@ -310,6 +311,8 @@ my $gw = Disperl::Gateway->new(
 - 連続失敗回数は READY / RESUMED で 0 に戻る
 - 失敗が `max_reconnects` を超えると `run` は戻る（`die` はしない）
 - エラー時の再接続待ちは**指数バックオフ**: `error_backoff * 2^(失敗回数-1)`、上限 `max_backoff`
+- 汎用クローズとゾンビ検出は **1 秒待ってから** Resume（即時再接続の繰り返しを防ぐ）
+- WebSocket のマスクキーは `/dev/urandom` → `Crypt::URandom` の順で確保（無い環境はハッシュ混合）
 - `reconnect => 0` で自動再接続を無効化
 - Resume 時は READY で受け取った `resume_gateway_url` を使う
 - 初回 Heartbeat は `heartbeat_interval` の範囲でランダムにずらす
@@ -373,6 +376,7 @@ $gw->set_presence(activity => {
 - 接続前なら次の Identify で、接続中なら READY 後に反映される
 - `streaming` は `url` が必須
 - `custom` は `state` に表示テキストを入れる（`name` 省略時は `Custom Status`）
+- `emoji` はハッシュで渡し、`name` か `id` のどちらかが必要
 - 変更は Gateway に接続している間だけ有効。切断すると通常のオフラインに戻る
 - Discord の制限（20 秒に 5 回）を超えないよう、既定で 4 秒間隔に間引く
 - 間引かれている間の変更は最新の 1 件だけが送られる

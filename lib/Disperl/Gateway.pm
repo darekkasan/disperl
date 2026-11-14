@@ -224,6 +224,8 @@ sub new {
         error_backoff => $args{error_backoff} // 1,
         max_backoff   => $args{max_backoff} // 30,
         timeout        => $args{timeout} // 60,
+        # 受信メッセージの上限（バイト）。未指定なら WebSocket 側の既定（32 MiB）
+        max_message_size => $args{max_message_size},
         ws_class       => $args{ws_class} // 'Disperl::WebSocket',
         sleep          => $args{sleep} // sub { sleep $_[0] },
 
@@ -512,14 +514,25 @@ sub _normalize_activity {
             if $type == 1 && !defined $out{url};
     }
 
-    if (ref $activity->{emoji} eq 'HASH') {
-        my %emoji;
-        $emoji{name} = $activity->{emoji}{name} if defined $activity->{emoji}{name};
-        $emoji{id}   = $activity->{emoji}{id}   if defined $activity->{emoji}{id};
-        $emoji{animated} = $activity->{emoji}{animated}
+    if (defined $activity->{emoji}) {
+        my $emoji = $activity->{emoji};
+        die "activity emoji must be a hash reference\n"
+            unless ref $emoji eq 'HASH';
+
+        my $name_ok = defined $emoji->{name} && !ref $emoji->{name}
+            && length $emoji->{name};
+        my $id_ok = defined $emoji->{id} && !ref $emoji->{id}
+            && length $emoji->{id};
+        die "activity emoji requires a name or id\n"
+            unless $name_ok || $id_ok;
+
+        my %out_emoji;
+        $out_emoji{name} = $emoji->{name} if $name_ok;
+        $out_emoji{id}   = $emoji->{id}   if $id_ok;
+        $out_emoji{animated} = $emoji->{animated}
             ? JSON::PP::true : JSON::PP::false
-            if exists $activity->{emoji}{animated};
-        $out{emoji} = \%emoji;
+            if exists $emoji->{animated};
+        $out{emoji} = \%out_emoji;
     }
 
     return \%out;
@@ -598,6 +611,9 @@ sub _reconnect_wait {
 
     return $self->{reconnect_delay} if $reason eq 'rate_limited';
     return 1 + rand(4) if $reason eq 'invalid_session';
+
+    # 汎用クローズ / ゾンビ検出。即時再接続を繰り返さないよう最低 1 秒空ける
+    return 1 if $reason eq 'resume';
 
     return 0;
 }
@@ -817,7 +833,12 @@ sub _connect {
     }
 
     my $class = $self->{ws_class};
-    return $class->connect(url => $url, timeout => $self->{timeout});
+    return $class->connect(
+        url     => $url,
+        timeout => $self->{timeout},
+        (defined $self->{max_message_size}
+            ? (max_message_size => $self->{max_message_size}) : ()),
+    );
 }
 
 sub _identify {

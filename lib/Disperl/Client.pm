@@ -662,8 +662,12 @@ sub _thread_payload {
         $payload{auto_archive_duration} = $d + 0;
     }
 
-    $payload{rate_limit_per_user} = $opts{rate_limit_per_user} + 0
-        if defined $opts{rate_limit_per_user};
+    if (defined $opts{rate_limit_per_user}) {
+        my $r = $opts{rate_limit_per_user};
+        die "rate_limit_per_user must be between 0 and 21600\n"
+            unless !ref $r && $r =~ /^\d+\z/ && $r <= 21600;
+        $payload{rate_limit_per_user} = $r + 0;
+    }
 
     if (exists $opts{invitable}) {
         $payload{invitable} = $opts{invitable} ? JSON::PP::true : JSON::PP::false;
@@ -5617,6 +5621,7 @@ sub _multipart_body {
     for my $i (0 .. $#$files) {
         my $file = $files->[$i];
         my $type = $file->{content_type} // _content_type($file->{filename});
+        $type =~ s/[\r\n]//g;    # ヘッダを壊す文字を落とす
 
         # ヘッダを壊す文字だけ落とす
         (my $safe = $file->{filename}) =~ s/["\r\n]/_/g;
@@ -5678,6 +5683,7 @@ sub _file_part {
     my ($boundary, $name, $file) = @_;
 
     my $type = $file->{content_type} // _content_type($file->{filename});
+    $type =~ s/[\r\n]//g;    # ヘッダを壊す文字を落とす
 
     # ヘッダを壊す文字だけ落とす
     (my $safe = $file->{filename}) =~ s/["\r\n]/_/g;
@@ -7128,6 +7134,8 @@ sub _request {
     my ($self, $method, $url, $payload, $opts) = @_;
     $opts ||= {};
 
+    _validate_url_ids($url);
+
     my %args = (headers => {});
     $args{headers}{'Authorization'} = "Bot $self->{token}"
         unless exists $opts->{auth} && !$opts->{auth};
@@ -7282,7 +7290,8 @@ sub _retry_after_seconds {
 }
 
 # 429 / 5xx のときだけ待ち時間（秒）を返す。それ以外は undef（=リトライしない）
-#   $attempt は 0 始まり（初回の失敗で 0）。5xx は指数バックオフする。
+# 599 は HTTP::Tiny が接続失敗・タイムアウトで返す疑似ステータスで、5xx と同じ扱い。
+#   $attempt は 0 始まり（初回の失敗で 0）。5xx / 599 は指数バックオフする。
 sub _retry_delay {
     my ($self, $res, $attempt) = @_;
     my $status = $res->{status};
@@ -7464,6 +7473,65 @@ sub _major_param {
 
     return 'global' unless defined $id && length $id;
     return "$kind:$id";
+}
+
+# 「キーワード => 直後に来ても ID とみなさない値」の一覧。
+# ここに無い値が続く場合は snowflake（数字）であることを検証する。
+my %ID_EXCEPTION = (
+    guilds              => { templates => 1 },                 # /guilds/templates/{code}
+    members             => { search => 1, '@me' => 1 },        # /members/search, /members/@me
+    roles               => { 'member-counts' => 1 },           # /roles/member-counts
+    threads             => { archived => 1, active => 1 },     # /threads/archived/...
+    channels            => {},
+    webhooks            => {},
+    interactions        => {},
+    'stage-instances'   => {},
+    bans                => {},
+    pins                => {},
+    emojis              => {},
+    stickers            => {},
+    'sticker-packs'     => {},
+    'soundboard-sounds' => {},
+    skus                => {},
+    subscriptions       => {},
+    entitlements        => {},
+);
+
+# 直後に @me を許容するキーワード（現在のユーザー / アプリを指す）
+my %ME_KEYWORD = map { $_ => 1 }
+    qw(users applications thread-members voice-states);
+
+# URL パス中の ID を検証する。ID に想定外の文字列を渡したときに
+# 別のエンドポイントへ飛ぶのを防ぐ（Discord の snowflake は数字のみ）。
+sub _validate_url_ids {
+    my ($url) = @_;
+
+    my @seg = split m{/}, _api_path($url), -1;
+
+    for my $i (1 .. $#seg - 1) {
+        my ($key, $value) = ($seg[$i], $seg[$i + 1]);
+        next if $value eq '';
+
+        my $exceptions = $ID_EXCEPTION{$key};
+        my $me_ok      = $ME_KEYWORD{$key};
+        next unless $exceptions || $me_ok;
+
+        next if $me_ok && $value eq '@me';
+        next if $exceptions->{$value};
+
+        die "invalid $key id in URL: $value\n"
+            unless $value =~ /^\d+\z/;
+    }
+
+    # Webhook / インタラクションのトークン（パスの 3 番目）は base64url のみ許可
+    if (($seg[1] // '') =~ /^(?:webhooks|interactions)\z/
+        && defined $seg[3] && $seg[3] ne '') {
+        die "invalid " . ($seg[1] eq 'webhooks' ? 'webhook' : 'interaction')
+            . " token in URL\n"
+            unless $seg[3] =~ /^[A-Za-z0-9._-]+\z/;
+    }
+
+    return 1;
 }
 
 # URL から API のパス部分だけを取り出す（/api/v10 は落とす）。

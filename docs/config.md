@@ -41,9 +41,10 @@ DISCORD_CHANNEL_ID=123456789012345678
 ```sh
 # コメント
 KEY=value
-KEY = value            # インラインコメントは値から除かれる
-KEY="quoted value"     # クォート内はそのまま（# も保持）
-export KEY=value       # export 付きも可
+KEY = value                  # インラインコメントは値から除かれる
+KEY="quoted value"           # クォート内はそのまま（# も保持）
+KEY="quoted value" # コメント  # 閉じクォートの後ろもコメントにできる
+export KEY=value             # export 付きも可
 ```
 
 - キーは `[A-Za-z_][A-Za-z0-9_]*`

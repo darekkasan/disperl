@@ -17,3 +17,20 @@
 - 権限計算（`Disperl::Permissions`）・監査ログ・AutoMod・Entitlements・OAuth2 ほか
 - 動作確認 CLI（`test.pl`）と実行サンプル（`examples/`）
 - テストスイート（`prove -l t`。ネットワーク不要）・pre-commit フック（`tools/`）
+
+### 変更
+
+- WebSocket のマスクキー / `Sec-WebSocket-Key` の乱数源を強化
+  （`/dev/urandom` → `Crypt::URandom` → ハッシュ混合フォールバック）
+- 受信メッセージの上限を追加（`max_message_size`、既定 32 MiB。`0` で無制限）
+  と制御フレーム（125 バイト以下）の検証
+- URL に埋め込む ID / トークンの文字種を送信前に検証（数字・base64url のみ）
+- 接続エラー（599）の再試行をドキュメント化（5xx と同じ指数バックオフ）
+
+### 修正
+
+- `.env` の `KEY="値" # コメント` でクォートが値に残る問題
+- multipart の `content_type` に改行が混ざるとヘッダを壊せる問題
+- スレッド / フォーラム投稿作成時の `rate_limit_per_user` 検証漏れ
+- Gateway の汎用クローズで待たずに再接続を繰り返す問題（最低 1 秒待つ）
+- アクティビティの `emoji` の検証漏れ（ハッシュ以外・name / id なしを受け付けていた）

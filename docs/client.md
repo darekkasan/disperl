@@ -27,9 +27,9 @@ my $client = Disperl::Client->new(
 | `token` | （必須） | Bot トークン。`Bot ` は自動で付く |
 | `ua` | `HTTP::Tiny` | 差し替え可能（テスト用） |
 | `timeout` | `10` | 1 リクエストのタイムアウト秒。`ua` を渡した場合は無視 |
-| `max_retries` | `2` | 429 / 5xx の最大リトライ回数。`0` で無効 |
-| `retry_backoff` | `1` | 5xx の指数バックオフの基準秒（`retry_backoff * 2^attempt`） |
-| `max_retry_delay` | `30` | 5xx の待ち時間の上限（秒） |
+| `max_retries` | `2` | 429 / 5xx / 599 の最大リトライ回数。`0` で無効 |
+| `retry_backoff` | `1` | 5xx / 599 の指数バックオフの基準秒（`retry_backoff * 2^attempt`） |
+| `max_retry_delay` | `30` | 5xx / 599 の待ち時間の上限（秒） |
 | `sleep` | `sub { sleep $_[0] }` | 待機処理のフック（テスト用） |
 | `on_error` | 未指定なら `warn` | `sub { my ($err) = @_ }`。`sub {}` で無音にできる |
 | `allowed_mentions` | `{ parse => [] }` | 既定でメンションを解決しない。`undef` で Discord の既定に戻す |
@@ -81,6 +81,23 @@ Discord 側のエラーは `on_error`（既定 `warn`）にも渡されます。
 > 引数不足や上限超過などの**ローカルな検証エラーは `die`** します。
 > API エラー（`undef` + `last_error`）とは扱いが違う点に注意してください。
 
+### ID とトークンの検証
+
+URL に埋め込む値は、送信前に文字種を検証します（違反は `die`）。
+
+| 対象 | ルール |
+|---|---|
+| チャンネル / ギルド / メンバー / ロール / Webhook / アプリなどの ID | 数字のみ（`@me` が使える位置では `@me` も可） |
+| Webhook / インタラクションのトークン | `A-Z` `a-z` `0-9` `_` `-` `.` のみ |
+
+```perl
+$client->send_message('abc', 'x');           # die: invalid channels id in URL
+$client->get_guild_member('111', 'kama');    # die: invalid members id in URL
+```
+
+ユーザー入力をそのまま ID に渡してしまったときに、意図しないエンドポイントへ
+リクエストが飛ぶのを防げます。
+
 ## レート制限とリトライ
 
 Discord の制限は「バケット（`X-RateLimit-Bucket`）」＋「major parameter」単位です。
@@ -100,6 +117,7 @@ Discord の制限は「バケット（`X-RateLimit-Bucket`）」＋「major para
 |---|---|---|
 | 429 | `retry_after`（無ければ `Retry-After`、それも無ければ 1 秒） | する（`max_retries` まで） |
 | 5xx | `retry_backoff * 2^attempt`（上限 `max_retry_delay`） | する（`max_retries` まで） |
+| 599（接続失敗・タイムアウト） | 5xx と同じ指数バックオフ | する（`max_retries` まで） |
 | その他の 4xx | — | しない |
 
 待機には `sleep` フックが使われるため、テストでは 0 秒にできます。

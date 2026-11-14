@@ -181,4 +181,58 @@ subtest 'recv_frame times out' => sub {
     cmp_ok $elapsed, '<', 2, 'did not hang';
 };
 
+subtest 'oversized messages are rejected' => sub {
+    my ($client, $server) = socket_pair();
+    my $ws = Disperl::WebSocket->new_from_socket(
+        sock => $client, max_message_size => 64,
+    );
+
+    print {$server} server_frame(1, 'x' x 65);
+    eval { $ws->recv_frame(timeout => 1) };
+    like $@, qr/frame too large \(65 bytes; max 64\)/, 'single frame over the limit';
+
+    my ($client2, $server2) = socket_pair();
+    my $ws2 = Disperl::WebSocket->new_from_socket(
+        sock => $client2, max_message_size => 64,
+    );
+    print {$server2} server_frame(1, 'x' x 40, fin => 0);
+    print {$server2} server_frame(0, 'y' x 40, fin => 1);
+    eval { $ws2->recv_frame(timeout => 1) };
+    like $@, qr/message too large \(max 64 bytes\)/, 'fragments over the limit';
+};
+
+subtest 'oversized control frames are rejected' => sub {
+    my ($client, $server) = socket_pair();
+    my $ws = Disperl::WebSocket->new_from_socket(sock => $client);
+
+    print {$server} server_frame(0x9, 'x' x 126);
+    eval { $ws->recv_frame(timeout => 1) };
+    like $@, qr/control frame is larger than 125 bytes/, 'ping over 125 bytes';
+};
+
+subtest 'masking keys vary per frame' => sub {
+    my ($client, $server) = socket_pair();
+    my $ws = Disperl::WebSocket->new_from_socket(sock => $client);
+
+    $ws->send_text('same');
+
+    my ($b1, $b2) = unpack 'CC', read_exact($server, 2);
+    is $b2 & 0x80, 0x80, 'mask bit set';
+    my $mask1 = read_exact($server, 4);
+    read_exact($server, $b2 & 0x7F);
+
+    $ws->send_text('same');
+    read_exact($server, 2);
+    my $mask2 = read_exact($server, 4);
+
+    isnt $mask1, $mask2, 'masking keys differ between frames';
+};
+
+subtest '_random_bytes' => sub {
+    my $bytes = Disperl::WebSocket::_random_bytes(32);
+    is length($bytes), 32, 'returns the requested size';
+    isnt Disperl::WebSocket::_random_bytes(16),
+        Disperl::WebSocket::_random_bytes(16), 'two calls differ';
+};
+
 done_testing;

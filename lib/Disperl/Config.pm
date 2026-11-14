@@ -28,7 +28,8 @@ sub load_dotenv {
         my ($key, $value) = $line =~ /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/
             or next;                                        # 解釈できない行は無視
 
-        if ($value =~ /^(['"])(.*)\1$/s) {
+        # クォートは閉じた後ろにコメントを書ける（KEY="v" # comment）
+        if ($value =~ /^(['"])(.*?)\1(?:\s+#.*)?\z/s) {
             $value = $2;                                    # クォート内はそのまま
         } else {
             $value =~ s/\s+#.*\z//;                         # インラインコメント

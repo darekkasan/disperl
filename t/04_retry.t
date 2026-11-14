@@ -115,6 +115,24 @@ subtest 'max_retries => 0 disables retries' => sub {
     is scalar @waits, 0, 'never slept';
 };
 
+subtest '599 (network error) is retried with backoff' => sub {
+    my @waits;
+    my $fake = FakeUA->new(
+        FakeUA->err_response(599, 'Could not connect to discord.com:443'),
+        $ok->(),
+    );
+    my $client = Disperl::Client->new(
+        token => 'dummy', ua => $fake, sleep => sub { push @waits, $_[0] },
+    );
+
+    local $SIG{__WARN__} = sub { };
+    my $msg = $client->send_message('999', 'x');
+
+    is $msg->{id}, '1', 'succeeds after a network error';
+    is $fake->call_count, 2, 'two requests';
+    is_deeply \@waits, [1], 'exponential backoff before the retry';
+};
+
 subtest '4xx other than 429 is never retried' => sub {
     my $fake = FakeUA->new(FakeUA->err_response(403, '{"message":"Forbidden"}'));
     my $client = Disperl::Client->new(token => 'dummy', ua => $fake);

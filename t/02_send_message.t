@@ -87,6 +87,33 @@ subtest 'non-JSON error body' => sub {
     is $client->last_error->{message}, 'Error', 'falls back to reason';
 };
 
+subtest 'URL IDs are validated before sending' => sub {
+    my $fake   = FakeUA->new();
+    my $client = Disperl::Client->new(token => 'dummy', ua => $fake);
+
+    eval { $client->send_message('12abc', 'x') };
+    like $@, qr/invalid channels id in URL: 12abc/,
+        'non-numeric channel id dies';
+
+    eval { $client->get_guild('abc') };
+    like $@, qr/invalid guilds id in URL: abc/, 'non-numeric guild id dies';
+
+    eval { $client->get_guild_member('111', 'user-name') };
+    like $@, qr/invalid members id in URL: user-name/,
+        'username instead of a user id dies';
+
+    eval { $client->execute_webhook('123', 'bad token', 'x') };
+    like $@, qr/invalid webhook token in URL/, 'space in a webhook token dies';
+
+    is $fake->call_count, 0, 'nothing was sent';
+
+    # @me を使うエンドポイントは通る
+    my $ok_fake = FakeUA->new(FakeUA->ok_response($json->encode({ id => '9' })));
+    my $ok_client = Disperl::Client->new(token => 'dummy', ua => $ok_fake);
+    my $me = $ok_client->get_current_user;
+    is $me->{id}, '9', '@me endpoint still works';
+};
+
 subtest 'last_error is reset by a later success' => sub {
     my $fake = FakeUA->new(
         FakeUA->err_response(400, $json->encode({ code => 1, message => 'bad' })),

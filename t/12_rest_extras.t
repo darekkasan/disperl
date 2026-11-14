@@ -102,6 +102,7 @@ subtest 'threads' => sub {
     my ($client, $fake) = client_with(
         ok_json({ id => '500', name => '議題' }),
         ok_json({ id => '501', name => '返信から' }),
+        ok_json({ id => '502', name => '低速' }),
     );
 
     my $thread = $client->create_thread(
@@ -125,6 +126,12 @@ subtest 'threads' => sub {
         "$API/channels/111/messages/42/threads", 'endpoint';
     is_deeply body_of($fake), { name => '返信から' }, 'type is omitted';
 
+    my $slow = $client->create_thread(
+        '111', name => '低速', rate_limit_per_user => 21600,
+    );
+    is $slow->{id}, '502', 'thread with slowmode';
+    is body_of($fake)->{rate_limit_per_user}, 21600, 'rate_limit_per_user (max)';
+
     eval { $client->create_thread('111') };
     like $@, qr/thread name is required/, 'name is required';
 
@@ -133,6 +140,14 @@ subtest 'threads' => sub {
 
     eval { $client->create_thread('111', name => 'x', auto_archive_duration => 10) };
     like $@, qr/auto_archive_duration/, 'invalid archive duration';
+
+    eval { $client->create_thread('111', name => 'x', rate_limit_per_user => 21601) };
+    like $@, qr/rate_limit_per_user must be between 0 and 21600/,
+        'rate_limit_per_user out of range';
+
+    eval { $client->create_thread('111', name => 'x', rate_limit_per_user => -1) };
+    like $@, qr/rate_limit_per_user must be between 0 and 21600/,
+        'rate_limit_per_user must be an integer';
 };
 
 subtest 'create_dm' => sub {

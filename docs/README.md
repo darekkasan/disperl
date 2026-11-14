@@ -21,7 +21,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | `Disperl::Entitlement` | Entitlement / SKU の種別 | core のみ |
 | `Disperl::RoleConnection` | ロール連携メタデータの種別 | core のみ |
 | `Disperl::Integration` | ギルド連携の種別 | core のみ |
-| `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が内部で使用） | `IO::Socket::SSL` |
+| `Disperl::WebSocket` | RFC 6455 クライアント（Gateway が内部で使用） | `IO::Socket::SSL`（乱数は `Crypt::URandom` を任意で使用） |
 | `Disperl::Config` | `.env` ローダー | core のみ |
 
 ## ページ一覧

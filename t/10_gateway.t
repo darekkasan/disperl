@@ -18,6 +18,7 @@ package FakeWS;
 
 our $INSTANCE;
 our $LAST_URL;
+our $LAST_ARGS;
 our @CONNECTIONS;
 
 sub new {
@@ -31,7 +32,8 @@ sub new {
 
 sub connect {
     my ($class, %args) = @_;
-    $LAST_URL = $args{url};
+    $LAST_URL  = $args{url};
+    $LAST_ARGS = \%args;
     return shift @CONNECTIONS if @CONNECTIONS;
     return $INSTANCE;
 }
@@ -410,6 +412,36 @@ subtest 'a successful READY allows further reconnects' => sub {
 
     is scalar @{ $fourth->sent }, 1, 'kept reconnecting after a READY';
     is scalar @errors, 3, 'reported the two errors and the fatal close';
+
+    @FakeWS::CONNECTIONS = ();
+};
+
+subtest 'max_message_size is passed to the WebSocket' => sub {
+    $FakeWS::INSTANCE = undef;
+    @FakeWS::CONNECTIONS = (
+        FakeWS->new(queue => [ { opcode => 8, code => 4004 } ]),
+        FakeWS->new(queue => [ { opcode => 8, code => 4004 } ]),
+    );
+
+    my $gw = Disperl::Gateway->new(
+        token            => 'secret',
+        ws_class         => 'FakeWS',
+        max_message_size => 1024,
+        on_error         => sub { },
+        sleep            => sub { },
+    );
+    eval { $gw->_run_once };
+    is $FakeWS::LAST_ARGS->{max_message_size}, 1024, 'forwarded to connect';
+
+    my $default = Disperl::Gateway->new(
+        token    => 'secret',
+        ws_class => 'FakeWS',
+        on_error => sub { },
+        sleep    => sub { },
+    );
+    eval { $default->_run_once };
+    ok !exists $FakeWS::LAST_ARGS->{max_message_size},
+        'not passed when unset (WebSocket default applies)';
 
     @FakeWS::CONNECTIONS = ();
 };

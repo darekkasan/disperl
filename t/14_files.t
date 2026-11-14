@@ -187,6 +187,25 @@ subtest 'send_files_data attaches several in-memory files' => sub {
     is payload_of($fake)->{content}, 'CSV と JSON', 'content';
 };
 
+subtest 'filename / content_type cannot inject headers' => sub {
+    my ($client, $fake) = client_with(ok_json({ id => '9' }));
+
+    $client->send_files_data('111', [{
+        filename     => "bad\"name\r\nX-Evil: 1.txt",
+        data         => 'x',
+        content_type => "text/plain\r\nX-Injected: 1",
+    }]);
+
+    my $body = body_of($fake);
+    unlike $body, qr/\r\nX-Injected/, 'CRLF in content_type is stripped';
+    unlike $body, qr/\r\nX-Evil/, 'CRLF in filename is sanitized';
+
+    my @parts = file_parts($fake);
+    is scalar @parts, 1, 'one part';
+    is $parts[0]{filename}, 'bad_name__X-Evil: 1.txt', 'filename sanitized';
+    is $parts[0]{type}, 'text/plainX-Injected: 1', 'content_type sanitized';
+};
+
 subtest 'send_files can attach the maximum of 10 files' => sub {
     my ($client, $fake) = client_with(ok_json({ id => '8' }));
 

@@ -119,6 +119,7 @@ subtest '再接続の待ち時間' => sub {
     is $gw->_reconnect_wait('error'), 5, 'capped by max_backoff';
 
     is $gw->_reconnect_wait('rate_limited'), 5, 'rate limit uses reconnect_delay';
+    is $gw->_reconnect_wait('resume'), 1, 'generic close waits 1 second';
     is $gw->_reconnect_wait(undef), 0, 'no reason';
 
     my $wait = $gw->_reconnect_wait('invalid_session');

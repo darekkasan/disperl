@@ -102,6 +102,24 @@ subtest 'validation' => sub {
         $gw->set_presence(status => 'nope');
     };
     like $@, qr/Unknown status: nope/, 'set_presence validates too';
+
+    eval {
+        Disperl::Gateway->new(
+            token    => 't',
+            activity => { type => 'custom', state => 'x', emoji => '💻' },
+        );
+    };
+    like $@, qr/activity emoji must be a hash reference/,
+        'emoji must be a hash';
+
+    eval {
+        Disperl::Gateway->new(
+            token    => 't',
+            activity => { type => 'custom', state => 'x', emoji => {} },
+        );
+    };
+    like $@, qr/activity emoji requires a name or id/,
+        'emoji requires a name or id';
 };
 
 subtest 'identify carries the initial presence' => sub {

@@ -33,6 +33,9 @@ subtest 'spaces, quotes and empty values' => sub {
         . "DQ=\"double quoted value\"\n"
         . "SQ='single quoted'\n"
         . "EMPTY=\n"
+        . "DQ_COMMENT=\"double quoted\" # comment\n"
+        . "SQ_COMMENT='single quoted' # comment\n"
+        . "DQ_HASH=\"a # b\" # comment\n"
     );
     local %ENV;
 
@@ -41,6 +44,9 @@ subtest 'spaces, quotes and empty values' => sub {
     is $ENV{DQ}, 'double quoted value', 'double quotes removed';
     is $ENV{SQ}, 'single quoted', 'single quotes removed';
     is $ENV{EMPTY}, '', 'empty value';
+    is $ENV{DQ_COMMENT}, 'double quoted', 'comment after a double-quoted value';
+    is $ENV{SQ_COMMENT}, 'single quoted', 'comment after a single-quoted value';
+    is $ENV{DQ_HASH}, 'a # b', 'hash inside quotes is kept';
 };
 
 subtest 'comments and blank lines are skipped' => sub {

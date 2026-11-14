@@ -14,6 +14,9 @@ use Time::HiRes qw(time);
 
 my $GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
+# 受信メッセージ（分割フレームを含む）の既定の上限。0 で無制限。
+my $DEFAULT_MAX_MESSAGE_SIZE = 32 * 1024 * 1024;    # 32 MiB
+
 # wss:// (または ws://) に接続してハンドシェイクを済ませる。
 #   my $ws = Disperl::WebSocket->connect(url => 'wss://...', timeout => 10);
 sub connect {
@@ -52,6 +55,7 @@ sub connect {
         closed  => 0,
         host    => $host,
         path    => $path,
+        max_message_size => $args{max_message_size} // $DEFAULT_MAX_MESSAGE_SIZE,
     }, $class;
 
     $self->_handshake($timeout);
@@ -68,6 +72,7 @@ sub new_from_socket {
         frag    => '',
         frag_op => undef,
         closed  => 0,
+        max_message_size => $args{max_message_size} // $DEFAULT_MAX_MESSAGE_SIZE,
     }, $class;
 }
 
@@ -217,6 +222,14 @@ sub _read_frame {
         $len = $hi * 4294967296 + $lo;
     }
 
+    # 制御フレームは 125 バイトまで（RFC 6455）
+    die "WebSocket control frame is larger than 125 bytes\n"
+        if $opcode >= 0x8 && $len > 125;
+
+    my $max = $self->{max_message_size} // 0;
+    die "WebSocket frame too large ($len bytes; max $max)\n"
+        if $max && $len > $max;
+
     my $mask = '';
     if ($masked) {
         $self->_need(4, $deadline);
@@ -247,6 +260,8 @@ sub _read_frame {
     # 分割されたデータフレーム
     if ($opcode == 0x0) {
         $self->{frag} .= $payload;
+        die "WebSocket message too large (max $max bytes)\n"
+            if $max && length($self->{frag}) > $max;
         return undef unless $fin;
         my $msg = { opcode => $self->{frag_op} // 0x1, payload => $self->{frag} };
         $self->{frag}    = '';
@@ -304,10 +319,45 @@ sub _write_all {
     return 1;
 }
 
+# 乱数源。マスクキーと Sec-WebSocket-Key に使うため、暗号学的乱数を優先する。
+#   1. /dev/urandom（UNIX 系）
+#   2. Crypt::URandom（入っていれば。Windows など）
+#   3. rand + 時刻 + PID を SHA-1 に通したフォールバック
+my $URANDOM;
+my $URANDOM_TRIED = 0;
+
 sub _random_bytes {
     my ($n) = @_;
+
+    if (!$URANDOM_TRIED) {
+        $URANDOM_TRIED = 1;
+        $URANDOM = undef;
+        if (open my $fh, '<:raw', '/dev/urandom') {
+            $URANDOM = $fh;
+        }
+    }
+
+    if ($URANDOM) {
+        my $buf = '';
+        while (length($buf) < $n) {
+            my $read = sysread($URANDOM, my $chunk, $n - length($buf));
+            last unless defined $read && $read > 0;
+            $buf .= $chunk;
+        }
+        return substr($buf, 0, $n) if length($buf) >= $n;
+    }
+
+    if (eval { require Crypt::URandom; 1 }) {
+        my $bytes = eval { Crypt::URandom::urandom($n) };
+        return $bytes if defined $bytes && length($bytes) >= $n;
+    }
+
     my $bytes = '';
-    $bytes .= chr int(rand(256)) while length($bytes) < $n;
+    while (length($bytes) < $n) {
+        $bytes .= sha1(join '|',
+            rand(), time(), $$, int(rand(1_000_000_000)), map { rand() } 1 .. 4,
+        );
+    }
     return substr($bytes, 0, $n);
 }
 
