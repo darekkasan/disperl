@@ -52,6 +52,7 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `on_component` | — | type 3（ボタン / セレクト）だけ |
 | `on_autocomplete` | — | type 4（オートコンプリート）だけ |
 | `on_modal` | — | type 5（モーダル送信）だけ |
+| `router` | — | `Disperl::Router`。インタラクション系のコールバックをまとめて設定（[ルーター](router.md)） |
 | `on_ready` | — | `READY` のときだけ |
 | `on_error` | 未指定なら `warn` | 接続エラー・再接続の通知 |
 | `shard` | — | `[id, count]`（[シャーディング](#シャーディング)） |
@@ -116,6 +117,9 @@ my $gw = Disperl::Gateway->new(
 `INTERACTION_CREATE` では `on_interaction` が先に呼ばれ、その後 type に応じて
 `on_command` / `on_component` / `on_autocomplete` / `on_modal` が呼ばれます
 （同じイベントで複数のコールバックが動く点に注意）。
+
+`router` を渡すと、この 4 つのコールバックがルーターに接続されます。
+個別の `on_*` を明示した場合はそちらが優先されます。
 
 ## 型付きコールバック
 
@@ -388,6 +392,7 @@ $gw->set_presence(activity => {
 - [チュートリアル](tutorial.md)
 - [逆引き](cookbook.md)
 - [インタラクション](interactions.md)
+- [インタラクションルーター](router.md)
 - [メンバー管理](members.md)
 - [Client](client.md)
 - [トラブルシューティング](troubleshooting.md)

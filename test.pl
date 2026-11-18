@@ -546,8 +546,9 @@ disperl 動作確認 CLI
   perl test.pl poll-end <メッセージID> 投票を終了して結果を表示する
   perl test.pl poll-voters <メッセージID> <answer_id> [--after ID] [--limit N]
                                        特定の選択肢に投票したユーザー一覧
-  perl test.pl commands [--list] [--global] [--guild ID]
+  perl test.pl commands [--list] [--sync [--keep]] [--global] [--guild ID]
                                       /ping /echo /poll /form を登録する（既定は現在のギルド）
+                                      --sync は差分だけを反映する（--keep で削除しない）
   perl test.pl watch [オプション]      Gateway に接続し !ping / !echo / !poll / !status / !activity / !help に応答する
       --status <状態>                  online / idle / dnd / invisible（オフライン表示）
       --activity <名前>                アクティビティ
@@ -4938,7 +4939,7 @@ sub _command_definitions {
 sub cmd_commands {
     my (@args) = map { _decode_arg($_) } @_;
 
-    my ($global, $list, $guild_id);
+    my ($global, $list, $sync, $keep, $guild_id);
     while (@args) {
         my $arg = shift @args;
 
@@ -4946,6 +4947,10 @@ sub cmd_commands {
             $global = 1;
         } elsif ($arg eq '--list') {
             $list = 1;
+        } elsif ($arg eq '--sync') {
+            $sync = 1;
+        } elsif ($arg eq '--keep') {
+            $keep = 1;
         } elsif ($arg =~ /^--guild=(.+)\z/) {
             $guild_id = $1;
         } elsif ($arg eq '--guild') {
@@ -4980,6 +4985,30 @@ sub cmd_commands {
     }
 
     my @commands = _command_definitions();
+
+    if ($sync) {
+        my $result = client()->sync_commands(
+            $app_id, \@commands,
+            ($global ? () : (guild_id => $guild_id)),
+            prune => $keep ? 0 : 1,
+        );
+        _api_fail('コマンドの差分同期') unless defined $result;
+
+        out sprintf "%s: 作成 %d / 更新 %d / 削除 %d / 変更なし %d%s\n",
+            $global ? 'グローバル' : "ギルド $guild_id",
+            scalar @{ $result->{created} },
+            scalar @{ $result->{updated} },
+            scalar @{ $result->{deleted} },
+            scalar @{ $result->{unchanged} },
+            $keep ? '（削除はしません）' : '';
+        out "  + /$_->{name}\n" for @{ $result->{created} };
+        out "  ~ /$_->{name}\n" for @{ $result->{updated} };
+        out "  - /$_->{name}\n" for @{ $result->{deleted} };
+        out "グローバルコマンドは反映に最大 1 時間かかります\n" if $global;
+
+        return 0;
+    }
+
     my $registered = $global
         ? client()->register_global_commands($app_id, \@commands)
         : client()->register_guild_commands($app_id, $guild_id, \@commands);

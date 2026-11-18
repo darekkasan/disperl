@@ -25,7 +25,8 @@ lib/Disperl/AutoMod.pm       AutoMod のトリガー / アクション種別
 lib/Disperl/Forum.pm         フォーラム / メディアの種別・タグ検証
 lib/Disperl/Sticker.pm       ステッカーの種別・画像形式
 lib/Disperl/Stage.pm         ステージインスタンスの公開範囲
-lib/Disperl/Commands.pm      コマンド権限の対象種別
+lib/Disperl/Commands.pm      コマンド定義のビルダー・検証・差分計算
+lib/Disperl/Router.pm        インタラクションのルーター
 lib/Disperl/Guild.pm         ギルド設定・オンボーディングの種別
 lib/Disperl/Entitlement.pm   Entitlement / SKU の種別
 lib/Disperl/RoleConnection.pm ロール連携メタデータの種別
@@ -37,7 +38,7 @@ t/                           単体テスト（ネットワーク不要）
 t/lib/FakeUA.pm              テスト用の偽 HTTP クライアント
 t/lib/TestDiscord.pm         テスト共通ヘルパー（client_with / ok_json など）
 
-examples/                    実行サンプル（送信 / Gateway / コマンド / ボタン）
+examples/                    実行サンプル（送信 / Gateway / コマンド / ボタン / ルーター）
 tools/hooks/pre-commit       pre-commit フック（任意）
 tools/install-hooks.pl       フックのインストーラー
 
@@ -104,7 +105,7 @@ prove -l -j4 t     # 並列（Windows でも動作確認済み。30 秒 → 8 �
 - `t/` から `.env` は読みません（実トークンを使わない）
 - テスト同士は独立しているので並列実行できます（`-j` の数字はお好みで）
 
-現在のテスト（44 ファイル / 403 件）:
+現在のテスト（46 ファイル / 435 件）:
 
 | ファイル | 内容 |
 |---|---|
@@ -152,6 +153,8 @@ prove -l -j4 t     # 並列（Windows でも動作確認済み。30 秒 → 8 �
 | `t/41_polish.t` | ページネーション / 添付統合 / MIME / allowed_mentions / major parameter / コンポーネント検証 |
 | `t/42_gaps_and_fakeua.t` | Gateway / アプリ情報 / リージョン / ステッカー / サウンド / ギルドコマンド / FakeUA 拡充 |
 | `t/43_meta.t` | `$VERSION` の一致 / `Changes` の見出し / `test.pl` と `examples/` の構文 |
+| `t/44_commands.t` | コマンド / オプション定義・検証・`diff_commands`・`sync_commands` |
+| `t/45_router.t` | ルーター（コマンド / コンポーネント / モーダル / オートコンプリート / エラー） |
 
 ### テストを書くとき
 

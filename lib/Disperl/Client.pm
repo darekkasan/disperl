@@ -21,7 +21,10 @@ use Disperl::Forum qw(
 );
 use Disperl::Sticker qw(sticker_type_value sticker_format_value);
 use Disperl::Stage qw(stage_privacy_value);
-use Disperl::Commands qw(command_permission_value);
+use Disperl::Commands qw(
+    command_permission_value
+    normalize_command validate_command diff_commands
+);
 use Disperl::Guild qw(
     guild_verification_value guild_notification_value guild_content_filter_value
     guild_afk_timeout_value guild_system_channel_flags
@@ -6196,37 +6199,10 @@ sub edit_guild_command {
     return $self->_finish($res, 'hash');
 }
 
-# コマンドの JSON を検証する（name / description の必須チェック中心）。
+# コマンドの JSON を検証して正規化する（Disperl::Commands に集約）。
 sub _command_payload {
     my ($command) = @_;
-
-    die "command must be a hash reference\n" unless ref $command eq 'HASH';
-
-    my %payload = %$command;
-
-    my $name = $payload{name};
-    die "command name is required\n"
-        unless defined $name && !ref $name && length $name;
-    die "command name must be 1-32 characters\n" if length($name) > 32;
-
-    my $type = exists $payload{type} ? $payload{type} : 1;
-    if (defined $type && !ref $type && $type =~ /^\d+\z/) {
-        $type += 0;
-        $payload{type} = $type;
-    } else {
-        $type = 1;
-    }
-
-    # USER (2) / MESSAGE (3) 以外は description が必須
-    if ($type != 2 && $type != 3) {
-        my $description = $payload{description};
-        die "command description is required\n"
-            unless defined $description && !ref $description && length $description;
-        die "command description must be 1-100 characters\n"
-            if length($description) > 100;
-    }
-
-    return \%payload;
+    return normalize_command($command);
 }
 
 sub _register_commands {
@@ -6237,15 +6213,91 @@ sub _register_commands {
     for my $command (@$commands) {
         die "each command must be a hash reference\n"
             unless ref $command eq 'HASH';
-        die "command name is required\n"
-            unless defined $command->{name} && length $command->{name};
-        die "command description is required\n"
-            unless defined $command->{description};
+
+        # 一括登録は送信内容をそのまま使う（type を補完しない）ため、
+        # 検証だけ行う。USER / MESSAGE コマンドは description 不要。
+        validate_command($command);
     }
 
     $self->{last_error} = undef;
     my $res = $self->_request('PUT', $url, $commands);
     return $self->_finish($res, 'array');
+}
+
+# ローカルのコマンド定義と現在の登録内容を比べ、差分だけを反映する。
+#   my $result = $client->sync_commands($application_id, \@commands);
+#   my $result = $client->sync_commands($application_id, \@commands,
+#       guild_id => $guild_id, prune => 0);
+# 返り値は { created, updated, deleted, unchanged, skipped }。
+# 途中で API エラーになった場合は undef を返す（last_error に詳細）。
+sub sync_commands {
+    my ($self, $application_id, $commands, %opts) = @_;
+
+    die "application id is required\n"
+        unless defined $application_id && length $application_id;
+    die "commands must be an array reference\n"
+        unless ref $commands eq 'ARRAY';
+
+    my $guild_id = $opts{guild_id};
+    if (defined $guild_id && !length $guild_id) {
+        die "guild id must not be empty\n";
+    }
+
+    my $remote = defined $guild_id
+        ? $self->get_guild_commands($application_id, $guild_id)
+        : $self->get_global_commands($application_id);
+
+    # 取得に失敗した場合は差分を計算しない
+    return undef unless defined $remote;
+
+    my $diff = diff_commands(
+        $commands, $remote,
+        prune => exists $opts{prune} ? $opts{prune} : 1,
+    );
+
+    my (@created, @updated, @deleted);
+
+    for my $command (@{ $diff->{create} }) {
+        my $result = defined $guild_id
+            ? $self->create_guild_command($application_id, $guild_id, $command)
+            : $self->create_global_command($application_id, $command);
+        return undef unless defined $result;
+        push @created, $result;
+    }
+
+    for my $entry (@{ $diff->{update} }) {
+        my $command_id = $entry->{remote}{id};
+        die "remote command has no id\n"
+            unless defined $command_id && length $command_id;
+
+        my $result = defined $guild_id
+            ? $self->edit_guild_command(
+                $application_id, $guild_id, $command_id, $entry->{local},
+            )
+            : $self->edit_global_command(
+                $application_id, $command_id, $entry->{local},
+            );
+        return undef unless defined $result;
+        push @updated, $result;
+    }
+
+    for my $command (@{ $diff->{delete} }) {
+        my $ok = defined $guild_id
+            ? $self->delete_guild_command(
+                $application_id, $guild_id, $command->{id},
+            )
+            : $self->delete_global_command($application_id, $command->{id});
+        return undef unless $ok;
+        push @deleted, $command;
+    }
+
+    return {
+        created   => \@created,
+        updated   => \@updated,
+        deleted   => \@deleted,
+        unchanged => $diff->{unchanged},
+        skipped   => $diff->{skipped},
+    };
 }
 
 # ---------------------------------------------------------------- oauth2

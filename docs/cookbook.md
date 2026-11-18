@@ -171,6 +171,10 @@ my $result = $client->method_name($id, %opts);
 | モーダルを出す | `reply_modal` | [インタラクション](interactions.md) |
 | 候補を返す（オートコンプリート） | `autocomplete_interaction` | [インタラクション](interactions.md) |
 | 追加のメッセージを送る | `create_followup_message` | [インタラクション](interactions.md) |
+| コマンドを定義する | `command` / `option` | [コマンド定義](commands.md) |
+| 差分だけを登録する | `sync_commands` | [コマンド定義](commands.md) |
+| コマンド / ボタンを振り分ける | `Disperl::Router` | [ルーター](router.md) |
+| クールダウンを付ける | `command(..., cooldown => 秒)` | [ルーター](router.md) |
 | コマンドを登録 / 削除する | `register_guild_commands` / `delete_guild_command` など | [インタラクション](interactions.md) |
 | コマンドの権限を設定する | `edit_application_command_permissions` | [アプリ情報](applications.md) |
 | アプリ情報を見る | `get_current_application` | [アプリ情報](applications.md) |
@@ -288,11 +292,52 @@ $client->edit_interaction_response($i->{application_id}, $i->{token}, '完了し
 $client->execute_webhook($webhook_id, $webhook_token, 'デプロイ完了', username => 'CI');
 ```
 
+### コマンドとボタンをルーターでまとめる
+
+```perl
+use Disperl::Commands qw(command option);
+use Disperl::Router;
+
+my @commands = (
+    command(name => 'ping', description => 'pong を返します'),
+    command(
+        name        => 'echo',
+        description => '本文をそのまま返します',
+        options     => [
+            option(name => 'text', description => '本文', type => 'string', required => 1),
+        ],
+    ),
+);
+
+# 差分だけを登録（guild_id を省略するとグローバル）
+$client->sync_commands($app_id, \@commands, guild_id => $guild_id);
+
+my $router = Disperl::Router->new(client => $client);
+$router->command(ping => sub { $_[0]->reply('pong', ephemeral => 1) });
+$router->command(echo => sub { $_[0]->reply($_[0]->option('text')) });
+
+# custom_id が 'vote:' で始まるボタン
+$router->component('vote' => sub {
+    my ($ctx) = @_;
+    $ctx->update('投票: ' . $ctx->arg(0));
+}, cooldown => 3);
+
+my $gw = Disperl::Gateway->new(
+    token   => $ENV{DISCORD_TOKEN},
+    intents => [qw(GUILDS)],
+    router  => $router,
+);
+
+$gw->run;
+```
+
 ## 関連ページ
 
 - [チュートリアル](tutorial.md)
 - [Client](client.md)
 - [メッセージ](messages.md)
 - [ページネーション](pagination.md)
+- [コマンド定義](commands.md)
+- [インタラクションルーター](router.md)
 - [制限値](limits.md)
 - [用語集](glossary.md)

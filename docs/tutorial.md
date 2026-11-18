@@ -224,6 +224,8 @@ on_command => sub {
 
 - ギルドコマンドは即時反映。グローバル（`register_global_commands`）は最大 1 時間
 - 引数（`options`）の定義やオートコンプリートは [インタラクション](interactions.md) を参照
+- 定義を組み立てて差分だけ登録するなら [コマンド定義](commands.md)
+- コマンド・ボタン・モーダルの振り分けをまとめるなら [インタラクションルーター](router.md)
 
 ## 7. 困ったとき
 
@@ -245,5 +247,7 @@ on_command => sub {
 - [Client](client.md)
 - [Gateway](gateway.md)
 - [インタラクション](interactions.md)
+- [コマンド定義](commands.md)
+- [インタラクションルーター](router.md)
 - [コンポーネント](components.md)
 - [トラブルシューティング](troubleshooting.md)

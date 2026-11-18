@@ -89,6 +89,23 @@
 | widget の `style` | 1〜5（`shield` / `banner1`〜`banner4`） | `get_guild_widget_image` |
 | アプリ絵文字の `name` | 2〜32 文字 | `create_application_emoji` など |
 
+## アプリケーションコマンド
+
+| 項目 | 上限 | 対象 |
+|---|---|---|
+| コマンド名 | 1〜32 文字（`CHAT_INPUT` は小文字かつ `-` / `_` / 文字 / 数字のみ） | `command` |
+| オプション名 | 1〜32 文字、小文字かつ `-` / `_` / 文字 / 数字のみ | `option` |
+| 説明 | 1〜100 文字（`USER` / `MESSAGE` は不要） | 同上 |
+| コマンド直下のオプション | 25 個 | `command` |
+| サブコマンドの子 | 25 個、`SUB_COMMAND` のみ（グループ） | `option` |
+| choices | 25 個、`STRING` / `INTEGER` / `NUMBER` のみ | `option` |
+| 文字列の choice | 1〜100 文字 | `option` |
+| `min_value` / `max_value` | ±2^53（`INTEGER` は整数） | `option` |
+| `channel_types` | 各値 0〜16 | `option` |
+| `integration_types` | 0〜1 | `command` |
+| `contexts` | 0〜2 | `command` |
+| 名前 / 説明のローカライズ | 32 / 100 文字（choice の名前は 100 文字） | `command` / `option` |
+
 ## ギルド設定・ウェルカム・オンボーディング
 
 | 項目 | 上限 | 対象メソッド |
@@ -281,4 +298,6 @@
 - [スケジュールイベント](events.md)
 - [Webhook](webhooks.md)
 - [インタラクション](interactions.md)
+- [コマンド定義](commands.md)
+- [インタラクションルーター](router.md)
 - [コンポーネント](components.md)

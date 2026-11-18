@@ -197,6 +197,9 @@ $client->autocomplete_interaction($i->{id}, $i->{token}, [
 
 ## コマンド登録
 
+`command` / `option` のビルダーと差分同期については [コマンド定義](commands.md) を参照してください。
+受信したインタラクションの振り分けは [インタラクションルーター](router.md) でまとめられます。
+
 ```perl
 use JSON::PP;
 
@@ -230,6 +233,7 @@ $client->delete_guild_command($app_id, $guild_id, $command_id);
 | `register_global_commands($app_id, \@commands)` | グローバルコマンドを登録 |
 | `get_guild_commands($app_id, $guild_id)` | 一覧 |
 | `get_global_commands($app_id)` | 一覧 |
+| `sync_commands($app_id, \@commands, %opts)` | 現在の登録内容と比べて差分だけを反映 |
 | `get_guild_command($app_id, $guild_id, $command_id)` | 1 件取得 |
 | `get_global_command($app_id, $command_id)` | 1 件取得 |
 | `create_guild_command($app_id, $guild_id, \%command)` | 1 件作成（upsert） |
@@ -240,9 +244,20 @@ $client->delete_guild_command($app_id, $guild_id, $command_id);
 | `delete_global_command($app_id, $command_id)` | 1 件削除 |
 
 - アプリケーション ID は Bot のユーザー ID と同じ（`$client->get_current_user->{id}`）
-- 登録は `PUT`（**配列を丸ごと置き換え**）。既存コマンドは消えるので注意
-- `name` と `description` は必須（無いと `die`）。`type` が `USER` (2) / `MESSAGE` (3) のときは `description` 不要
+- `register_*` は `PUT`（**配列を丸ごと置き換え**）。既存コマンドは消えるので注意
+- `name` は必須。`type` が `USER` (2) / `MESSAGE` (3) 以外は `description` も必須（無いと `die`）
 - ギルド登録は即時反映、グローバル登録は最大 1 時間かかる
+- 既存を消さずに差分だけ反映したいときは `sync_commands` を使う
+
+```perl
+my $result = $client->sync_commands(
+    $app_id, \@commands,
+    guild_id => $guild_id,     # 省略するとグローバル
+    prune    => 0,             # リモートにしか無いコマンドを消さない
+);
+
+print "created: ", scalar @{ $result->{created} }, "\n";
+```
 
 ### 1 件ずつ作成・編集する
 
@@ -264,6 +279,8 @@ $client->edit_guild_command($app_id, $guild_id, $command_id, { description => '�
 
 ## 関連ページ
 
+- [コマンド定義](commands.md)
+- [インタラクションルーター](router.md)
 - [Gateway](gateway.md)
 - [コンポーネント](components.md)
 - [メッセージ](messages.md)

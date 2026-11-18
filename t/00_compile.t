@@ -20,5 +20,6 @@ use_ok('Disperl::RoleConnection');
 use_ok('Disperl::Integration');
 use_ok('Disperl::WebSocket');
 use_ok('Disperl::Gateway');
+use_ok('Disperl::Router');
 
 done_testing;

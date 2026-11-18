@@ -189,6 +189,18 @@ sub new {
         $capabilities = $value + 0;
     }
 
+    # Router を渡すと、インタラクション系のコールバックをまとめて設定できる。
+    # 個別の on_* を明示した場合はそちらを優先する。
+    if (my $router = $args{router}) {
+        die "router must provide callbacks\n"
+            unless $router->can('callbacks');
+
+        my %callbacks = $router->callbacks;
+        for my $key (sort keys %callbacks) {
+            $args{$key} = $callbacks{$key} unless defined $args{$key};
+        }
+    }
+
     # 型付きコールバックを引数から拾う（on_message など）
     my %typed;
     {

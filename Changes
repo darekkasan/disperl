@@ -14,8 +14,13 @@
 - Gateway: Identify / Resume / Heartbeat・自動再接続（指数バックオフ・ゾンビ検出）・
   プレゼンス・型付きコールバック・member chunking・シャーディング
 - コンポーネント（ボタン / セレクト / Components V2 / モーダル）と `Disperl::Components`
+- インタラクションルーター（`Disperl::Router`）: コマンドパス・コンポーネント
+  （完全一致 / 前方一致 / 正規表現）・モーダル・オートコンプリート・クールダウン・エラー隔離
+- コマンド定義ビルダー（`Disperl::Commands` の `command` / `option`）と検証・
+  差分計算（`diff_commands`）・差分同期（`Client::sync_commands`）
 - 権限計算（`Disperl::Permissions`）・監査ログ・AutoMod・Entitlements・OAuth2 ほか
-- 動作確認 CLI（`test.pl`）と実行サンプル（`examples/`）
+- 動作確認 CLI（`test.pl`）と実行サンプル（`examples/`）。`test.pl commands --sync`
+  （`--keep` で削除しない）と `examples/router_bot.pl` を含む
 - テストスイート（`prove -l t`。ネットワーク不要）・pre-commit フック（`tools/`）
 
 ### 変更
@@ -34,3 +39,5 @@
 - スレッド / フォーラム投稿作成時の `rate_limit_per_user` 検証漏れ
 - Gateway の汎用クローズで待たずに再接続を繰り返す問題（最低 1 秒待つ）
 - アクティビティの `emoji` の検証漏れ（ハッシュ以外・name / id なしを受け付けていた）
+- コマンドの一括登録が全件に `description` を要求し、USER / MESSAGE の
+  コンテキストメニューを登録できなかった問題（`Disperl::Commands` の検証に統一）

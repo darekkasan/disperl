@@ -47,6 +47,8 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - Components V2（Container / Section / Text Display / Media Gallery / File / モーダル V2）
 - モーダル（入力フォーム）とオートコンプリート
 - スラッシュコマンドの登録と受信
+- インタラクションルーター（`Disperl::Router`）でコマンド・ボタン・モーダル・オートコンプリートを振り分け
+- コマンド定義ビルダー（`command` / `option`）と差分同期（`sync_commands`）
 
 ## 必要環境
 
@@ -135,7 +137,8 @@ if ($message) {
 | `Disperl::Forum` | フォーラム / メディアのレイアウト・並び順・タグの検証 |
 | `Disperl::Sticker` | ステッカーの種別・画像形式 |
 | `Disperl::Stage` | ステージインスタンスの公開範囲 |
-| `Disperl::Commands` | コマンド権限の対象種別 |
+| `Disperl::Commands` | コマンド / オプション定義のビルダー・検証・差分計算・コマンド権限の対象種別 |
+| `Disperl::Router` | インタラクションのルーター（コマンド / コンポーネント / モーダル / オートコンプリート） |
 | `Disperl::Guild` | ギルド設定・オンボーディングの種別 |
 | `Disperl::Entitlement` | Entitlement / SKU の種別 |
 | `Disperl::RoleConnection` | ロール連携メタデータの種別 |
@@ -172,6 +175,8 @@ if ($message) {
 | [ギルド・ユーザー・招待](docs/guilds.md) | ギルド情報・メンバー・DM・招待 |
 | [Webhook](docs/webhooks.md) | 実行・管理・送信済みメッセージ |
 | [インタラクション](docs/interactions.md) | ボタン・モーダル・オートコンプリート・コマンド登録 |
+| [コマンド定義](docs/commands.md) | `command` / `option` のビルダー・検証・差分同期 |
+| [インタラクションルーター](docs/router.md) | コマンド・ボタン・モーダル・オートコンプリートの振り分け |
 | [Gateway](docs/gateway.md) | 接続・イベント・Intent・プレゼンス・再接続 |
 | [コンポーネント](docs/components.md) | ボタン・セレクト・モーダルの組み立て |
 | [設定](docs/config.md) | `.env` の書式と優先順位 |
@@ -378,6 +383,40 @@ my $gw = Disperl::Gateway->new(
 $gw->run;
 ```
 
+コマンド定義と振り分けをまとめるなら、`Disperl::Commands` と `Disperl::Router` を使います。
+
+```perl
+use Disperl::Commands qw(command option);
+use Disperl::Router;
+
+my @commands = (
+    command(name => 'ping', description => 'pong を返します'),
+    command(
+        name        => 'echo',
+        description => '本文をそのまま返します',
+        options     => [
+            option(name => 'text', description => '本文', type => 'string', required => 1),
+        ],
+    ),
+);
+
+$client->sync_commands($app_id, \@commands, guild_id => $guild_id);
+
+my $router = Disperl::Router->new(client => $client);
+$router->command(ping => sub { $_[0]->reply('pong', ephemeral => 1) });
+$router->command(echo => sub { $_[0]->reply($_[0]->option('text')) });
+
+my $gw = Disperl::Gateway->new(
+    token   => $ENV{DISCORD_TOKEN},
+    intents => [qw(GUILDS)],
+    router  => $router,
+);
+
+$gw->run;
+```
+
+詳しくは [コマンド定義](docs/commands.md) と [インタラクションルーター](docs/router.md) を参照してください。
+
 ## CLI
 
 `test.pl` はそのまま使える確認用 CLI です。
@@ -402,6 +441,7 @@ perl test.pl automod                          # AutoMod ルール一覧
 perl test.pl automod-create "スパム対策" --trigger KEYWORD --keyword spam --block
 perl test.pl event-create "定例会" --start 2026-12-01T20:00:00Z --end 2026-12-01T22:00:00Z --location Discord
 perl test.pl commands              # /ping /echo /poll /form を登録
+perl test.pl commands --sync       # 差分だけを反映（--keep で削除しない）
 perl test.pl watch                 # Gateway で受信
 ```
 

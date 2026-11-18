@@ -25,6 +25,7 @@ my @modules = qw(
     Disperl::Integration
     Disperl::Permissions
     Disperl::RoleConnection
+    Disperl::Router
     Disperl::Stage
     Disperl::Sticker
     Disperl::WebSocket

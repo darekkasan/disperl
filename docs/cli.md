@@ -603,16 +603,21 @@ perl test.pl webhook-message-delete <ID> <トークン> <メッセージID>
 ```sh
 perl test.pl commands              # /ping /echo /poll /form をギルドに登録
 perl test.pl commands --list       # 登録済みコマンドの一覧
+perl test.pl commands --sync       # 差分だけを反映（作成 / 更新 / 削除）
+perl test.pl commands --sync --keep  # 削除はせず、作成 / 更新だけ
 perl test.pl commands --global     # グローバルに登録（反映に最大 1 時間）
 ```
 
 | オプション | 説明 |
 |---|---|
 | `--list` | 登録せず一覧を表示する |
+| `--sync` | 現在の登録内容と比べて差分だけを反映する |
+| `--keep` | `--sync` のとき、リモートにしか無いコマンドを削除しない |
 | `--global` | グローバルに登録する（既定は現在のギルド） |
 | `--guild <ID>` / `--guild=<ID>` | 対象ギルドを指定する |
 
-> 登録は `PUT`（丸ごと置き換え）です。既存のギルドコマンドは消えます。
+> 通常の登録は `PUT`（丸ごと置き換え）です。既存のギルドコマンドは消えます。
+> 消したくないときは `--sync` を使います。詳しくは [コマンド定義](commands.md) を参照してください。
 
 ## watch
 
