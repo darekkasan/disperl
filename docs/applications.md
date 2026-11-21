@@ -38,6 +38,8 @@ $client->update_current_application(
 - `description` は 400 文字まで、`tags` は配列（最大 5 個）
 - `icon` / `cover_image` はファイルパスまたは data URI、`undef` で解除
 - `event_webhooks_status` は `1`（無効）/ `2`（有効）
+- `interactions_endpoint_url` を設定すると Gateway の代わりに HTTP で
+  インタラクションを受けられます（[HTTP インタラクション](http-interactions.md)）
 
 ### Activities
 

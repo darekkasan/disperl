@@ -20,6 +20,11 @@
   差分計算（`diff_commands`）・差分同期（`Client::sync_commands`）
 - OAuth2 認可コードフロー（`Disperl::OAuth2`）: PKCE（S256）・`state` の生成 / 検証・
   トークン交換 / 更新 / 失効と CLI（`test.pl oauth2-*`）
+- HTTP インタラクション（`Disperl::HttpInteractions`）: Interactions Endpoint URL での受信。
+  Ed25519 署名検証（`Crypt::PK::Ed25519` / `verifier` で差し替え可）・PING 応答・
+  ルーター委譲とインライン応答・内蔵サーバー（`run` / `serve_once`）・
+  ボディ上限とタイムスタンプ経過チェック（`max_body` / `max_timestamp_age`）・
+  CLI（`test.pl http-interactions`）とサンプル（`examples/http_interactions.pl`）
 - 権限計算（`Disperl::Permissions`）・監査ログ・AutoMod・Entitlements・OAuth2 ほか
 - 動作確認 CLI（`test.pl`）と実行サンプル（`examples/`）。`test.pl commands --sync`
   （`--keep` で削除しない）と `examples/router_bot.pl` を含む。

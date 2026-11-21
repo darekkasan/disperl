@@ -48,6 +48,7 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - モーダル（入力フォーム）とオートコンプリート
 - スラッシュコマンドの登録と受信
 - インタラクションルーター（`Disperl::Router`）でコマンド・ボタン・モーダル・オートコンプリートを振り分け
+- HTTP インタラクション（`Disperl::HttpInteractions`）で Ed25519 署名検証・PING 応答。Gateway なしで受信
 - コマンド定義ビルダー（`command` / `option`）と差分同期（`sync_commands`）
 - OAuth2 認可コードフロー（PKCE 対応。`Disperl::OAuth2`）でトークン取得・更新・失効
 
@@ -140,6 +141,7 @@ if ($message) {
 | `Disperl::Stage` | ステージインスタンスの公開範囲 |
 | `Disperl::Commands` | コマンド / オプション定義のビルダー・検証・差分計算・コマンド権限の対象種別 |
 | `Disperl::Router` | インタラクションのルーター（コマンド / コンポーネント / モーダル / オートコンプリート） |
+| `Disperl::HttpInteractions` | Interactions Endpoint URL の受信（Ed25519 署名検証・PING 応答・内蔵サーバー） |
 | `Disperl::OAuth2` | 認可コードフロー（PKCE）・トークン交換 / 更新 / 失効 |
 | `Disperl::Guild` | ギルド設定・オンボーディングの種別 |
 | `Disperl::Entitlement` | Entitlement / SKU の種別 |
@@ -179,6 +181,7 @@ if ($message) {
 | [インタラクション](docs/interactions.md) | ボタン・モーダル・オートコンプリート・コマンド登録 |
 | [コマンド定義](docs/commands.md) | `command` / `option` のビルダー・検証・差分同期 |
 | [インタラクションルーター](docs/router.md) | コマンド・ボタン・モーダル・オートコンプリートの振り分け |
+| [HTTP インタラクション](docs/http-interactions.md) | Interactions Endpoint URL での受信（Ed25519 署名・PING 応答） |
 | [Gateway](docs/gateway.md) | 接続・イベント・Intent・プレゼンス・再接続 |
 | [コンポーネント](docs/components.md) | ボタン・セレクト・モーダルの組み立て |
 | [設定](docs/config.md) | `.env` の書式と優先順位 |
@@ -518,6 +521,7 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - Webhook の管理と送信済みメッセージの取得・編集・削除
 - Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス / 型付きコールバック / member chunking / シャーディング / capabilities
 - インタラクション: ボタン・セレクト・モーダル・オートコンプリート・フォローアップ
+- HTTP インタラクション: Interactions Endpoint URL での受信（Ed25519 署名検証・PING 応答・`Disperl::HttpInteractions`）
 - Components V2: Container / Section / Text Display / Media Gallery / File / Separator / モーダル V2
 - スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）
 - レート制限: バケット単位・major parameter・429 / 5xx リトライ

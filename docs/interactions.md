@@ -281,6 +281,7 @@ $client->edit_guild_command($app_id, $guild_id, $command_id, { description => '�
 
 - [コマンド定義](commands.md)
 - [インタラクションルーター](router.md)
+- [HTTP インタラクション](http-interactions.md)
 - [Gateway](gateway.md)
 - [コンポーネント](components.md)
 - [メッセージ](messages.md)

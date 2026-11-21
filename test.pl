@@ -31,6 +31,8 @@ use Disperl::Guild qw(guild_onboarding_mode_name guild_screening_field_name);
 use Disperl::Entitlement qw(sku_type_name);
 use Disperl::RoleConnection qw(role_connection_type_name);
 use Disperl::Integration qw(integration_type_name);
+use Disperl::HttpInteractions;
+use Disperl::Router;
 use Disperl::OAuth2;
 
 load_dotenv("$FindBin::Bin/.env");
@@ -224,6 +226,7 @@ my @HELP_CATEGORIES = (
     [ interaction => qr/^(commands|command)/, 'コマンド登録・権限' ],
     [ voice       => qr/^(voice-status|voice-state|stage|follow|me(-edit)?$|my-guilds|my-member|leave-guild|activity-instance)/, 'ボイス・ステージ・プロフィール' ],
     [ oauth       => qr/^(oauth-|oauth2-|connections|group-dm-)/, 'OAuth2・グループ DM' ],
+    [ http        => qr/^http-/, 'HTTP インタラクション' ],
     [ invite      => qr/^target-/, '招待のターゲットユーザー' ],
     [ watch       => qr/^watch$/, 'Gateway 受信（watch）' ],
     [ misc        => qr/.*/, 'その他' ],
@@ -432,6 +435,9 @@ disperl 動作確認 CLI
   perl test.pl oauth2-revoke <トークン> --client-id ID [--client-secret S]
       [--token-type-hint access_token|refresh_token]
                                        トークンを失効させる
+  perl test.pl http-interactions <公開鍵> [--port 8080] [--host 127.0.0.1]
+                                       Interactions Endpoint のサーバーを立てる
+                                       （署名検証と PING 応答。トークンがあれば /ping にも応答）
   perl test.pl connections --bearer <トークン>  連携アカウント一覧
   perl test.pl group-dm-add <チャンネルID> <ユーザーID> <アクセストークン> [--nick 名前]
                                        グループ DM に追加する
@@ -3285,6 +3291,66 @@ sub cmd_oauth2_revoke {
     return 0;
 }
 
+# Interactions Endpoint URL 用のローカルサーバーを立てる。
+# トークンがあればルーター経由でコマンドに応答し、なければ PING のみ。
+sub cmd_http_interactions {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(port host public-key)]);
+
+    my $public_key = $opt->{'public-key'} // shift @$pos
+        // $ENV{DISCORD_PUBLIC_KEY};
+    _fatal('使い方: perl test.pl http-interactions <公開鍵> [--port 8080] [--host 127.0.0.1]')
+        unless defined $public_key && length $public_key;
+
+    my $router;
+    if (defined $ENV{DISCORD_TOKEN} && length $ENV{DISCORD_TOKEN}) {
+        $router = Disperl::Router->new(client => client());
+        $router->command('ping' => sub { $_[0]->reply('pong!') });
+        out "ルーター: /ping を登録しました（Bot トークンを使用）\n";
+    } else {
+        out "DISCORD_TOKEN がないため PING 応答のみ有効です\n";
+    }
+
+    my $http = eval {
+        Disperl::HttpInteractions->new(
+            public_key => $public_key,
+            defined $router ? (router => $router) : (),
+        );
+    };
+    _fatal($@) if !$http && defined $@ && $@ ne '';
+
+    my %run;
+    $run{host} = $opt->{host} if defined $opt->{host};
+    if (defined $opt->{port}) {
+        _fatal('--port は数字で指定してください')
+            unless $opt->{port} =~ /^\d+\z/;
+        $run{port} = $opt->{port} + 0;
+    }
+    $run{on_ready} = sub {
+        my ($url) = @_;
+        out "待ち受け中: $url（Ctrl+C で終了）\n";
+        out "Developer Portal の「Interactions Endpoint URL」に\n";
+        out "公開 URL（トンネルなど）を設定すると疎通確認できます\n";
+    };
+    $run{on_request} = sub {
+        my ($info) = @_;
+        out sprintf "[%s] %s %s -> %s (type: %s)\n",
+            _format_time(time()),
+            $info->{method}  // '?',
+            $info->{path}    // '?',
+            $info->{status}  // '?',
+            defined $info->{interaction_type} ? $info->{interaction_type} : '-';
+    };
+
+    local $SIG{INT} = sub {
+        out "\n終了します...\n";
+        $http->stop;
+    };
+
+    $http->run(%run);
+    return 0;
+}
+
 sub cmd_connections {
     my @args = map { _decode_arg($_) } @_;
     my ($opt) = _parse_options(\@args, [qw(bearer)]);
@@ -6025,6 +6091,7 @@ my %COMMANDS = (
     'oauth2-code'    => \&cmd_oauth2_code,
     'oauth2-refresh' => \&cmd_oauth2_refresh,
     'oauth2-revoke'  => \&cmd_oauth2_revoke,
+    'http-interactions' => \&cmd_http_interactions,
     connections    => \&cmd_connections,
     'group-dm-add'    => \&cmd_group_dm_add,
     'group-dm-remove' => \&cmd_group_dm_remove,

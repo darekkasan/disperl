@@ -29,6 +29,7 @@ load_dotenv("$FindBin::Bin/.env");
 | `DISCORD_APPLICATION_ID` | 省略可 | アプリケーション ID。未設定なら Bot のユーザー ID を使う |
 | `DISCORD_CLIENT_ID` | 省略可 | OAuth2 のクライアント ID（[OAuth2](oauth2.md) の例で使用） |
 | `DISCORD_CLIENT_SECRET` | 省略可 | OAuth2 のクライアントシークレット（**コミットしない**） |
+| `DISCORD_PUBLIC_KEY` | 省略可 | アプリの Public Key（[HTTP インタラクション](http-interactions.md) で使用） |
 
 ```sh
 DISCORD_TOKEN=xxxxxxxx
@@ -36,6 +37,7 @@ DISCORD_CHANNEL_ID=123456789012345678
 # DISCORD_APPLICATION_ID=123456789012345678
 # DISCORD_CLIENT_ID=123456789012345678
 # DISCORD_CLIENT_SECRET=xxxxxxxx
+# DISCORD_PUBLIC_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 ## 書式

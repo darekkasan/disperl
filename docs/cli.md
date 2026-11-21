@@ -21,6 +21,7 @@
 - [スケジュールイベント](#スケジュールイベント)
 - [ギルド・Webhook](#ギルドwebhook)
 - [コマンド登録](#コマンド登録)
+- [HTTP インタラクション](#http-インタラクション)
 - [watch](#watch)
 - [表示・引数のエンコーディング](#表示引数のエンコーディング)
 - [関連ページ](#関連ページ)
@@ -626,6 +627,25 @@ perl test.pl commands --global     # グローバルに登録（反映に最大 
 > 通常の登録は `PUT`（丸ごと置き換え）です。既存のギルドコマンドは消えます。
 > 消したくないときは `--sync` を使います。詳しくは [コマンド定義](commands.md) を参照してください。
 
+## HTTP インタラクション
+
+Interactions Endpoint URL 用のローカルサーバーを立てます
+（[HTTP インタラクション](http-interactions.md)）。
+
+```sh
+perl test.pl http-interactions <公開鍵> [--port 8080] [--host 127.0.0.1]
+```
+
+| 項目 | 説明 |
+|---|---|
+| `<公開鍵>` | Developer Portal の Public Key。省略すると `DISCORD_PUBLIC_KEY` |
+| `--port` | 待ち受けポート（既定 8080） |
+| `--host` | 待ち受けアドレス（既定 127.0.0.1） |
+
+- PING（type 1）に自動応答します（エンドポイント登録の疎通確認）
+- `DISCORD_TOKEN` があれば `/ping` コマンドに REST で応答します
+- 公開 URL は tunnel などで用意してください（ページ本文を参照）
+
 ## watch
 
 Gateway に接続してイベントを待ち受けます。
@@ -675,6 +695,7 @@ perl test.pl history
 ## 関連ページ
 
 - [Client](client.md)
+- [HTTP インタラクション](http-interactions.md)
 - [Gateway](gateway.md)
 - [チャンネル管理](channels.md)
 - [フォーラム / メディア](forums.md)
