@@ -123,7 +123,7 @@ if ($message) {
 
 - 成功時はハッシュ / 配列 / `1`、失敗時は `undef`。詳細は `last_error`
 - 引数不足や上限超過は**送信前に `die`**（API エラーとは別）
-- 動くサンプル（送信・Gateway・コマンド・ボタン）は [`examples/`](examples/README.md) にあります
+- 動くサンプル（送信・embed・ファイル・投票・Gateway・コマンド・モーダル・OAuth2 など）は [`examples/`](examples/README.md) にあります
 
 ## モジュール構成
 
@@ -154,7 +154,7 @@ if ($message) {
 |---|---|
 | [チュートリアル](docs/tutorial.md) | はじめての Bot（送信 → ボタン → Gateway → コマンド） |
 | [逆引き](docs/cookbook.md) | やりたいことからメソッドを探す |
-| [実行サンプル](examples/README.md) | send / Gateway / コマンド / ボタンの動く例 |
+| [実行サンプル](examples/README.md) | 送信・embed・ファイル・投票・Gateway・コマンド・モーダル・OAuth2 の動く例 |
 | [Client](docs/client.md) | コンストラクタ・戻り値・エラー・レート制限 |
 | [ページネーション](docs/pagination.md) | `each_*` で一覧を自動で辿る |
 | [メッセージ](docs/messages.md) | embed・コンポーネント・添付ファイル・投票 |

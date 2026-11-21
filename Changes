@@ -22,7 +22,9 @@
   トークン交換 / 更新 / 失効と CLI（`test.pl oauth2-*`）
 - 権限計算（`Disperl::Permissions`）・監査ログ・AutoMod・Entitlements・OAuth2 ほか
 - 動作確認 CLI（`test.pl`）と実行サンプル（`examples/`）。`test.pl commands --sync`
-  （`--keep` で削除しない）と `examples/router_bot.pl` を含む
+  （`--keep` で削除しない）と `examples/router_bot.pl` を含む。
+  embed / 投票・ファイル添付・Components V2・ページネーション・フォーラム投稿・
+  OAuth2 ログイン・セレクトメニュー・モーダル・オートコンプリートのサンプルを追加
 - テストスイート（`prove -l t`。ネットワーク不要）・pre-commit フック（`tools/`）
 
 ### 変更

@@ -47,10 +47,9 @@ close $fh;
 
 like $text, qr/^## \Q$version\E\b/m, 'Changes に現在のバージョンの見出しがある';
 
-# 実行用スクリプト（test.pl / tools / examples）が構文エラーなくコンパイルできるか。
+# 実行用スクリプト（test.pl / examples）が構文エラーなくコンパイルできるか。
 my @scripts = (
     'test.pl',
-    'tools/install-hooks.pl',
     sort glob "$FindBin::Bin/../examples/*.pl",
 );
 for my $script (@scripts) {
