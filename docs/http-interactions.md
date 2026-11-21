@@ -30,10 +30,14 @@ POST してきます。
 エンドポイント登録時には `{"type":1}`（PING）が送られ、`{"type":1}` を返すと
 有効化されます。
 
+- **HTTP サーバー部分は core モジュールのみ**で動きます
+  （`IO::Socket::INET` / `IO::Select`。Gateway が使う `IO::Socket::SSL` も不要）
 - 署名検証には `Crypt::PK::Ed25519`（CryptX バンドル）が必要です
   （未インストールの場合は `handle` が 500 を返し、`last_error` に
   `{ error => 'no_engine' }` が入ります。`cpanm CryptX` で導入できます）
 - `verifier` にコードリファレンスを渡せば、検証処理を差し替えられます
+  （Pure Perl 製の Ed25519 実装に差し替えることも可能ですが、
+  検証に秒単位かかるため Discord の 3 秒応答ルール上おすすめしません）
 
 ## 最小の構成
 

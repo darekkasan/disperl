@@ -49,6 +49,7 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - スラッシュコマンドの登録と受信
 - インタラクションルーター（`Disperl::Router`）でコマンド・ボタン・モーダル・オートコンプリートを振り分け
 - HTTP インタラクション（`Disperl::HttpInteractions`）で Ed25519 署名検証・PING 応答。Gateway なしで受信
+  （検証エンジンは `Crypt::PK::Ed25519`。HTTP サーバー部分は core のみ）
 - コマンド定義ビルダー（`command` / `option`）と差分同期（`sync_commands`）
 - OAuth2 認可コードフロー（PKCE 対応。`Disperl::OAuth2`）でトークン取得・更新・失効
 
@@ -59,7 +60,10 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
   （`HTTP::Tiny` / `JSON::PP` / `Encode` / `Time::HiRes`）
 - `Disperl::Gateway` は `IO::Socket::SSL` を使用
   （Strawberry Perl に同梱。HTTPS を使う時点で実質必須）
+- `Disperl::HttpInteractions` の署名検証は `Crypt::PK::Ed25519`（CryptX）を使用
+  （内蔵 HTTP サーバー部分は core のみ。`verifier` で検証処理を差し替え可）
 - テストは `Test::More`（core）のみ
+  （Ed25519 のテストは `Crypt::PK::Ed25519` が無い環境ではスキップ）
 
 Windows で管理者権限が無い場合は、Strawberry Perl のポータブル版を
 ASCII のみのパスに置き、`c\bin` を `PATH` に追加してください。
@@ -141,7 +145,7 @@ if ($message) {
 | `Disperl::Stage` | ステージインスタンスの公開範囲 |
 | `Disperl::Commands` | コマンド / オプション定義のビルダー・検証・差分計算・コマンド権限の対象種別 |
 | `Disperl::Router` | インタラクションのルーター（コマンド / コンポーネント / モーダル / オートコンプリート） |
-| `Disperl::HttpInteractions` | Interactions Endpoint URL の受信（Ed25519 署名検証・PING 応答・内蔵サーバー） |
+| `Disperl::HttpInteractions` | Interactions Endpoint URL の受信（Ed25519 署名検証・PING 応答・内蔵サーバー）。署名検証は `Crypt::PK::Ed25519`（CryptX）、`verifier` で差し替え可 |
 | `Disperl::OAuth2` | 認可コードフロー（PKCE）・トークン交換 / 更新 / 失効 |
 | `Disperl::Guild` | ギルド設定・オンボーディングの種別 |
 | `Disperl::Entitlement` | Entitlement / SKU の種別 |
@@ -521,7 +525,8 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - Webhook の管理と送信済みメッセージの取得・編集・削除
 - Gateway: Identify / Resume / Heartbeat / 再接続 / プレゼンス / 型付きコールバック / member chunking / シャーディング / capabilities
 - インタラクション: ボタン・セレクト・モーダル・オートコンプリート・フォローアップ
-- HTTP インタラクション: Interactions Endpoint URL での受信（Ed25519 署名検証・PING 応答・`Disperl::HttpInteractions`）
+- HTTP インタラクション: Interactions Endpoint URL での受信（Ed25519 署名検証・PING 応答・`Disperl::HttpInteractions`。
+  検証は `Crypt::PK::Ed25519`（CryptX）、HTTP サーバー部分は core のみ）
 - Components V2: Container / Section / Text Display / Media Gallery / File / Separator / モーダル V2
 - スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）
 - レート制限: バケット単位・major parameter・429 / 5xx リトライ
