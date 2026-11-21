@@ -25,7 +25,7 @@ $root = "$env:LOCALAPPDATA\Programs\strawberry-perl"
 $env:PATH = "$root\c\bin;$root\perl\bin;$root\perl\site\bin;$root\perl\vendor\bin;$env:PATH"
 ```
 
-恒久的にはユーザー PATH に追加してください（[開発](development.md)）。
+恒久的にはユーザー PATH に追加してください。
 
 ### `perl` が見つからない
 
@@ -238,4 +238,3 @@ prove -l t
 - [Client](client.md)
 - [Gateway](gateway.md)
 - [設定](config.md)
-- [開発](development.md)

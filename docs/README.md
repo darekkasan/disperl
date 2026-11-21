@@ -61,10 +61,8 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | [設定](config.md) | `.env` の読み込みルール |
 | [CLI](cli.md) | `test.pl` の全コマンド |
 | [制限値](limits.md) | 送信前に検証される上限の一覧 |
-| [開発](development.md) | 環境構築・テスト・リリース作業 |
 | [トラブルシューティング](troubleshooting.md) | よくある失敗と対処 |
 | [用語集](glossary.md) | Discord API の用語 |
-| [Wiki 移行](wiki.md) | GitHub Wiki へのコピーとリンク置換 |
 
 ## 最小例
 
@@ -145,13 +143,6 @@ if ($message) {
 - 音声（Voice）接続
 - ギルドの作成 / 削除（ユーザーアカウントの操作）
 - ユーザーアプリ / 埋め込みアプリ
-
-## Wiki への移行
-
-各ファイルが 1 ページになる想定です（見出し `#` がページタイトル）。
-`docs/README.md` は `Home`、ページ間リンクは Wiki のページ名に置き換えます。
-
-コピー手順とリンク置換のスクリプトは [Wiki 移行](wiki.md) を参照してください。
 
 ## 関連
 

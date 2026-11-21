@@ -76,5 +76,4 @@ DISCORD_TOKEN=xxx perl test.pl check
 
 ## 関連ページ
 
-- [開発](development.md)
 - [トラブルシューティング](troubleshooting.md)

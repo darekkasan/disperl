@@ -4,6 +4,13 @@
 .env.*.local
 *.token
 
+# 配布物に含めない開発者向けファイル（ローカルには残す）
+/docs/development.md
+/docs/wiki.md
+/.perlcriticrc
+/.perltidyrc
+/tools/
+
 # Perl関連
 blib/
 Makefile

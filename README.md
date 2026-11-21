@@ -60,8 +60,8 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
   （Strawberry Perl に同梱。HTTPS を使う時点で実質必須）
 - テストは `Test::More`（core）のみ
 
-Windows で管理者権限が無い場合の導入手順は
-[開発環境](docs/development.md#環境構築) を参照してください。
+Windows で管理者権限が無い場合は、Strawberry Perl のポータブル版を
+ASCII のみのパスに置き、`c\bin` を `PATH` に追加してください。
 
 ## セットアップ
 
@@ -184,10 +184,8 @@ if ($message) {
 | [設定](docs/config.md) | `.env` の書式と優先順位 |
 | [CLI](docs/cli.md) | `test.pl` の全コマンド |
 | [制限値](docs/limits.md) | 送信前に検証される上限 |
-| [開発](docs/development.md) | 環境構築・テスト・リリース |
 | [トラブルシューティング](docs/troubleshooting.md) | 症状別の対処 |
 | [用語集](docs/glossary.md) | Discord API の用語 |
-| [Wiki 移行](docs/wiki.md) | GitHub Wiki へのコピーとリンク置換 |
 
 ## よく使う操作
 
@@ -458,8 +456,6 @@ prove -l t
 - ネットワーク不要（`ua` と WebSocket を偽オブジェクトに差し替え）
 - `t/` から `.env` は読みません
 - `Makefile.PL` は不要です。`prove -l t` と `perl test.pl` で完結します
-
-テスト構成は [開発](docs/development.md#テスト) を参照してください。
 
 ## 注意事項
 

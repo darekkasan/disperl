@@ -9,9 +9,6 @@
 *.json text
 *.yml  text
 
-# フックは Git for Windows 同梱の sh で動かすため LF 固定
-tools/hooks/* text eol=lf
-
 # バイナリは変換しない
 *.png  binary
 *.jpg  binary
