@@ -18,6 +18,8 @@
   （完全一致 / 前方一致 / 正規表現）・モーダル・オートコンプリート・クールダウン・エラー隔離
 - コマンド定義ビルダー（`Disperl::Commands` の `command` / `option`）と検証・
   差分計算（`diff_commands`）・差分同期（`Client::sync_commands`）
+- OAuth2 認可コードフロー（`Disperl::OAuth2`）: PKCE（S256）・`state` の生成 / 検証・
+  トークン交換 / 更新 / 失効と CLI（`test.pl oauth2-*`）
 - 権限計算（`Disperl::Permissions`）・監査ログ・AutoMod・Entitlements・OAuth2 ほか
 - 動作確認 CLI（`test.pl`）と実行サンプル（`examples/`）。`test.pl commands --sync`
   （`--keep` で削除しない）と `examples/router_bot.pl` を含む

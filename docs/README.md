@@ -18,6 +18,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | `Disperl::Stage` | ステージインスタンスの公開範囲 | core のみ |
 | `Disperl::Commands` | コマンド / オプション定義のビルダー・検証・差分計算・コマンド権限の対象種別 | core のみ |
 | `Disperl::Router` | インタラクションのルーター（コマンド / コンポーネント / モーダル / オートコンプリート） | core のみ |
+| `Disperl::OAuth2` | 認可コードフロー（PKCE）・トークン交換 / 更新 / 失効 | core のみ |
 | `Disperl::Guild` | ギルド設定・オンボーディングの種別 | core のみ |
 | `Disperl::Entitlement` | Entitlement / SKU の種別 | core のみ |
 | `Disperl::RoleConnection` | ロール連携メタデータの種別 | core のみ |
@@ -44,7 +45,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | [ギルド管理（審査・連携・所属）](guild-admin.md) | メンバー審査・連携・ボイスリージョン・一括 BAN・所属ギルド |
 | [Entitlements / SKU](entitlements.md) | 課金・Entitlement・SKU・サブスクリプション |
 | [ロール連携メタデータ](role-connections.md) | Linked Roles のメタデータ設定 |
-| [OAuth2 / ユーザー連携](oauth2.md) | Bearer トークンの取得・失効・連携アカウント・ユーザーのロール連携 |
+| [OAuth2 / ユーザー連携](oauth2.md) | 認可コード + PKCE・トークン交換 / 更新 / 失効・連携アカウント・ロール連携 |
 | [ロール管理](roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
 | [メンバー管理](members.md) | 一覧・検索・変更・ロール付与・キック / BAN・プルーン・実効権限 |
 | [監査ログ](audit-log.md) | 取得・絞り込み・ページング・イベント種別・変更内容 |
@@ -115,7 +116,7 @@ if ($message) {
 - ページネーション（`each_message` / `each_guild_member` / `each_guild_ban` / `each_audit_log_entry`）
 - `send_message` / `edit_message` への添付統合（`files` / `files_data`）・添付メタデータの自動生成・MIME 表の拡充
 - サブスクリプション単体取得・サウンドボード再生・Slack / GitHub 互換 Webhook
-- OAuth2: クライアントクレデンシャルズ・Bearer エンドポイント（連携 / ロール連携）・グループ DM・OAuth2 メンバー追加
+- OAuth2: 認可コード + PKCE（`Disperl::OAuth2`）・クライアントクレデンシャルズ・Bearer エンドポイント（連携 / ロール連携）・グループ DM・OAuth2 メンバー追加
 - Activities: アクティビティインスタンス・`LAUNCH_ACTIVITY`（type 12）
 - Entitlements / SKU / Subscriptions（`Disperl::Entitlement`）
 - ロール連携メタデータ（`Disperl::RoleConnection`）
@@ -142,7 +143,6 @@ if ($message) {
 ### 未対応
 
 - 音声（Voice）接続
-- OAuth2 の認可コードフロー本体（トークン交換は外部で行い、Bearer を渡す設計）
 - ギルドの作成 / 削除（ユーザーアカウントの操作）
 - ユーザーアプリ / 埋め込みアプリ
 

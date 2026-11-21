@@ -209,7 +209,8 @@ my $result = $client->method_name($id, %opts);
 | SKU / サブスクリプションを見る | `get_skus` / `get_sku_subscriptions` / `get_subscription` | [Entitlements](entitlements.md) |
 | ロール連携メタデータを設定する | `update_application_role_connection_metadata` | [ロール連携](role-connections.md) |
 | ユーザーのロール連携を更新する | `update_user_role_connection` | [ロール連携](role-connections.md) |
-| OAuth2 トークンを取得 / 失効する | `get_client_credentials_token` / `revoke_token` | [OAuth2](oauth2.md) |
+| ユーザーに同意してもらってトークンを得る | `Disperl::OAuth2`（`authorize_url` / `exchange_code`） | [OAuth2](oauth2.md#認可コード--pkce) |
+| アプリ用 OAuth2 トークンを取得 / 失効する | `get_client_credentials_token` / `revoke_token` | [OAuth2](oauth2.md) |
 | 連携アカウントを見る | `get_current_user_connections` | [OAuth2](oauth2.md) |
 | グループ DM を操作する | `create_group_dm` / `add_group_dm_recipient` | [OAuth2](oauth2.md) |
 | Bot のプロフィールを変える | `modify_current_user` | [Client](client.md) |

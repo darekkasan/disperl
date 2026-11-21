@@ -205,8 +205,14 @@ MIME は拡張子から推定し、`content_type` で上書きできます
 - **Bot トークン**: `Bot ` を付けて送る。Bot 用エンドポイント
 - **Bearer トークン**: ユーザーの委譲。`users/@me` 系やロール連携で使う
 
-取得・失効は `get_client_credentials_token` / `revoke_token`
-（[OAuth2](oauth2.md)）。
+取得方法は 2 つあります。
+
+- **クライアントクレデンシャルズ**: アプリ用トークン。
+  `get_client_credentials_token` / `revoke_token`
+- **認可コード + PKCE**: ユーザーの同意を得てトークンを取得。
+  `Disperl::OAuth2` の `authorize_url` / `exchange_code`
+
+詳細は [OAuth2](oauth2.md) を参照してください。
 
 ## Poll（投票）
 

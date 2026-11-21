@@ -31,6 +31,7 @@ use Disperl::Guild qw(guild_onboarding_mode_name guild_screening_field_name);
 use Disperl::Entitlement qw(sku_type_name);
 use Disperl::RoleConnection qw(role_connection_type_name);
 use Disperl::Integration qw(integration_type_name);
+use Disperl::OAuth2;
 
 load_dotenv("$FindBin::Bin/.env");
 
@@ -222,7 +223,7 @@ my @HELP_CATEGORIES = (
     [ webhook     => qr/^(webhook|slack-webhook|github-webhook)/, 'Webhook' ],
     [ interaction => qr/^(commands|command)/, 'コマンド登録・権限' ],
     [ voice       => qr/^(voice-status|voice-state|stage|follow|me(-edit)?$|my-guilds|my-member|leave-guild|activity-instance)/, 'ボイス・ステージ・プロフィール' ],
-    [ oauth       => qr/^(oauth-|connections|group-dm-)/, 'OAuth2・グループ DM' ],
+    [ oauth       => qr/^(oauth-|oauth2-|connections|group-dm-)/, 'OAuth2・グループ DM' ],
     [ invite      => qr/^target-/, '招待のターゲットユーザー' ],
     [ watch       => qr/^watch$/, 'Gateway 受信（watch）' ],
     [ misc        => qr/.*/, 'その他' ],
@@ -419,6 +420,18 @@ disperl 動作確認 CLI
   perl test.pl oauth-token <ID> <シークレット> [--scope S]
                                        クライアントクレデンシャルズでトークンを取る
   perl test.pl oauth-me --bearer <トークン>  認可情報を表示する
+  perl test.pl oauth2-url <ID> --redirect-uri URL --scope S [--state S] [--no-pkce]
+      [--prompt consent|none] [--permissions N] [--guild ID]
+      [--disable-guild-select] [--integration-type 0|1]
+                                       認可 URL を作る（state / PKCE は自動生成）
+  perl test.pl oauth2-code <コード> --client-id ID --redirect-uri URL
+      [--client-secret S] [--code-verifier V]
+                                       認可コードをトークンに交換する
+  perl test.pl oauth2-refresh <リフレッシュトークン> --client-id ID
+      [--client-secret S] [--scope S]  アクセストークンを更新する
+  perl test.pl oauth2-revoke <トークン> --client-id ID [--client-secret S]
+      [--token-type-hint access_token|refresh_token]
+                                       トークンを失効させる
   perl test.pl connections --bearer <トークン>  連携アカウント一覧
   perl test.pl group-dm-add <チャンネルID> <ユーザーID> <アクセストークン> [--nick 名前]
                                        グループ DM に追加する
@@ -3079,6 +3092,196 @@ sub cmd_oauth_me {
     out "application: " . ($me->{application}{name} // '?') . "\n";
     out "  scopes: " . join(', ', @{ $me->{scopes} || [] }) . "\n";
     out "  user:   " . ($me->{user}{username} // '(なし)') . "\n";
+    return 0;
+}
+
+sub _oauth2_scopes {
+    my ($values) = @_;
+
+    my @scopes;
+    my @list = ref $values eq 'ARRAY' ? @$values
+        : defined $values          ? ($values)
+        :                            ();
+
+    for my $value (@list) {
+        push @scopes, grep { length } split /[\s,]+/, $value;
+    }
+
+    return @scopes;
+}
+
+sub _oauth2_fail {
+    my ($label, $oauth) = @_;
+
+    my $err = $oauth->last_error || {};
+    my $message = sprintf '%sに失敗しました: %s %s',
+        $label,
+        $err->{status}  // '?',
+        $err->{message} // '不明なエラー';
+
+    _fatal($message);
+}
+
+sub _print_oauth_token {
+    my ($token) = @_;
+
+    out "access_token: " . ($token->{access_token} // '?') . "\n";
+    out "  token_type: " . ($token->{token_type} // '?') . "\n";
+    out "  expires_in: " . ($token->{expires_in} // '?') . " 秒\n";
+    out "  refresh_token: " . $token->{refresh_token} . "\n"
+        if defined $token->{refresh_token};
+    out "  scope: " . ($token->{scope} // '') . "\n";
+    return 0;
+}
+
+sub cmd_oauth2_url {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(
+        \@args,
+        [qw(client-id redirect-uri state prompt permissions guild integration-type scope)],
+        [qw(scope)],
+        [qw(no-pkce disable-guild-select)],
+    );
+
+    my $client_id = shift @$pos;
+    _fatal('使い方: perl test.pl oauth2-url <クライアントID> --redirect-uri URL --scope S [--state S] [--no-pkce]')
+        unless defined $client_id && length $client_id;
+
+    _fatal('--redirect-uri が必要です')
+        unless defined $opt->{'redirect-uri'} && length $opt->{'redirect-uri'};
+
+    my @scopes = _oauth2_scopes($opt->{scope});
+    _fatal('--scope が必要です（例: --scope identify --scope guilds）')
+        unless @scopes;
+
+    my $oauth = Disperl::OAuth2->new(
+        client_id    => $client_id,
+        redirect_uri => $opt->{'redirect-uri'},
+        scopes       => \@scopes,
+    );
+
+    my %auth;
+    $auth{state}          = $opt->{state} if defined $opt->{state};
+    $auth{prompt}         = $opt->{prompt} if defined $opt->{prompt};
+    $auth{permissions}    = $opt->{permissions} if defined $opt->{permissions};
+    $auth{guild_id}       = $opt->{guild} if defined $opt->{guild};
+    $auth{integration_type} = $opt->{'integration-type'}
+        if defined $opt->{'integration-type'};
+    $auth{disable_guild_select} = 1 if $opt->{'disable-guild-select'};
+    $auth{pkce} = 0 if $opt->{'no-pkce'};
+
+    my $url = $oauth->authorize_url(%auth);
+
+    out "state: " . ($oauth->last_state // '') . "\n";
+    if (my $pkce = $oauth->last_pkce) {
+        out "code_verifier: $pkce->{code_verifier}\n";
+        out "code_challenge: $pkce->{code_challenge} ($pkce->{code_challenge_method})\n";
+    }
+    out "authorize_url:\n$url\n";
+
+    return 0;
+}
+
+sub cmd_oauth2_code {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(
+        \@args,
+        [qw(client-id client-secret redirect-uri code-verifier)],
+    );
+
+    my $code = shift @$pos;
+    _fatal('使い方: perl test.pl oauth2-code <コード> --client-id ID --redirect-uri URL [--client-secret S] [--code-verifier V]')
+        unless defined $code && length $code;
+
+    _fatal('--client-id が必要です') unless defined $opt->{'client-id'};
+    _fatal('--redirect-uri が必要です')
+        unless defined $opt->{'redirect-uri'};
+
+    my %new;
+    $new{client_secret} = $opt->{'client-secret'}
+        if defined $opt->{'client-secret'};
+
+    my $oauth = Disperl::OAuth2->new(
+        client_id    => $opt->{'client-id'},
+        redirect_uri => $opt->{'redirect-uri'},
+        %new,
+    );
+
+    my %opts;
+    $opts{code_verifier} = $opt->{'code-verifier'}
+        if defined $opt->{'code-verifier'};
+
+    my $token = $oauth->exchange_code($code, %opts)
+        or _oauth2_fail('トークン交換', $oauth);
+
+    _print_oauth_token($token);
+    return 0;
+}
+
+sub cmd_oauth2_refresh {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(
+        \@args,
+        [qw(client-id client-secret scope)],
+        [qw(scope)],
+    );
+
+    my $refresh_token = shift @$pos;
+    _fatal('使い方: perl test.pl oauth2-refresh <リフレッシュトークン> --client-id ID [--client-secret S] [--scope S]')
+        unless defined $refresh_token && length $refresh_token;
+
+    _fatal('--client-id が必要です') unless defined $opt->{'client-id'};
+
+    my %new;
+    $new{client_secret} = $opt->{'client-secret'}
+        if defined $opt->{'client-secret'};
+
+    my $oauth = Disperl::OAuth2->new(
+        client_id => $opt->{'client-id'},
+        %new,
+    );
+
+    my %opts;
+    my @scopes = _oauth2_scopes($opt->{scope});
+    $opts{scopes} = \@scopes if @scopes;
+
+    my $token = $oauth->refresh_token($refresh_token, %opts)
+        or _oauth2_fail('トークン更新', $oauth);
+
+    _print_oauth_token($token);
+    return 0;
+}
+
+sub cmd_oauth2_revoke {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(
+        \@args,
+        [qw(client-id client-secret token-type-hint)],
+    );
+
+    my $token = shift @$pos;
+    _fatal('使い方: perl test.pl oauth2-revoke <トークン> --client-id ID [--client-secret S] [--token-type-hint access_token|refresh_token]')
+        unless defined $token && length $token;
+
+    _fatal('--client-id が必要です') unless defined $opt->{'client-id'};
+
+    my %new;
+    $new{client_secret} = $opt->{'client-secret'}
+        if defined $opt->{'client-secret'};
+
+    my $oauth = Disperl::OAuth2->new(
+        client_id => $opt->{'client-id'},
+        %new,
+    );
+
+    my %opts;
+    $opts{token_type_hint} = $opt->{'token-type-hint'}
+        if defined $opt->{'token-type-hint'};
+
+    $oauth->revoke_token($token, %opts)
+        or _oauth2_fail('トークン失効', $oauth);
+
+    out "トークンを失効させました\n";
     return 0;
 }
 
@@ -5818,6 +6021,10 @@ my %COMMANDS = (
     'github-webhook' => \&cmd_github_webhook,
     'oauth-token'  => \&cmd_oauth_token,
     'oauth-me'     => \&cmd_oauth_me,
+    'oauth2-url'     => \&cmd_oauth2_url,
+    'oauth2-code'    => \&cmd_oauth2_code,
+    'oauth2-refresh' => \&cmd_oauth2_refresh,
+    'oauth2-revoke'  => \&cmd_oauth2_revoke,
     connections    => \&cmd_connections,
     'group-dm-add'    => \&cmd_group_dm_add,
     'group-dm-remove' => \&cmd_group_dm_remove,

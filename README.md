@@ -49,6 +49,7 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - スラッシュコマンドの登録と受信
 - インタラクションルーター（`Disperl::Router`）でコマンド・ボタン・モーダル・オートコンプリートを振り分け
 - コマンド定義ビルダー（`command` / `option`）と差分同期（`sync_commands`）
+- OAuth2 認可コードフロー（PKCE 対応。`Disperl::OAuth2`）でトークン取得・更新・失効
 
 ## 必要環境
 
@@ -139,6 +140,7 @@ if ($message) {
 | `Disperl::Stage` | ステージインスタンスの公開範囲 |
 | `Disperl::Commands` | コマンド / オプション定義のビルダー・検証・差分計算・コマンド権限の対象種別 |
 | `Disperl::Router` | インタラクションのルーター（コマンド / コンポーネント / モーダル / オートコンプリート） |
+| `Disperl::OAuth2` | 認可コードフロー（PKCE）・トークン交換 / 更新 / 失効 |
 | `Disperl::Guild` | ギルド設定・オンボーディングの種別 |
 | `Disperl::Entitlement` | Entitlement / SKU の種別 |
 | `Disperl::RoleConnection` | ロール連携メタデータの種別 |
@@ -166,7 +168,7 @@ if ($message) {
 | [ギルド管理（審査・連携・所属）](docs/guild-admin.md) | メンバー審査・連携・ボイスリージョン・一括 BAN・所属ギルド |
 | [Entitlements / SKU](docs/entitlements.md) | 課金・Entitlement・SKU・サブスクリプション |
 | [ロール連携メタデータ](docs/role-connections.md) | Linked Roles のメタデータ設定 |
-| [OAuth2 / ユーザー連携](docs/oauth2.md) | Bearer トークン・連携アカウント・ユーザーのロール連携 |
+| [OAuth2 / ユーザー連携](docs/oauth2.md) | 認可コード + PKCE・トークン交換 / 更新 / 失効・連携アカウント・ロール連携 |
 | [ロール管理](docs/roles.md) | 取得・作成・編集・並び替え・削除・色とアイコン |
 | [メンバー管理](docs/members.md) | 一覧・検索・変更・ロール付与・キック / BAN・プルーン・実効権限 |
 | [監査ログ](docs/audit-log.md) | 取得・絞り込み・ページング・イベント種別・変更内容 |
@@ -504,7 +506,7 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - 招待のターゲットユーザー（Community Invites）・コマンド単体の作成 / 編集 / 取得
 - ピン留め（新 API）・ギルド内メッセージ検索・インシデントアクション・ロールのメンバー数
 - サブスクリプション単体取得・サウンドボード再生・Slack / GitHub 互換 Webhook
-- OAuth2: クライアントクレデンシャルズ・Bearer エンドポイント・グループ DM・OAuth2 メンバー追加
+- OAuth2: 認可コード + PKCE（`Disperl::OAuth2`）・クライアントクレデンシャルズ・Bearer エンドポイント・グループ DM・OAuth2 メンバー追加
 - Activities: アクティビティインスタンス・`LAUNCH_ACTIVITY`（type 12）
 - チャンネルフォロー・ボイスステータス・Bot プロフィール変更・アプリ編集
 - メッセージ小物: ステッカー・nonce・クロスポスト・リアクション単位の削除・元の応答の取得 / 削除・ステッカーパック取得
@@ -527,6 +529,5 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 ### 未対応
 
 - 音声（Voice）接続
-- OAuth2 の認可コードフロー本体（トークン交換は外部で行い、Bearer を渡す設計）
 - ギルドの作成 / 削除（ユーザーアカウントの操作）
 - ユーザーアプリ / 埋め込みアプリ

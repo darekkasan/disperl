@@ -27,11 +27,15 @@ load_dotenv("$FindBin::Bin/.env");
 | `DISCORD_TOKEN` | 必須 | Bot トークン（`Bot ` は付けない） |
 | `DISCORD_CHANNEL_ID` | 必須 | 送信先チャンネル ID |
 | `DISCORD_APPLICATION_ID` | 省略可 | アプリケーション ID。未設定なら Bot のユーザー ID を使う |
+| `DISCORD_CLIENT_ID` | 省略可 | OAuth2 のクライアント ID（[OAuth2](oauth2.md) の例で使用） |
+| `DISCORD_CLIENT_SECRET` | 省略可 | OAuth2 のクライアントシークレット（**コミットしない**） |
 
 ```sh
 DISCORD_TOKEN=xxxxxxxx
 DISCORD_CHANNEL_ID=123456789012345678
 # DISCORD_APPLICATION_ID=123456789012345678
+# DISCORD_CLIENT_ID=123456789012345678
+# DISCORD_CLIENT_SECRET=xxxxxxxx
 ```
 
 ## 書式

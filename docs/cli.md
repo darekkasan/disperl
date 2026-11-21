@@ -356,6 +356,10 @@ perl test.pl github-webhook <ID> <トークン> payload.json
 
 ```sh
 perl test.pl oauth-token <クライアントID> <シークレット> [--scope S]
+perl test.pl oauth2-url <クライアントID> --redirect-uri URL --scope identify [--scope guilds]
+perl test.pl oauth2-code <コード> --client-id ID --redirect-uri URL --code-verifier V
+perl test.pl oauth2-refresh <リフレッシュトークン> --client-id ID [--client-secret S]
+perl test.pl oauth2-revoke <トークン> --client-id ID [--token-type-hint access_token|refresh_token]
 perl test.pl oauth-me --bearer <アクセストークン>
 perl test.pl connections --bearer <アクセストークン>
 perl test.pl group-dm-add <チャンネルID> <ユーザーID> <アクセストークン> [--nick 名前]
@@ -365,6 +369,9 @@ perl test.pl activity-instance <インスタンスID>
 perl test.pl member-nick [名前|none]
 ```
 
+- `oauth2-url` は認可 URL と、自動生成した `state` / `code_verifier` を表示します
+  （`--no-pkce` で PKCE を無効化、`--state` で固定可）
+- `oauth2-code` の `--code-verifier` には `oauth2-url` が表示した値を渡します
 - Bearer トークンは正規の OAuth2 フローで得たものを渡してください（[OAuth2](oauth2.md) 参照）
 - `member-nick` は自分のニックネームのみ変更します
 

@@ -23,6 +23,7 @@ my @modules = qw(
     Disperl::Gateway
     Disperl::Guild
     Disperl::Integration
+    Disperl::OAuth2
     Disperl::Permissions
     Disperl::RoleConnection
     Disperl::Router
