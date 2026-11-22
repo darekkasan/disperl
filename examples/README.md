@@ -18,6 +18,7 @@ cp .env.example .env     # DISCORD_TOKEN / DISCORD_CHANNEL_ID を編集
 | [forum_post.pl](forum_post.pl) | フォーラムに投稿を作って返信する（REST のみ） | `DISCORD_FORUM_CHANNEL_ID` |
 | [oauth2_login.pl](oauth2_login.pl) | OAuth2 認可コード + PKCE でトークンを取得 | `DISCORD_CLIENT_ID`（と Redirect 登録） |
 | [http_interactions.pl](http_interactions.pl) | Interactions Endpoint URL の HTTP サーバー（署名検証 / PING 応答） | `DISCORD_PUBLIC_KEY` と公開 URL（トークンがあれば `/hello` にも応答） |
+| [event_webhooks.pl](event_webhooks.pl) | Webhook Events を受信する HTTP サーバー | `DISCORD_PUBLIC_KEY` と公開 URL（イベント購読も必要） |
 | [echo_bot.pl](echo_bot.pl) | `!ping` / `!echo` に応答する | `MESSAGE_CONTENT`（Privileged Intent）を有効にする |
 | [slash_command.pl](slash_command.pl) | `/ping` を登録して応答する | なし |
 | [buttons.pl](buttons.pl) | ボタン付きメッセージを送って応答する | なし |
@@ -37,6 +38,7 @@ perl examples/pagination.pl
 perl examples/forum_post.pl
 perl examples/oauth2_login.pl
 perl examples/http_interactions.pl
+perl examples/event_webhooks.pl
 perl examples/echo_bot.pl          # Ctrl+C まで動き続ける
 perl examples/slash_command.pl
 perl examples/buttons.pl
@@ -58,8 +60,8 @@ perl examples/router_bot.pl
 | `DISCORD_CLIENT_ID` | oauth2_login | OAuth2 のクライアント ID |
 | `DISCORD_CLIENT_SECRET` | oauth2_login | OAuth2 のクライアントシークレット（機密クライアントのみ） |
 | `DISCORD_OAUTH_REDIRECT_URI` | oauth2_login | 既定 `http://localhost:8080/callback` |
-| `DISCORD_PUBLIC_KEY` | http_interactions | アプリの Public Key（Developer Portal の General Information） |
-| `DISCORD_HTTP_PORT` | http_interactions | 待ち受けポート（既定 8080） |
+| `DISCORD_PUBLIC_KEY` | http_interactions / event_webhooks | アプリの Public Key（Developer Portal の General Information） |
+| `DISCORD_HTTP_PORT` | http_interactions / event_webhooks | 待ち受けポート（既定 8080） |
 
 - Gateway を使う例は `Ctrl+C` で終了します
 - `MESSAGE_CONTENT` などの Intent は Discord Developer Portal の Bot 設定で有効にしてください

@@ -50,6 +50,7 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 - インタラクションルーター（`Disperl::Router`）でコマンド・ボタン・モーダル・オートコンプリートを振り分け
 - HTTP インタラクション（`Disperl::HttpInteractions`）で Ed25519 署名検証・PING 応答。Gateway なしで受信
   （検証エンジンは `Crypt::PK::Ed25519`。HTTP サーバー部分は core のみ）
+- Webhook Events（`Disperl::EventWebhooks`）でインストール・Entitlement などの通知を HTTP で受信
 - コマンド定義ビルダー（`command` / `option`）と差分同期（`sync_commands`）
 - OAuth2 認可コードフロー（PKCE 対応。`Disperl::OAuth2`）でトークン取得・更新・失効
 
@@ -146,6 +147,7 @@ if ($message) {
 | `Disperl::Commands` | コマンド / オプション定義のビルダー・検証・差分計算・コマンド権限の対象種別 |
 | `Disperl::Router` | インタラクションのルーター（コマンド / コンポーネント / モーダル / オートコンプリート） |
 | `Disperl::HttpInteractions` | Interactions Endpoint URL の受信（Ed25519 署名検証・PING 応答・内蔵サーバー）。署名検証は `Crypt::PK::Ed25519`（CryptX）、`verifier` で差し替え可 |
+| `Disperl::EventWebhooks` | Webhook Events の受信（インストール・Entitlement などの通知）。検証とサーバーは HttpInteractions と共通 |
 | `Disperl::OAuth2` | 認可コードフロー（PKCE）・トークン交換 / 更新 / 失効 |
 | `Disperl::Guild` | ギルド設定・オンボーディングの種別 |
 | `Disperl::Entitlement` | Entitlement / SKU の種別 |
@@ -186,6 +188,7 @@ if ($message) {
 | [コマンド定義](docs/commands.md) | `command` / `option` のビルダー・検証・差分同期 |
 | [インタラクションルーター](docs/router.md) | コマンド・ボタン・モーダル・オートコンプリートの振り分け |
 | [HTTP インタラクション](docs/http-interactions.md) | Interactions Endpoint URL での受信（Ed25519 署名・PING 応答） |
+| [Webhook Events](docs/event-webhooks.md) | イベントの HTTP 受信（インストール・Entitlement・Social SDK 系） |
 | [Gateway](docs/gateway.md) | 接続・イベント・Intent・プレゼンス・再接続 |
 | [コンポーネント](docs/components.md) | ボタン・セレクト・モーダルの組み立て |
 | [設定](docs/config.md) | `.env` の書式と優先順位 |
@@ -527,6 +530,7 @@ Intent の一覧は [Gateway](docs/gateway.md#intent) にあります。
 - インタラクション: ボタン・セレクト・モーダル・オートコンプリート・フォローアップ
 - HTTP インタラクション: Interactions Endpoint URL での受信（Ed25519 署名検証・PING 応答・`Disperl::HttpInteractions`。
   検証は `Crypt::PK::Ed25519`（CryptX）、HTTP サーバー部分は core のみ）
+- Webhook Events: イベントの HTTP 受信（インストール・Entitlement・Social SDK 系通知・`Disperl::EventWebhooks`）
 - Components V2: Container / Section / Text Display / Media Gallery / File / Separator / モーダル V2
 - スラッシュコマンド: 登録・一覧・削除（ギルド / グローバル）
 - レート制限: バケット単位・major parameter・429 / 5xx リトライ

@@ -176,6 +176,7 @@ my $result = $client->method_name($id, %opts);
 | コマンド / ボタンを振り分ける | `Disperl::Router` | [ルーター](router.md) |
 | クールダウンを付ける | `command(..., cooldown => 秒)` | [ルーター](router.md) |
 | Gateway なしで受信する | `Disperl::HttpInteractions`（署名検証 / PING 応答） | [HTTP インタラクション](http-interactions.md) |
+| インストールや購入の通知を受け取る | `Disperl::EventWebhooks`（Webhook Events） | [Webhook Events](event-webhooks.md) |
 | コマンドを登録 / 削除する | `register_guild_commands` / `delete_guild_command` など | [インタラクション](interactions.md) |
 | コマンドの権限を設定する | `edit_application_command_permissions` | [アプリ情報](applications.md) |
 | アプリ情報を見る | `get_current_application` | [アプリ情報](applications.md) |

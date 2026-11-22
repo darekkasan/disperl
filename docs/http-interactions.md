@@ -173,7 +173,7 @@ my $res = $http->handle(
 
 | 状況 | status | body |
 |---|---|---|
-| PING（type 1） | 200 | `{"type":1}` |
+| PING（type 1） | 200 | `{"type":1}`（Webhook Events の PING は type 0 → 204。 [Webhook Events](event-webhooks.md)） |
 | ルーターやコールバックが応答なし | 204 | なし |
 | `on_interaction` がハッシュを返した | 200 | その JSON |
 | 署名の形式不正 / 検証失敗 | 401 | `{"error":"..."}` |
@@ -227,5 +227,6 @@ perl test.pl http-interactions <公開鍵> [--port 8080] [--host 127.0.0.1]
 
 - [インタラクション](interactions.md)
 - [インタラクションルーター](router.md)
+- [Webhook Events](event-webhooks.md)
 - [Client](client.md)
 - [アプリ情報](applications.md)

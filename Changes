@@ -25,6 +25,10 @@
   ルーター委譲とインライン応答・内蔵サーバー（`run` / `serve_once`）・
   ボディ上限とタイムスタンプ経過チェック（`max_body` / `max_timestamp_age`）・
   CLI（`test.pl http-interactions`）とサンプル（`examples/http_interactions.pl`）
+- Webhook Events（`Disperl::EventWebhooks`）: イベントの HTTP 受信
+  （`event_webhooks_url`）。Ed25519 署名検証と内蔵サーバーは HttpInteractions と共通。
+  PING（type 0）→ 204 応答・種別ごとのハンドラ（`event()` / `'*'`）・
+  CLI（`test.pl event-webhooks`）とサンプル（`examples/event_webhooks.pl`）
 - 権限計算（`Disperl::Permissions`）・監査ログ・AutoMod・Entitlements・OAuth2 ほか
 - 動作確認 CLI（`test.pl`）と実行サンプル（`examples/`）。`test.pl commands --sync`
   （`--keep` で削除しない）と `examples/router_bot.pl` を含む。

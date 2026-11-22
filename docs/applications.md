@@ -40,6 +40,8 @@ $client->update_current_application(
 - `event_webhooks_status` は `1`（無効）/ `2`（有効）
 - `interactions_endpoint_url` を設定すると Gateway の代わりに HTTP で
   インタラクションを受けられます（[HTTP インタラクション](http-interactions.md)）
+- `event_webhooks_url` / `event_webhooks_status` / `event_webhooks_types` で
+  Webhook Events を購読できます（[Webhook Events](event-webhooks.md)）
 
 ### Activities
 

@@ -19,6 +19,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | `Disperl::Commands` | コマンド / オプション定義のビルダー・検証・差分計算・コマンド権限の対象種別 | core のみ |
 | `Disperl::Router` | インタラクションのルーター（コマンド / コンポーネント / モーダル / オートコンプリート） | core のみ |
 | `Disperl::HttpInteractions` | Interactions Endpoint URL の受信（Ed25519 署名検証・PING 応答・内蔵サーバー） | `Crypt::PK::Ed25519`（CryptX）。検証処理は差し替え可 |
+| `Disperl::EventWebhooks` | Webhook Events の受信（インストール・Entitlement などの通知。署名検証・PING 応答） | `Disperl::HttpInteractions` を継承。依存は同じ |
 | `Disperl::OAuth2` | 認可コードフロー（PKCE）・トークン交換 / 更新 / 失効 | core のみ |
 | `Disperl::Guild` | ギルド設定・オンボーディングの種別 | core のみ |
 | `Disperl::Entitlement` | Entitlement / SKU の種別 | core のみ |
@@ -58,6 +59,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | [コマンド定義](commands.md) | `command` / `option` のビルダー・検証・差分同期 |
 | [インタラクションルーター](router.md) | コマンド・ボタン・モーダル・オートコンプリートの振り分け |
 | [HTTP インタラクション](http-interactions.md) | Interactions Endpoint URL での受信（Ed25519 署名・PING 応答） |
+| [Webhook Events](event-webhooks.md) | イベントの HTTP 受信（インストール・Entitlement・Social SDK 系） |
 | [Gateway](gateway.md) | 接続・イベント・Intent・プレゼンス・再接続 |
 | [コンポーネント](components.md) | ボタン・セレクト・モーダルの組み立て |
 | [設定](config.md) | `.env` の読み込みルール |
@@ -136,6 +138,8 @@ if ($message) {
   オートコンプリート・クールダウン・エラー隔離（`Disperl::Router`）
 - HTTP インタラクション: Interactions Endpoint URL での受信。Ed25519 署名検証・PING 応答・
   ルーター委譲・インライン応答・内蔵サーバー（`Disperl::HttpInteractions`）
+- Webhook Events: イベントの HTTP 受信。Ed25519 署名検証・PING 応答（204）・
+  種別ごとのハンドラ・内蔵サーバー（`Disperl::EventWebhooks`）
 - コマンド定義: `command` / `option` ビルダー・型 / choices / ローカライズ / 権限の検証・
   差分同期（`sync_commands`。`Disperl::Commands`）
 - Components V2: Container / Section / Text Display / Media Gallery / File / Separator / モーダル V2

@@ -15,6 +15,7 @@ use_ok('Disperl::Sticker');
 use_ok('Disperl::Stage');
 use_ok('Disperl::Commands');
 use_ok('Disperl::HttpInteractions');
+use_ok('Disperl::EventWebhooks');
 use_ok('Disperl::OAuth2');
 use_ok('Disperl::Guild');
 use_ok('Disperl::Entitlement');

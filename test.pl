@@ -32,6 +32,7 @@ use Disperl::Entitlement qw(sku_type_name);
 use Disperl::RoleConnection qw(role_connection_type_name);
 use Disperl::Integration qw(integration_type_name);
 use Disperl::HttpInteractions;
+use Disperl::EventWebhooks;
 use Disperl::Router;
 use Disperl::OAuth2;
 
@@ -220,13 +221,13 @@ my @HELP_CATEGORIES = (
     [ role        => qr/^role/, 'ロール' ],
     [ member      => qr/^(members|member|kick|ban|unban|bans|prune|perms-member|perms-role)$/, 'メンバー' ],
     [ moderation  => qr/^(audit-log|automod|incident|verification)/, '監査ログ・AutoMod・審査' ],
-    [ guild       => qr/^(events|event|guild-edit|welcome|onboarding|application|app-|templates|template|widget|preview|vanity|regions|voice-regions|integrations|role-counts|subscription|skus|entitlements|role-connections)/, 'ギルド設定・アプリ・課金' ],
+    [ guild       => qr/^(events|event(?!-webhooks)|guild-edit|welcome|onboarding|application|app-|templates|template|widget|preview|vanity|regions|voice-regions|integrations|role-counts|subscription|skus|entitlements|role-connections)/, 'ギルド設定・アプリ・課金' ],
     [ emoji       => qr/^(emojis|emoji-|stickers|sticker|sounds|sound-)/, '絵文字・ステッカー・サウンド' ],
     [ webhook     => qr/^(webhook|slack-webhook|github-webhook)/, 'Webhook' ],
     [ interaction => qr/^(commands|command)/, 'コマンド登録・権限' ],
     [ voice       => qr/^(voice-status|voice-state|stage|follow|me(-edit)?$|my-guilds|my-member|leave-guild|activity-instance)/, 'ボイス・ステージ・プロフィール' ],
     [ oauth       => qr/^(oauth-|oauth2-|connections|group-dm-)/, 'OAuth2・グループ DM' ],
-    [ http        => qr/^http-/, 'HTTP インタラクション' ],
+    [ http        => qr/^(http-|event-webhooks)/, 'HTTP インタラクション・イベント受信' ],
     [ invite      => qr/^target-/, '招待のターゲットユーザー' ],
     [ watch       => qr/^watch$/, 'Gateway 受信（watch）' ],
     [ misc        => qr/.*/, 'その他' ],
@@ -438,6 +439,9 @@ disperl 動作確認 CLI
   perl test.pl http-interactions <公開鍵> [--port 8080] [--host 127.0.0.1]
                                        Interactions Endpoint のサーバーを立てる
                                        （署名検証と PING 応答。トークンがあれば /ping にも応答）
+  perl test.pl event-webhooks <公開鍵> [--port 8080] [--host 127.0.0.1]
+                                       Webhook Events のサーバーを立てる
+                                       （署名検証と PING 応答。受信イベントをログに表示）
   perl test.pl connections --bearer <トークン>  連携アカウント一覧
   perl test.pl group-dm-add <チャンネルID> <ユーザーID> <アクセストークン> [--nick 名前]
                                        グループ DM に追加する
@@ -3351,6 +3355,67 @@ sub cmd_http_interactions {
     return 0;
 }
 
+# Webhook Events（event_webhooks_url）用のローカルサーバーを立てる。
+# 受け取ったイベントをログに流す。署名検証と PING 応答は自動。
+sub cmd_event_webhooks {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt, $pos) = _parse_options(\@args, [qw(port host public-key)]);
+
+    my $public_key = $opt->{'public-key'} // shift @$pos
+        // $ENV{DISCORD_PUBLIC_KEY};
+    _fatal('使い方: perl test.pl event-webhooks <公開鍵> [--port 8080] [--host 127.0.0.1]')
+        unless defined $public_key && length $public_key;
+
+    my $json = JSON::PP->new->canonical(1);
+
+    my $events = eval {
+        Disperl::EventWebhooks->new(
+            public_key => $public_key,
+            on_ping    => sub { out "PING を受信しました（204 を返します）\n" },
+            on_event   => sub {
+                my ($event, $payload) = @_;
+                out sprintf "イベント: %s (%s)\n",
+                    $event->{type} // '?', substr($event->{timestamp} // '', 0, 19);
+                out "  application: " . ($payload->{application_id} // '?') . "\n";
+                out "  data: " . $json->encode($event->{data}) . "\n"
+                    if defined $event->{data};
+            },
+            on_error   => sub { out "ハンドラエラー: $_[0]\n" },
+        );
+    };
+    _fatal($@) if !$events && defined $@ && $@ ne '';
+
+    my %run;
+    $run{host} = $opt->{host} if defined $opt->{host};
+    if (defined $opt->{port}) {
+        _fatal('--port は数字で指定してください')
+            unless $opt->{port} =~ /^\d+\z/;
+        $run{port} = $opt->{port} + 0;
+    }
+    $run{on_ready} = sub {
+        my ($url) = @_;
+        out "待ち受け中: $url（Ctrl+C で終了）\n";
+        out "Developer Portal の「Webhook Events URL」か\n";
+        out "update_current_application(event_webhooks_url => ...) に設定してください\n";
+    };
+    $run{on_request} = sub {
+        my ($info) = @_;
+        out sprintf "[%s] %s %s -> %s\n",
+            _format_time(time()),
+            $info->{method} // '?',
+            $info->{path}   // '?',
+            $info->{status} // '?';
+    };
+
+    local $SIG{INT} = sub {
+        out "\n終了します...\n";
+        $events->stop;
+    };
+
+    $events->run(%run);
+    return 0;
+}
+
 sub cmd_connections {
     my @args = map { _decode_arg($_) } @_;
     my ($opt) = _parse_options(\@args, [qw(bearer)]);
@@ -6092,6 +6157,7 @@ my %COMMANDS = (
     'oauth2-refresh' => \&cmd_oauth2_refresh,
     'oauth2-revoke'  => \&cmd_oauth2_revoke,
     'http-interactions' => \&cmd_http_interactions,
+    'event-webhooks'    => \&cmd_event_webhooks,
     connections    => \&cmd_connections,
     'group-dm-add'    => \&cmd_group_dm_add,
     'group-dm-remove' => \&cmd_group_dm_remove,
