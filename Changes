@@ -4,18 +4,26 @@
 
 ## 0.1.0 - 未リリース
 
-最初のバージョンです。
+最初のバージョンです。Bot 向けの REST / Gateway / インタラクション機能一式
+（音声接続を除く）を含みます。
+
+- 主要依存は core モジュールのみ。Gateway は `IO::Socket::SSL`、
+  HTTP エンドポイント系の署名検証は `Crypt::PK::Ed25519`（CryptX）
 
 ### 追加
 
-- REST API: メッセージ・添付（multipart）・投票・スレッド・フォーラム / メディア・
-  チャンネル・ロール・メンバー・スケジュールイベント・Webhook・インタラクション応答・
-  コマンド登録・ページネーション（`each_*`）
-- Gateway: Identify / Resume / Heartbeat・自動再接続（指数バックオフ・ゾンビ検出）・
-  プレゼンス・型付きコールバック・member chunking・シャーディング
+- REST API（`Disperl::Client`）: メッセージ・添付（multipart）・投票・スレッド・
+  フォーラム / メディア・チャンネル・ロール・メンバー・スケジュールイベント・
+  Webhook・インタラクション応答・コマンド登録・ページネーション（`each_*`）・
+  監査ログ・AutoMod・Entitlements・権限のサーバー側計算ほか
+- Gateway（`Disperl::Gateway`）: Identify / Resume / Heartbeat・自動再接続
+  （指数バックオフ・ゾンビ検出）・プレゼンス・型付きコールバック・member chunking・
+  シャーディング・capabilities・セッションの保存と復元
+  （`resume_session` / `on_session`。プロセス再起動後も Resume から再開できる）
 - コンポーネント（ボタン / セレクト / Components V2 / モーダル）と `Disperl::Components`
 - インタラクションルーター（`Disperl::Router`）: コマンドパス・コンポーネント
-  （完全一致 / 前方一致 / 正規表現）・モーダル・オートコンプリート・クールダウン・エラー隔離
+  （完全一致 / 前方一致 / 正規表現）・モーダル・オートコンプリート・クールダウン・
+  エラー隔離・インストール コンテキストの参照（`context` / `integration_type`）
 - コマンド定義ビルダー（`Disperl::Commands` の `command` / `option`）と検証・
   差分計算（`diff_commands`）・差分同期（`Client::sync_commands`）
 - OAuth2 認可コードフロー（`Disperl::OAuth2`）: PKCE（S256）・`state` の生成 / 検証・
@@ -24,17 +32,19 @@
   Ed25519 署名検証（`Crypt::PK::Ed25519` / `verifier` で差し替え可）・PING 応答・
   ルーター委譲とインライン応答・内蔵サーバー（`run` / `serve_once`）・
   ボディ上限とタイムスタンプ経過チェック（`max_body` / `max_timestamp_age`）・
-  CLI（`test.pl http-interactions`）とサンプル（`examples/http_interactions.pl`）
+  CLI（`test.pl http-interactions`）
 - Webhook Events（`Disperl::EventWebhooks`）: イベントの HTTP 受信
   （`event_webhooks_url`）。Ed25519 署名検証と内蔵サーバーは HttpInteractions と共通。
   PING（type 0）→ 204 応答・種別ごとのハンドラ（`event()` / `'*'`）・
-  CLI（`test.pl event-webhooks`）とサンプル（`examples/event_webhooks.pl`）
-- 権限計算（`Disperl::Permissions`）・監査ログ・AutoMod・Entitlements・OAuth2 ほか
-- 動作確認 CLI（`test.pl`）と実行サンプル（`examples/`）。`test.pl commands --sync`
-  （`--keep` で削除しない）と `examples/router_bot.pl` を含む。
-  embed / 投票・ファイル添付・Components V2・ページネーション・フォーラム投稿・
-  OAuth2 ログイン・セレクトメニュー・モーダル・オートコンプリートのサンプルを追加
-- テストスイート（`prove -l t`。ネットワーク不要）・pre-commit フック（`tools/`）
+  CLI（`test.pl event-webhooks`）
+- Webhook 実行の `with_components`（`components` 送信時に自動付与。`0` で無効化）
+- 動作確認 CLI（`test.pl`）と実行サンプル（`examples/` 16 本）:
+  REST（送信 / embed / 投票 / 添付 / Components V2 / ページネーション / フォーラム）・
+  Gateway（echo / スラッシュコマンド / ボタン / セレクト / モーダル /
+  オートコンプリート / ルーター）・OAuth2 ログイン・
+  HTTP（Interactions Endpoint / Webhook Events / PSGI）
+- テストスイート（`prove -l t`。49 ファイル / 481 件。ネットワーク不要。
+  Ed25519 関連は `Crypt::PK::Ed25519` が無い環境ではスキップ）
 
 ### 変更
 
