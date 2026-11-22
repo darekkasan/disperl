@@ -16,6 +16,7 @@ PING（type 0）への応答を担当します。署名方式は
 - [イベント種別の一覧](#イベント種別の一覧)
 - [受信時の注意](#受信時の注意)
 - [CLI](#cli)
+- [動作確認（実環境）](#動作確認実環境)
 - [関連ページ](#関連ページ)
 
 ## 仕組み
@@ -192,6 +193,46 @@ perl test.pl event-webhooks <公開鍵> [--port 8080] [--host 127.0.0.1]
 - 公開鍵は `.env` の `DISCORD_PUBLIC_KEY` でも指定できます
 - 受信したイベントをログに表示します
 - 動くサンプルは `examples/event_webhooks.pl` にあります
+
+## 動作確認（実環境）
+
+実環境で一連の流れを確認するときの手順です。
+
+1. サーバーを起動する
+
+   ```sh
+   perl test.pl event-webhooks        # .env の DISCORD_PUBLIC_KEY を使用
+   ```
+
+2. トンネルで公開する（例: cloudflared のクイックトンネル）
+
+   ```sh
+   cloudflared tunnel --url http://127.0.0.1:8080
+   ```
+
+3. **Developer Portal** → アプリ → **Events** ページに表示された URL を設定し、
+   イベント（例: `APPLICATION_AUTHORIZED`）を購読して**保存**する
+
+   - 保存時に PING（type 0）が届き、`PING を受信しました（204 を返します）` と
+     出れば有効化成功です
+   - 直前に 401 が 1 件出ますが、これは Discord が意図的に送る
+     **不正署名のヘルスチェック**です（[受信時の注意](#受信時の注意)）
+
+4. イベントを起こす
+
+   - `APPLICATION_AUTHORIZED`: Portal → **Installation** の Guild Install リンクから
+     アプリをインストールする（既にインストール済みのサーバーでは発火しないことがある。
+     その場合は削除してから再インストール）
+   - Entitlement 系: SKU が必要です（`perl test.pl entitlement-test-create`。
+     SKU 無しのアプリでは発火できません）
+
+5. 確認が終わったら、Portal の URL を空に戻しておくと
+   （Gateway 併用時の混乱を防げます）
+
+- トークンなしでも PING 確認まではできます（イベント処理に
+  `Disperl::Client` は不要です）
+- うまくいかないときは、Portal 側の**購読設定**と
+  **URL の保存状態**（`event_webhooks_status`）を最初に確認してください
 
 ## 関連ページ
 
