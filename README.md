@@ -1,5 +1,9 @@
 # disperl
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+![Perl](https://img.shields.io/badge/perl-5.20%2B-blue)
+![AI generated](https://img.shields.io/badge/AI%20generated-102%25-purple)
+
 > [!IMPORTANT]
 > **このプロジェクトは AI によって 102% 作成されています**
 > （コード・テスト・ドキュメント・サンプル・この README を含むすべて）。
@@ -21,6 +25,20 @@ Perl 製の Discord Bot 用クライアントです。REST API と Gateway（Web
 
 詳しいリファレンスは [`docs/`](docs/README.md) にあります。この README は「まず動かす」ための入口です。
 順を追って試すなら [チュートリアル](docs/tutorial.md)、やりたいことから探すなら [逆引き](docs/cookbook.md) へ。
+
+## 目次
+
+- [特徴](#特徴)
+- [必要環境](#必要環境)
+- [セットアップ](#セットアップ)
+- [クイックスタート](#クイックスタート)
+- [モジュール構成](#モジュール構成)
+- [ドキュメント](#ドキュメント)
+- [よく使う操作](#よく使う操作)
+- [CLI](#cli)
+- [テスト](#テスト)
+- [注意事項](#注意事項)
+- [実装範囲](#実装範囲)
 
 ## 特徴
 
