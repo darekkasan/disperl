@@ -18,3 +18,6 @@ pm_to_blib
 .prove
 cover_db/
 *.bak
+
+# 配布物（git archive の出力先）
+dist/
