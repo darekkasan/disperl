@@ -107,6 +107,32 @@ subtest 'constructor' => sub {
         qr/engine must be/, 'unknown engine is rejected';
 };
 
+{
+    # CryptX が無い環境の挙動を再現するサブクラス
+    package NoEngine;
+    use parent 'Disperl::HttpInteractions';
+
+    sub _cryptx_available {
+        my ($self) = @_;
+        return Disperl::HttpInteractions::_no_engine($self);
+    }
+}
+
+subtest 'no engine' => sub {
+    my $http = NoEngine->new(public_key => $PK);
+
+    ok !$http->verify('ab' x 64, '123', 'body'), 'verify fails without an engine';
+    is $http->last_error->{error}, 'no_engine', 'no_engine code';
+
+    my $res = $http->handle(
+        signature => sign_of('123', '{"type":1}'),
+        timestamp => '123',
+        body      => '{"type":1}',
+    );
+    is $res->{status}, 500, 'handle returns 500 without an engine';
+    is $res->{content}, '{"error":"no_engine"}', 'error body';
+};
+
 subtest 'verify with RFC 8032 known vector' => sub {
     # 空のメッセージ（timestamp が空文字 + body が空文字）に対する署名
     my $http = Disperl::HttpInteractions->new(public_key => $RFC_PK);

@@ -213,6 +213,8 @@ $router->autocomplete('lang:query' => sub { ... });
 | `id` / `token` / `type` | インタラクション ID / トークン / type |
 | `application_id` / `guild_id` / `channel_id` | 各 ID |
 | `locale` / `guild_locale` | ユーザー / ギルドのロケール |
+| `context` | 発生コンテキスト。`0` ギルド / `1` Bot DM / `2` プライベートチャンネル / `3` グループ DM |
+| `integration_type` | コマンドの発火元。`0` ギルドインストール / `1` ユーザーインストール（スラッシュコマンドのみ） |
 | `message` / `member` | コンポーネント元のメッセージ / ギルドメンバー |
 | `user` / `user_id` | 実行者（DM では `user`、ギルドでは `member.user`） |
 | `data` | `data` ハッシュ |

@@ -5072,6 +5072,15 @@ sub execute_webhook {
         $payload->{$key} = $opts{$key} if defined $opts{$key};
     }
 
+    # アプリ所有外の Webhook では with_components を付けないと
+    # components が無視される。components があるときは自動で付ける
+    my $has_components
+        = defined $payload->{components} && @{ $payload->{components} };
+    my $with_components = exists $opts{with_components}
+        ? $opts{with_components}
+        : ($has_components ? 1 : 0);
+    push @query, 'with_components=true' if $with_components;
+
     my $url = "$API_BASE/webhooks/$webhook_id/" . _uri_escape($token);
     $url .= '?' . join('&', @query) if @query;
 

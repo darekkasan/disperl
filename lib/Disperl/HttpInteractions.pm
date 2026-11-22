@@ -150,6 +150,9 @@ sub verify {
 
     return 1 if $self->_verify_bytes(pack('H*', "$signature"), $message);
 
+    # エンジンが無いときは no_engine を残す（signature_mismatch で上書きしない）
+    return 0 if ($self->{last_error}{error} // '') eq 'no_engine';
+
     return $self->_fail('signature_mismatch', 'signature verification failed');
 }
 
@@ -233,14 +236,20 @@ sub _verify_bytes {
             $key;
         };
         unless ($pk) {
-            $self->_fail('no_engine',
-                'Crypt::PK::Ed25519 is required (install CryptX)');
-            return 0;
+            return _no_engine($self);
         }
         $self->{_pk} = $pk;
     }
 
     return $pk->verify_message($signature, $message) ? 1 : 0;
+}
+
+# 検証エンジンが無い場合の共通処理（テストからも使う）。
+# last_error に no_engine を記録して 0 を返す。
+sub _no_engine {
+    my ($self) = @_;
+    return $self->_fail('no_engine',
+        'Crypt::PK::Ed25519 is required (install CryptX)');
 }
 
 my $CRYPTX_AVAILABLE;
@@ -250,12 +259,8 @@ sub _cryptx_available {
     return $CRYPTX_AVAILABLE if defined $CRYPTX_AVAILABLE;
     $CRYPTX_AVAILABLE = eval { require Crypt::PK::Ed25519; 1 } ? 1 : 0;
 
-    unless ($CRYPTX_AVAILABLE) {
-        $self->_fail('no_engine',
-            'Crypt::PK::Ed25519 is required (install CryptX)');
-    }
-
-    return $CRYPTX_AVAILABLE;
+    return $CRYPTX_AVAILABLE if $CRYPTX_AVAILABLE;
+    return _no_engine($self);
 }
 
 sub _body_bytes {

@@ -15,6 +15,7 @@ Identify / Resume / Heartbeat / 自動再接続 / プレゼンス変更に加え
 - [capabilities](#capabilities)
 - [Intent](#intent)
 - [再接続](#再接続)
+- [セッションの保存と復元](#セッションの保存と復元)
 - [プレゼンス](#プレゼンス)
 - [関連ページ](#関連ページ)
 
@@ -59,6 +60,8 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 | `capabilities` | — | 整数、または名前の配列（[capabilities](#capabilities)） |
 | 型付き | — | `on_guild_create` / `on_message_update` など（[型付きコールバック](#型付きコールバック)） |
 | `reconnect` | `1` | 自動再接続するか |
+| `resume_session` | — | 前回の `{ session_id, seq }`。最初の接続で Resume から始める（[セッションの保存と復元](#セッションの保存と復元)） |
+| `on_session` | — | `sub { my ($session) = @_ }`。READY / RESUMED と `seq` が進む各イベントで呼ばれる |
 | `max_reconnects` | `5` | 連続エラーの上限（READY でリセット） |
 | `reconnect_delay` | `5` | 4008（レート制限）で再接続するまでの待ち秒 |
 | `error_backoff` | `1` | エラー再接続の指数バックオフの基準秒 |
@@ -81,6 +84,7 @@ $gw->run;    # stop() が呼ばれるまでブロックする
 |---|---|
 | `$gw->intents` | 現在の Intent ビットマスク |
 | `$gw->session_id` | セッション ID（READY 後） |
+| `$gw->seq` | 現在のシーケンス番号（イベントを受けるたびに進む） |
 | `$gw->application_id` | アプリケーション ID（READY 後） |
 | `$gw->user` | Bot 自身のユーザー情報（READY 後） |
 | `$gw->is_running` | `run` 中か |
@@ -336,6 +340,43 @@ my $gw = Disperl::Gateway->new(
     on_error   => sub { warn "handler error: $_[0]\n" },
 );
 ```
+
+## セッションの保存と復元
+
+プロセスを再起動したあとでも、前回のセッションを Resume できます。
+`on_session` で `session_id` と `seq` を保存し、次回起動時に
+`resume_session` として渡します。
+
+```perl
+my $state = "$FindBin::Bin/gateway-state.json";
+
+my $saved;
+if (-f $state) {
+    $saved = decode_json(do { local $/; open my $fh, '<:raw', $state; <$fh> });
+}
+
+my $gw = Disperl::Gateway->new(
+    token   => $ENV{DISCORD_TOKEN},
+    intents => [qw(GUILDS)],
+    # イベントごとに呼ばれるので、保存処理は軽く保つこと
+    on_session     => sub {
+        my ($session) = @_;    # { session_id => ..., seq => ... }
+        open my $fh, '>:raw', $state;
+        print {$fh} encode_json($session);
+        close $fh;
+    },
+    resume_session => $saved,    # 無ければ undef で OK（通常の Identify になる）
+);
+```
+
+- `on_session` は READY / RESUMED と、`seq` が進む各イベントで呼ばれます
+- 保存しておいたセッションが無効のときは、自動で Identify からやり直します
+  （Invalid Session の扱いは [再接続](#再接続)と同じ）
+- 復元できたイベントは Resume 時に Discord が再生します
+  （保持期間は限られるので、古いセッションは復元に失敗することがあります）
+- `resume_session` は生きているセッションが無い接続でのみ使われます。
+  一度 Resume が成功すれば、以降は同じプロセス内の通常の Resume と同じです
+- `$gw->session_id` / `$gw->seq` で現在の値を読めます
 
 ## プレゼンス
 

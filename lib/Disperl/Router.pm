@@ -617,6 +617,15 @@ sub value {
 
 sub resolved { $_[0]->data->{resolved} }
 
+# インタラクションの発生コンテキスト。
+#   0 ギルド / 1 Bot DM / 2 プライベートチャンネル / 3 グループ DM
+sub context { $_[0]->{interaction}{context} }
+
+# コマンドの発火元インストール。
+#   0 ギルドインストール / 1 ユーザーインストール
+# スラッシュコマンドの data にだけ入る（コンポーネント / モーダルでは undef）
+sub integration_type { $_[0]->data->{integration_type} }
+
 sub fields {
     my ($self) = @_;
 

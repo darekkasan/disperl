@@ -34,10 +34,14 @@ $client->execute_webhook($webhook_id, $webhook_token, 'ログです',
 | `thread_id` | 既存スレッドに送る |
 | `files` | `{ filename, data, content_type? }` の配列（最大 10） |
 | `wait` | 既定 `1`。`0` にすると投稿結果を待たず `1` を返す |
+| `with_components` | `components` を送るときは自動で `true` になる（`0` で無効化） |
 | その他 | `content` / `embeds` / `components` / `allowed_mentions` |
 
 - 既定で `wait=1` を付けるため、送信したメッセージが返る
 - `wait => 0` のときは `1` を返す（204）
+- `components` を送るときは `with_components=true` クエリが自動で付きます
+  （付けないと**アプリ所有外の Webhook では components が無視されます**。
+  明示的に `with_components => 0` で無効化もできます）
 - このエンドポイントは**認証ヘッダを付けません**
 
 ### Slack / GitHub 互換

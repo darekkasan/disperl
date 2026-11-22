@@ -70,6 +70,42 @@ subtest 'command: reply, options and context' => sub {
     is $body->{data}{content}, 'pong', 'content';
 };
 
+subtest 'context and integration_type' => sub {
+    my $router = Disperl::Router->new(warn_unknown => 0);
+
+    my @ctx;
+    $router->command(ping => sub { push @ctx, $_[0] });
+    $router->component('go' => sub { push @ctx, $_[0] });
+
+    # ユーザーインストール（ユーザーアプリ）で実行されたコマンド
+    $router->dispatch(interaction(
+        context => 3,
+        data    => { name => 'ping', integration_type => 1 },
+    ));
+
+    is scalar @ctx, 1, 'command handler ran';
+    is $ctx[0]->context, 3, 'interaction context (group DM)';
+    is $ctx[0]->integration_type, 1, 'user install';
+
+    # コンポーネントには data.integration_type が無い
+    $router->dispatch(interaction(
+        type        => 3,
+        context     => 0,
+        application_id => '900',
+        data        => { custom_id => 'go' },
+    ));
+
+    is scalar @ctx, 2, 'component handler ran';
+    is $ctx[1]->context, 0, 'component context (guild)';
+    ok !defined $ctx[1]->integration_type,
+        'no integration_type on components';
+
+    # 生の値が無いときは undef
+    $router->dispatch(interaction(data => { name => 'ping' }));
+    ok !defined $ctx[2]->context, 'context defaults to undef';
+    ok !defined $ctx[2]->integration_type, 'integration_type defaults to undef';
+};
+
 subtest 'command: subcommands and subcommand groups' => sub {
     my ($client, $fake) = client_with(no_content(), no_content());
     my $router = Disperl::Router->new(client => $client, warn_unknown => 0);

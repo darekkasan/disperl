@@ -121,6 +121,28 @@ subtest 'constructor' => sub {
         qr/event handler must be a code reference/, 'bad handler is rejected';
 };
 
+{
+    # CryptX が無い環境の挙動を再現するサブクラス
+    package NoEngine;
+    use parent 'Disperl::EventWebhooks';
+
+    sub _cryptx_available {
+        my ($self) = @_;
+        return Disperl::HttpInteractions::_no_engine($self);
+    }
+}
+
+subtest 'no engine' => sub {
+    my $events = NoEngine->new(public_key => $PK);
+
+    ok !$events->verify('ab' x 64, '123', 'body'), 'verify fails without an engine';
+    is $events->last_error->{error}, 'no_engine', 'no_engine code';
+
+    my $res = posted($events, ping_payload());
+    is $res->{status}, 500, 'handle returns 500 without an engine';
+    is $res->{content}, '{"error":"no_engine"}', 'error body';
+};
+
 subtest 'verify (inherited)' => sub {
     my $events = Disperl::EventWebhooks->new(public_key => $RFC_PK);
     ok $events->verify($RFC_SIG, '', ''), 'RFC 8032 TEST 1 signature is valid';

@@ -14,6 +14,7 @@ Discord Bot 開発でよく出てくる用語を、disperl での扱いと一緒
 - [Command（アプリケーションコマンド）](#commandアプリケーションコマンド)
 - [Component（コンポーネント）](#componentコンポーネント)
 - [Defer](#defer)
+- [Ed25519（署名検証）](#ed25519署名検証)
 - [Embed](#embed)
 - [Entitlement・SKU・Subscription](#entitlementskusubscription)
 - [Ephemeral](#ephemeral)
@@ -23,6 +24,7 @@ Discord Bot 開発でよく出てくる用語を、disperl での扱いと一緒
 - [Identify と Resume](#identify-と-resume)
 - [Intent（Privileged Intent）](#intentprivileged-intent)
 - [Interaction（インタラクション）](#interactionインタラクション)
+- [Interactions Endpoint URL](#interactions-endpoint-url)
 - [Major parameter](#major-parameter)
 - [Member Chunking](#member-chunking)
 - [Multipart / MIME](#multipart--mime)
@@ -34,6 +36,7 @@ Discord Bot 開発でよく出てくる用語を、disperl での扱いと一緒
 - [Snowflake](#snowflake)
 - [Thread（スレッド）](#threadスレッド)
 - [Webhook](#webhook)
+- [Webhook Events](#webhook-events)
 - [Widget](#widget)
 - [Zombie connection](#zombie-connection)
 - [関連ページ](#関連ページ)
@@ -114,6 +117,16 @@ $client->defer_interaction($i->{id}, $i->{token});
 $client->edit_interaction_response($app_id, $i->{token}, '結果です');
 ```
 
+## Ed25519（署名検証）
+
+Discord が送ってくる HTTP リクエスト（[HTTP インタラクション](http-interactions.md) /
+[Webhook Events](event-webhooks.md)）に付く署名です。
+`X-Signature-Timestamp` + 生ボディを、アプリの **Public Key** で検証します。
+
+- Public Key は Developer Portal に表示される**公開情報**です（偽造には使えない）
+- 検証には `Crypt::PK::Ed25519`（CryptX）を使う
+- 署名が不正なリクエストは 401 で返す（受理するとエンドポイントを外される）
+
 ## Embed
 
 タイトル・説明・フィールドなどを持つ埋め込み表示です。
@@ -175,6 +188,12 @@ Developer Portal の Bot 設定で有効にしないと接続時にエラーに�
 コマンド実行・ボタン押下・モーダル送信などの受信データです。
 応答は **ID + トークン**で行うため、公開 HTTP サーバーは不要です
 （[インタラクション](interactions.md)）。
+
+## Interactions Endpoint URL
+
+Gateway の代わりに **HTTPS の公開 URL** でインタラクションを受け取る設定です。
+PING（type 1）に `{"type":1}` を返すと有効化されます。
+Gateway と併用はできません。詳細は [HTTP インタラクション](http-interactions.md)。
 
 ## Major parameter
 
@@ -250,6 +269,12 @@ my $ms = ($id >> 22) + 1420070400000;
 チャンネルに直接投稿するための URL + トークンです。
 実行に認証ヘッダは不要なので、外部サービスとの連携に使えます
 （[Webhook](webhooks.md)）。
+
+## Webhook Events
+
+アプリのインストールや Entitlement の変化などを、Gateway なしで
+HTTP で受け取る仕組みです。PING（type 0）に **204** を返すと有効化されます。
+詳細は [Webhook Events](event-webhooks.md)。
 
 ## Widget
 

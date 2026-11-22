@@ -189,6 +189,20 @@ sub new {
         $capabilities = $value + 0;
     }
 
+    # プロセス跨ぎ Resume。前回保存した { session_id, seq } を渡すと、
+    # 生きているセッションが無い最初の接続で RESUME から始める。
+    my $resume_session = $args{resume_session};
+    if (defined $resume_session) {
+        die "resume_session must be a hash reference with session_id and seq\n"
+            unless ref $resume_session eq 'HASH'
+                && defined $resume_session->{session_id}
+                && length $resume_session->{session_id}
+                && defined $resume_session->{seq};
+    }
+
+    die "on_session must be a code reference\n"
+        if defined $args{on_session} && ref $args{on_session} ne 'CODE';
+
     # Router を渡すと、インタラクション系のコールバックをまとめて設定できる。
     # 個別の on_* を明示した場合はそちらを優先する。
     if (my $router = $args{router}) {
@@ -253,6 +267,8 @@ sub new {
         application_id  => undef,
         resume_url      => undef,
         resume_next     => 1,
+        resume_session  => $resume_session,
+        on_session      => $args{on_session},
         awaiting_ack    => 0,
         heartbeat_interval => undef,
         ready           => 0,
@@ -264,6 +280,7 @@ sub new {
 
 sub intents { $_[0]->{intents} }
 sub session_id { $_[0]->{session_id} }
+sub seq { $_[0]->{seq} }
 sub application_id { $_[0]->{application_id} }
 sub user { $_[0]->{user} }
 sub is_running { $_[0]->{running} }
@@ -672,6 +689,12 @@ sub _run_once {
 
     if ($self->{resume_next} && $self->{session_id} && defined $self->{seq}) {
         $self->_resume($ws);
+    } elsif ($self->{resume_next} && ref $self->{resume_session} eq 'HASH') {
+        # プロセス跨ぎ Resume: 保存されたセッションで再開を試みる。
+        # 無効だった場合は op 9 → Identify に落ちる。
+        $self->{session_id} = $self->{resume_session}{session_id};
+        $self->{seq}        = $self->{resume_session}{seq};
+        $self->_resume($ws);
     } else {
         $self->_identify($ws);
     }
@@ -738,8 +761,6 @@ sub _run_once {
         my $msg = eval { $JSON->decode($frame->{payload}) };
         next unless ref $msg eq 'HASH';
 
-        $self->{seq} = $msg->{s} if defined $msg->{s};
-
         my $action = $self->_handle($msg);
         if ($action) {
             $reason = $action;
@@ -758,6 +779,10 @@ sub _handle {
     my $op = $msg->{op} // -1;
 
     if ($op == 0) {                         # Dispatch
+        $self->{seq} = $msg->{s} if defined $msg->{s};
+        $self->_notify_session
+            if defined $msg->{s} && defined $self->{session_id};
+
         my $type = $msg->{t} // '';
         my $data = $msg->{d};
 
@@ -770,12 +795,14 @@ sub _handle {
             $self->{resume_next} = 1;
             $self->{ready}       = 1;
             $self->{failures}    = 0;
+            $self->_notify_session;
             # Identify 後に set_presence されていれば、ここで反映する
             $self->_flush_presence;
             $self->_dispatch('on_ready', $self->{on_ready}, $data);
         } elsif ($type eq 'RESUMED') {
             $self->{ready}    = 1;
             $self->{failures} = 0;
+            $self->_notify_session;
             $self->{presence_pending} = 1 if $self->{presence};
             $self->_apply_presence;
         } elsif ($type eq 'INTERACTION_CREATE') {
@@ -821,6 +848,25 @@ sub _handle {
     }
 
     return undef;
+}
+
+# セッション保存用の on_session に { session_id, seq } を通知する。
+# イベントごとに呼ばれるので、コールバックは軽く保つこと。
+sub _notify_session {
+    my ($self) = @_;
+
+    my $callback = $self->{on_session} or return undef;
+    return undef unless defined $self->{session_id};
+
+    my $ok = eval {
+        $callback->({
+            session_id => $self->{session_id},
+            seq        => $self->{seq},
+        });
+        1;
+    };
+    warn "on_session callback failed: $@" unless $ok;
+    return 1;
 }
 
 # セッションを破棄し、次の接続で必ず Identify からやり直す。

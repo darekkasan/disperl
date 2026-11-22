@@ -52,7 +52,8 @@ like $text, qr/^## \Q$version\E\b/m, 'Changes に現在のバージョンの見�
 # 実行用スクリプト（test.pl / examples）が構文エラーなくコンパイルできるか。
 my @scripts = (
     'test.pl',
-    sort glob "$FindBin::Bin/../examples/*.pl",
+    sort glob("$FindBin::Bin/../examples/*.pl"),
+    sort glob("$FindBin::Bin/../examples/*.psgi"),
 );
 for my $script (@scripts) {
     my $display = $script;

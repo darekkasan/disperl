@@ -109,6 +109,8 @@ my $http = Disperl::HttpInteractions->new(
 
 `handle` は HTTP フレームワークからも使える形で応答を返します。
 署名検証だけこのモジュールに任せて、配信は Plack や雲の関数に任せられます。
+動く PSGI の例は `examples/interaction_endpoint.psgi` にあります
+（`plackup examples/interaction_endpoint.psgi`）。
 
 ```perl
 my $res = $http->handle(

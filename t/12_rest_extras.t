@@ -6,6 +6,7 @@ use lib "$FindBin::Bin/lib";
 use Test::More;
 use JSON::PP;
 use Disperl::Client;
+use Disperl::Components qw(action_row button);
 use FakeUA;
 use TestDiscord qw(client_with ok_json);
 
@@ -260,6 +261,39 @@ subtest 'execute_webhook' => sub {
 
     eval { $client->execute_webhook('123', 'tok') };
     like $@, qr/content, embeds or components is required/, 'content is required';
+};
+
+subtest 'execute_webhook with_components' => sub {
+    my ($client, $fake) = client_with(
+        map { ok_json({ id => '900', content => 'x' }) } 1 .. 4,
+    );
+    my $row = action_row(
+        button(style => 'primary', label => '押す', custom_id => 'w:1'),
+    );
+
+    # components があるときは自動で付く
+    $client->execute_webhook('123', 'tok', 'ボタン', components => [$row]);
+    is $fake->last_call->{url},
+        "$API/webhooks/123/tok?wait=1&with_components=true",
+        'components enable with_components automatically';
+    is scalar @{ body_of($fake)->{components} }, 1, 'components in payload';
+
+    # 明示的に無効化もできる
+    $client->execute_webhook('123', 'tok', 'ボタン',
+        components => [$row], with_components => 0);
+    is $fake->last_call->{url}, "$API/webhooks/123/tok?wait=1",
+        'with_components => 0 suppresses it';
+
+    # components なしで明示指定
+    $client->execute_webhook('123', 'tok', 'hi', with_components => 1);
+    is $fake->last_call->{url},
+        "$API/webhooks/123/tok?wait=1&with_components=true",
+        'explicit with_components without components';
+
+    # components も指定も無ければ付かない
+    $client->execute_webhook('123', 'tok', 'hi');
+    is $fake->last_call->{url}, "$API/webhooks/123/tok?wait=1",
+        'no components means no query';
 };
 
 done_testing;

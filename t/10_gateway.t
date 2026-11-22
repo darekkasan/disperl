@@ -231,6 +231,83 @@ subtest 'run_once: resumes when a session exists' => sub {
     is $resume->{d}{seq}, 5, 'sequence sent';
 };
 
+subtest 'run_once: resumes from a saved session' => sub {
+    my $fake = FakeWS->new(queue => [
+        frame({ op => 10, d => { heartbeat_interval => 60000 } }),
+        { opcode => 8, code => 1000 },
+    ]);
+    $FakeWS::INSTANCE = $fake;
+
+    my $gw = Disperl::Gateway->new(
+        token          => 'secret',
+        ws_class       => 'FakeWS',
+        reconnect      => 0,
+        resume_session => { session_id => 'sess-old', seq => 42 },
+    );
+
+    my $reason = $gw->_run_once;
+
+    is $FakeWS::LAST_URL, 'wss://gateway.discord.gg/?v=10&encoding=json',
+        'no resume URL yet, so the default URL';
+    my $resume = $json->decode($fake->sent->[0]);
+    is $resume->{op}, 6, 'resumes with the saved session';
+    is $resume->{d}{session_id}, 'sess-old', 'saved session id';
+    is $resume->{d}{seq}, 42, 'saved seq';
+    is $gw->session_id, 'sess-old', 'session id restored';
+    is $gw->seq, 42, 'seq restored';
+};
+
+subtest 'resume_session and on_session validation' => sub {
+    eval {
+        Disperl::Gateway->new(
+            token => 't', resume_session => { session_id => 's' },
+        );
+    };
+    like $@, qr/resume_session must be a hash reference with session_id and seq/,
+        'seq is required';
+
+    eval { Disperl::Gateway->new(token => 't', resume_session => 'x') };
+    like $@, qr/resume_session must be a hash reference/, 'type check';
+
+    eval { Disperl::Gateway->new(token => 't', on_session => 'x') };
+    like $@, qr/on_session must be a code reference/, 'callback type';
+};
+
+subtest 'on_session fires on ready, events and resumed' => sub {
+    my @saved;
+    my $gw = Disperl::Gateway->new(
+        token      => 't',
+        on_session => sub { push @saved, { %{ $_[0] } } },
+    );
+
+    $gw->_handle({ op => 0, t => 'READY', s => 1, d => { session_id => 's1' } });
+    is_deeply $saved[0], { session_id => 's1', seq => 1 }, 'saved on READY';
+
+    $gw->_handle({ op => 0, t => 'MESSAGE_CREATE', s => 2, d => { id => '1' } });
+    is_deeply $saved[1], { session_id => 's1', seq => 2 }, 'saved per event';
+
+    # セッションが無い間（起動直後など）は呼ばれない
+    my @quiet;
+    my $fresh = Disperl::Gateway->new(
+        token      => 't',
+        on_session => sub { push @quiet, $_[0] },
+    );
+    $fresh->_handle({ op => 0, t => 'MESSAGE_CREATE', s => 5, d => {} });
+    is scalar @quiet, 0, 'not called before a session exists';
+
+    # RESUMED でも通知される
+    $gw->_handle({ op => 0, t => 'RESUMED', s => 3, d => {} });
+    is_deeply $saved[2], { session_id => 's1', seq => 3 }, 'saved on RESUMED';
+
+    # on_session が die しても処理は続く
+    my $broken = Disperl::Gateway->new(
+        token      => 't',
+        on_session => sub { die "boom\n" },
+    );
+    $broken->_handle({ op => 0, t => 'READY', s => 1, d => { session_id => 's2' } });
+    is $broken->session_id, 's2', 'callback errors do not break dispatch';
+};
+
 subtest 'fatal close code is not retried' => sub {
     my $fake = FakeWS->new(queue => [
         frame({ op => 10, d => { heartbeat_interval => 60000 } }),
