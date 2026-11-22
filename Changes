@@ -38,6 +38,7 @@
   PING（type 0）→ 204 応答・種別ごとのハンドラ（`event()` / `'*'`）・
   CLI（`test.pl event-webhooks`）
 - Webhook 実行の `with_components`（`components` 送信時に自動付与。`0` で無効化）
+- MIT License での公開（`LICENSE`）
 - 動作確認 CLI（`test.pl`）と実行サンプル（`examples/` 16 本）:
   REST（送信 / embed / 投票 / 添付 / Components V2 / ページネーション / フォーラム）・
   Gateway（echo / スラッシュコマンド / ボタン / セレクト / モーダル /
