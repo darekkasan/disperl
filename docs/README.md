@@ -3,7 +3,7 @@
 > **Note**: このドキュメントを含め、本プロジェクトは AI によって作成されています
 > （詳しくは [README](../README.md) 冒頭の注意書きを参照してください）。
 
-Perl 製の Discord Bot 用クライアント **disperl** のリファレンスです。
+Perl 製の Discord Bot 向けライブラリ **disperl** のリファレンスです。
 REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）の両方を扱えます。
 
 ## モジュール構成

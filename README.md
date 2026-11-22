@@ -16,7 +16,7 @@
 > - ライセンス: [MIT](LICENSE)
 > - Issue / PR は歓迎しますが、対応も AI が行うことがあります
 
-Perl 製の Discord Bot 用クライアントです。REST API と Gateway（WebSocket）の両方を扱えます。
+Perl 製の Discord Bot 向けライブラリです。REST API と Gateway（WebSocket）の両方を扱えます。
 
 - 追加モジュールなしで動く REST クライアント（core のみ）
 - レート制限・リトライ・multipart 添付を内蔵
