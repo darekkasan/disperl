@@ -314,7 +314,7 @@ subtest 'heartbeat format' => sub {
     my ($hb) = $ws->find_sent(3);
     ok $hb, 'heartbeat sent';
     ok $hb->{d}{t} > 0, 'heartbeat has t (ms)';
-    is $hb->{d}{seq_ack}, -1, 'seq_ack starts at -1';
+    ok !defined($hb->{d}{seq_ack}), 'seq_ack starts as null';
 };
 
 # ---- テスト用音源 ----
