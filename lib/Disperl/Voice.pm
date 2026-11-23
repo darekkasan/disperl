@@ -66,6 +66,7 @@ sub new {
         awaiting_ack     => 0,
         seq_seen         => -1,          # v8 の buffered resume 用（受信メッセージの seq）
         resuming         => 0,
+        last_seq_ack     => undef,       # heartbeat の seq_ack（初期は null）
 
         source           => undef,
         paused           => 0,
@@ -143,12 +144,11 @@ sub connect {
     my ($ip, $port) = $self->_ip_discovery;
     $ip   = $ready->{d}{ip}   unless defined $ip;
     $port = $ready->{d}{port} unless defined $port;
+    $self->{ready_ip}   = $ip;
+    $self->{ready_port} = $port;
 
-    # Select Protocol はセッションにつき 1 回だけ（再送すると 4006 で切れる）
-    $self->_send({ op => 1, d => {
-        protocol => 'udp',
-        data     => { address => $ip, port => $port, mode => $REQUIRED_MODE },
-    }});
+    # Select Protocol を送信（セッションにつき 1 回）
+    $self->_send_select_protocol;
 
     my $desc = $self->_expect(4);
     $self->{secret_key} = pack('C*', @{ $desc->{d}{secret_key} // [] });
@@ -174,7 +174,7 @@ sub connect {
     $self->{speaking}      = 0;
     $self->{next_frame_at} = 0;
     $self->{awaiting_ack}  = 0;
-    $self->{next_heartbeat} = time + $self->{heartbeat_interval} * 0.5;
+    $self->{last_seq_ack}  = undef;
 
     # audio を送る前に最低 1 回 Speaking を送る（初期値は無音）
     $self->_send({ op => 5, d => { speaking => 0, delay => 0, ssrc => $self->{ssrc} } });
@@ -182,6 +182,9 @@ sub connect {
     if (($self->{v} // 0) >= 5) {
         $self->_send({ op => 15, d => { any => 0 } });
     }
+
+    # Select Protocol を送信（connect 時と Resume 後の再接続時）
+    $self->_send_select_protocol;
 
     $self->{state} = 'ready';
     my $cb = $self->{on_state};
@@ -307,9 +310,10 @@ sub pump {
             $self->_reconnect('heartbeat ACK not received');
             return;
         }
+        my $seq_ack = defined($self->{last_seq_ack}) ? $self->{last_seq_ack} : undef;
         $self->_send({ op => 3, d => {
             t       => int($now * 1000),
-            seq_ack => $self->{seq_seen},
+            seq_ack => $seq_ack,
         }});
         $self->{awaiting_ack}   = 1;
         $self->{next_heartbeat} = $now + $self->{heartbeat_interval};
@@ -324,6 +328,7 @@ sub _handle {
 
     my $op = $msg->{op} // -1;
     $self->{seq_seen} = $msg->{seq} if defined $msg->{seq};
+    $self->{last_seq_ack} = $msg->{seq} if defined $msg->{seq};
 
     if ($op >= 21 && $op <= 24) {   # DAVE の JSON メッセージ
         $self->{dave}->handle_json($msg) if $self->{dave};
@@ -338,6 +343,10 @@ sub _handle {
         $self->{state}    = 'ready';
         $self->{awaiting_ack} = 0;
         $self->{next_heartbeat} = time + $self->{heartbeat_interval} * 0.5;
+        # Resume 後は再度 Select Protocol を交渉する（v8 では必須）
+        if ($self->{udp} && $self->{secret_key}) {
+            $self->_send_select_protocol;
+        }
     } elsif ($op == 5 || $op == 13) {
         # 他ユーザーの Speaking / ClientDisconnect。受信音声は使わない。
     }
@@ -372,6 +381,21 @@ sub _flush_dave {
     for my $bin ($dave->drain_outbound) {
         eval { $ws->send_frame(0x2, $bin) };
     }
+    return 1;
+}
+
+# Select Protocol を送信（セッションにつき 1 回、connect / Resume 後に必須）
+sub _send_select_protocol {
+    my ($self) = @_;
+
+    my $ip   = $self->{ready_ip}   // '';
+    my $port = $self->{ready_port} // 0;
+    return unless $ip && $port;
+
+    $self->_send({ op => 1, d => {
+        protocol => 'udp',
+        data     => { address => $ip, port => $port, mode => $REQUIRED_MODE },
+    }});
     return 1;
 }
 
