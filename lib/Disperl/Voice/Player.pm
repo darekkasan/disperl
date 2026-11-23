@@ -135,6 +135,7 @@ sub start {
     }
 
     my $is_url = $self->{url} =~ m{^[a-z][a-z0-9+.-]*://};
+    warn "[player] ffmpeg path: [$self->{ffmpeg}]\n";
     my @cmd = (
         $self->{ffmpeg},
         qw(-hide_banner -loglevel error -nostdin),
