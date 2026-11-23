@@ -65,7 +65,7 @@ sub new {
         backend  => $backend,
         seek     => ($args{seek} // 0) + 0,          # 再開位置（秒）。ffmpeg 時のみ有効
         volume   => $volume,
-        ffmpeg   => $args{ffmpeg} // $ENV{FFMPEG_PATH} // 'ffmpeg',
+        ffmpeg   => $args{ffmpeg} || $ENV{FFMPEG_PATH} || 'ffmpeg',
         timeout  => $args{timeout} // 20,
 
         title    => $args{title},
