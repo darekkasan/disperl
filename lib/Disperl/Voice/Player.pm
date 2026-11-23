@@ -227,12 +227,15 @@ sub next_frame {
     return undef if $self->{done};
 
     if (@{ $self->{frames} }) {
-        return shift @{ $self->{frames} };
+        my $f = shift(@{ $self->{frames} });
+        warn "[player] next_frame: cached frame " . length($f) . " bytes\n";
+        return $f;
     }
 
     # ソースから読む（ノンブロッキング。短時間だけ粘る）
     my $deadline = time + 0.05;
     my $err;
+    my $read_bytes = 0;
     while (time < $deadline) {
         my $n = sysread($self->{fh}, my $chunk, 65536);
         if (!defined $n) {
@@ -241,10 +244,12 @@ sub next_frame {
             last;
         }
         last if $n == 0;
+        $read_bytes += $n;
         $self->_ingest($chunk);
         last if @{ $self->{frames} };
         last if $self->{done};
     }
+    warn "[player] next_frame: read ${read_bytes} bytes, frames=" . scalar(@{ $self->{frames} }) . "\n" if $read_bytes > 0 || @{ $self->{frames} } > 0;
 
     if ($err) {
         $self->{done} = 1;
@@ -257,6 +262,8 @@ sub next_frame {
 sub _ingest {
     my ($self, $chunk) = @_;
 
+    warn "[player] _ingest: " . length($chunk) . " bytes from source\n";
+
     if ($self->{backend} eq 'passthrough') {
         $chunk = $self->_strip_http_header($chunk) if $self->{http} && !$self->{verified};
         # 最初のデータは OggS で始まる（それ以外は ogg/opus ではない）。
@@ -267,15 +274,17 @@ sub _ingest {
         }
         push @{ $self->{frames} }, $self->{ogg}->feed($chunk);
         # フレーム長が確定するまで検証を続ける（初期ページではまだ不定）。
-        if (!$self->{verified} && defined $self->{ogg}->frame_samples) {
-            $self->verify_frame_size;
-            $self->{verified} = 1;
+        my $ok = eval { $self->verify_frame_size; 1 };
+        unless ($ok) {
+            warn "[player] verify_frame_size failed: $@\n";
         }
+        $self->{verified} = 1;
         return;
     }
 
     # ffmpeg: ogg の demux だけ
     push @{ $self->{frames} }, $self->{ogg}->feed($chunk);
+    warn "[player] _ingest: frames=" . scalar(@{ $self->{frames} }) . " after demux\n";
 }
 
 # passthrough の http 応答ヘッダを切り取る（ヘッダ内の \r\n\r\n まで）。
