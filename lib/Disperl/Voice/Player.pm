@@ -46,12 +46,14 @@ sub new {
     $volume = 0   if $volume < 0;
     $volume = 2.0 if $volume > 2.0;
 
+    my $force_passthrough = delete $args{force_passthrough} // 0;
+
     my $backend = lc($args{backend} // 'auto');
     die "unknown backend: $backend\n"
         unless $backend eq 'auto' || $backend eq 'passthrough' || $backend eq 'ffmpeg';
 
     if ($backend eq 'auto') {
-        $backend = _looks_like_ogg_opus($url) ? 'passthrough' : 'ffmpeg';
+        $backend = _choose_backend($url, $force_passthrough);
     }
 
     if ($backend eq 'passthrough' && $volume != 1.0) {
@@ -82,6 +84,40 @@ sub new {
 
 sub _is_local      { $_[0] !~ m{^[a-z][a-z0-9+.-]*://} }
 sub _looks_like_ogg_opus { my ($url) = @_; my ($ext) = $url =~ m{\.([a-z0-9]+)(?:[?#].*)?$}i; return $ext && $OEXT{$ext} }
+
+# バックエンドを自動選択する。
+#   force_passthrough => 1 : ユーザーが "中身は Opus だと保証" する場合、
+#                            拡張子に関わらず passthrough を試す
+#   拡張子が .ogg / .opus : passthrough
+#   ローカルファイルの先頭が OggS + OpusHead : passthrough（拡張子不問）
+#   それ以外 : ffmpeg
+sub _choose_backend {
+    my ($url, $force) = @_;
+
+    return 'passthrough' if $force;
+    return 'passthrough' if _looks_like_ogg_opus($url);
+    return 'passthrough' if _is_ogg_opus_by_header($url);
+
+    return 'ffmpeg';
+}
+
+# ローカルファイルの先頭を peek して Ogg Opus か判定する。
+# OpusHead（RFC 7845 §4.1）が見つかれば "Ogg にラップされた Opus" と確定。
+sub _is_ogg_opus_by_header {
+    my ($url) = @_;
+
+    return 0 if $url =~ m{^[a-z][a-z0-9+.-]*://};    # HTTP は先頭 peek しない
+    return 0 unless -e $url;
+
+    my $fh;
+    return 0 unless open($fh, '<:raw', $url);
+    my $buf = '';
+    my $n = sysread($fh, $buf, 4096);
+    close $fh;
+    return 0 unless defined $n && $n > 0;
+    return 0 unless substr($buf, 0, 4) eq 'OggS';
+    return index($buf, 'OpusHead') >= 0 ? 1 : 0;
+}
 
 sub title    { $_[0]->{title} }
 sub duration { $_[0]->{duration} }

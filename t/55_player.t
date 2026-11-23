@@ -6,6 +6,7 @@ use FindBin;
 use lib "$FindBin::Bin/../lib";
 
 use File::Temp qw(tempdir);
+use File::Copy qw(copy);
 use Disperl::Voice::Player;
 use Disperl::Voice::Ogg;
 
@@ -14,6 +15,8 @@ is(Disperl::Voice::Player->new(url => 'https://example.com/song.ogg')->backend, 
 is(Disperl::Voice::Player->new(url => 'https://example.com/song.opus?x=1')->backend, 'passthrough', 'auto: .opus + query → passthrough');
 is(Disperl::Voice::Player->new(url => 'https://example.com/song.mp3')->backend, 'ffmpeg', 'auto: .mp3 → ffmpeg');
 is(Disperl::Voice::Player->new(url => 'https://example.com/stream')->backend, 'ffmpeg', 'auto: no extension → ffmpeg');
+is(Disperl::Voice::Player->new(url => 'https://example.com/song.mp3', force_passthrough => 1)->backend, 'passthrough', 'force_passthrough: .mp3 → passthrough');
+is(Disperl::Voice::Player->new(url => 'https://example.com/song.webm', force_passthrough => 1)->backend, 'passthrough', 'force_passthrough: .webm → passthrough');
 
 eval { Disperl::Voice::Player->new(url => 'https://example.com/song.ogg', volume => 0.5) };
 like($@, qr/volume/, 'passthrough rejects volume');
@@ -44,6 +47,13 @@ is(system($ffmpeg, qw(-y -hide_banner -loglevel error -f lavfi -i sine=frequency
 is(system($ffmpeg, qw(-y -hide_banner -loglevel error -f lavfi -i sine=frequency=440:duration=2
                      -vn -ac 2 -ar 48000 -c:a pcm_s16le), $wav),
    0, 'make wav');
+
+# 拡張子なしの Ogg Opus ファイル → header 検出で passthrough
+{
+    my $noext = "$dir/noext_opus";
+    copy($ogg20, $noext) or die "copy failed: $!";
+    is(Disperl::Voice::Player->new(url => $noext)->backend, 'passthrough', 'header detection: extensionless ogg → passthrough');
+}
 
 # OpusHead と 1 フレームのサンプル数
 {
