@@ -1,10 +1,21 @@
 use strict;
 use warnings;
+use utf8;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use Test::More;
 use JSON::PP;
 use Disperl::Gateway;
+
+# die したメッセージを返すヘルパー
+sub exception (&) {
+    my ($code) = @_;
+    my $ok = eval { $code->(); 1 };
+    return '' if $ok;
+    my $err = $@ || 'unknown error';
+    $err =~ s/\s+\z//;
+    return $err;
+}
 
 my $json = JSON::PP->new->utf8(1);
 
@@ -266,6 +277,95 @@ subtest 'since and afk' => sub {
 
     my $plain = $json->decode($json->encode($gw->presence));
     is $plain->{since}, undef, 'since 0 becomes null';
+};
+
+subtest 'rotate_presence' => sub {
+    my $fake = FakeWS->new;
+    my $gw = Disperl::Gateway->new(token => 't');
+    $gw->{ws}    = $fake;
+    $gw->{ready} = 1;
+
+    ok $gw->rotate_presence(messages => ['ﾆｬｰ', '時給5円'], interval => 30),
+        'rotation starts';
+    ok $gw->{presence_rotation}, 'rotation configured';
+
+    # 次回時刻を過去にして強制発火（presence_next_at もリセットして送信を許可）
+    my $force = sub {
+        $gw->{presence_rotation}{next_at} = 0;
+        $gw->{presence_next_at}           = 0;
+    };
+
+    $force->();
+    ok $gw->_tick_presence_rotation, 'first tick fires';
+    my $msg = sent_op($fake);
+    is $msg->{op}, 3, 'presence update sent';
+    is $msg->{d}{activities}[0]{type}, 3, 'watching type';
+    is $msg->{d}{activities}[0]{name}, 'ﾆｬｰ', 'first message';
+
+    # 間隔内は発火しない
+    my $count_before = scalar @{ $fake->sent };
+    $gw->_tick_presence_rotation;
+    is scalar @{ $fake->sent }, $count_before, 'no fire before interval';
+
+    # 2 tick 目 → 2 番目のメッセージ
+    $force->();
+    $gw->_tick_presence_rotation;
+    is sent_op($fake)->{d}{activities}[0]{name}, '時給5円', 'second message';
+
+    # 周回する
+    $force->();
+    $gw->_tick_presence_rotation;
+    is sent_op($fake)->{d}{activities}[0]{name}, 'ﾆｬｰ', 'wraps around';
+
+    # ready でなければ発火しない
+    $gw->{ready} = 0;
+    my $count = scalar @{ $fake->sent };
+    $gw->{presence_rotation}{next_at} = 0;
+    ok !$gw->_tick_presence_rotation, 'no tick when not ready';
+    is scalar @{ $fake->sent }, $count, 'nothing sent';
+
+    $gw->{ready} = 1;
+
+    # 停止
+    ok $gw->stop_rotate_presence, 'stop returns 1';
+    ok !$gw->{presence_rotation}, 'rotation cleared';
+    ok !$gw->stop_rotate_presence, 'stop again returns 0';
+
+    my $count2 = scalar @{ $fake->sent };
+    ok !$gw->_tick_presence_rotation, 'tick does nothing after stop';
+    is scalar @{ $fake->sent }, $count2, 'nothing sent after stop';
+};
+
+subtest 'rotate_presence validation' => sub {
+    my $gw = Disperl::Gateway->new(token => 't');
+
+    like exception { $gw->rotate_presence },
+        qr/messages must be a non-empty array reference/, 'missing messages is rejected';
+    like exception { $gw->rotate_presence(messages => []) },
+        qr/messages must be a non-empty array reference/, 'empty messages is rejected';
+    like exception { $gw->rotate_presence(messages => ['']) },
+        qr/messages must be non-empty strings/, 'empty string is rejected';
+    like exception { $gw->rotate_presence(messages => ['ok'], interval => 4) },
+        qr/interval must be an integer of 5 seconds or more/, 'small interval is rejected';
+    like exception { $gw->rotate_presence(messages => ['ok'], type => 'custom') },
+        qr/type must be one of/, 'custom type is rejected';
+    like exception { $gw->rotate_presence(messages => ['ok'], status => 'chill') },
+        qr/status must be one of/, 'bad status is rejected';
+
+    # status / type 指定つきで起動して、送信内容に反映される
+    my $fake = FakeWS->new;
+    $gw->{ws}    = $fake;
+    $gw->{ready} = 1;
+    ok $gw->rotate_presence(
+        messages => ['作業中...'], interval => 60, status => 'idle', type => 'playing',
+    ), 'starts with status and type';
+    $gw->{presence_rotation}{next_at} = 0;
+    $gw->{presence_next_at}           = 0;
+    ok $gw->_tick_presence_rotation, 'tick';
+    my $msg = sent_op($fake);
+    is $msg->{d}{status}, 'idle', 'status applied';
+    is $msg->{d}{activities}[0]{type}, 0, 'playing type';
+    is $msg->{d}{activities}[0]{name}, '作業中...', 'name applied';
 };
 
 done_testing;

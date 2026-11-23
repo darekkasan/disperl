@@ -428,6 +428,25 @@ $gw->set_presence(activity => {
 - `invisible` は他のユーザーからオフラインに見える（Bot 自体は動作を続ける）
 - REST API では変更できない（Gateway の `op 3` を使用）
 
+### プレゼンスのローテーション
+
+`rotate_presence` でプレゼンス文を一定間隔で切り替えられます。
+
+```perl
+$gw->rotate_presence(
+    messages => ['ﾆｬｰ', 'omikuji で運勢診断', '時給5円'],
+    interval => 30,        # 秒（最小 5、既定 30）
+    status   => 'idle',    # 省略可
+    type     => 'watching' # playing / streaming / listening / watching / competing
+);
+$gw->run;
+```
+
+- `type` の既定は `watching`。各メッセージが「〜を見てる」系のアクティビティになります
+- 停止は `$gw->stop_rotate_presence`
+- `set_presence` と併用できます（ローテーションが次の tick で上書きします）
+- メッセージの送信は内部のレート制限（`presence_interval`）に従います
+
 ## 関連ページ
 
 - [チュートリアル](tutorial.md)

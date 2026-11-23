@@ -20,6 +20,7 @@ my @modules = qw(
     Disperl::Config
     Disperl::Entitlement
     Disperl::Forum
+    Disperl::Fun
     Disperl::Gateway
     Disperl::Guild
     Disperl::HttpInteractions

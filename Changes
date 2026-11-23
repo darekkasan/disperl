@@ -38,6 +38,10 @@
   PING（type 0）→ 204 応答・種別ごとのハンドラ（`event()` / `'*'`）・
   CLI（`test.pl event-webhooks`）
 - Webhook 実行の `with_components`（`components` 送信時に自動付与。`0` で無効化）
+- 小ネタモジュール（`Disperl::Fun`）: おみくじ・8ball・好感度診断
+  （love は旧 ちぇんbot の SHA256 圧縮アルゴリズムの移植。順序不変・決定的）と
+  CLI（`test.pl fun-*`）とサンプル（`examples/fun_bot.pl`）
+- Gateway のプレゼンス文ローテーター（`rotate_presence` / `stop_rotate_presence`）
 - MIT License での公開（`LICENSE`）
 - 動作確認 CLI（`test.pl`）と実行サンプル（`examples/` 16 本）:
   REST（送信 / embed / 投票 / 添付 / Components V2 / ページネーション / フォーラム）・
@@ -62,6 +66,8 @@
 - multipart の `content_type` に改行が混ざるとヘッダを壊せる問題
 - スレッド / フォーラム投稿作成時の `rate_limit_per_user` 検証漏れ
 - Gateway の汎用クローズで待たずに再接続を繰り返す問題（最低 1 秒待つ）
+- Router の既定エラーメッセージ / クールダウンメッセージが
+  二重エンコードされて文字化けする問題（`use utf8` 抜け）
 - アクティビティの `emoji` の検証漏れ（ハッシュ以外・name / id なしを受け付けていた）
 - コマンドの一括登録が全件に `description` を要求し、USER / MESSAGE の
   コンテキストメニューを登録できなかった問題（`Disperl::Commands` の検証に統一）
