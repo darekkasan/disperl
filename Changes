@@ -25,7 +25,7 @@
   - voice gateway の DAVE opcode（21-31）の送受信
   - メディアフレームの暗号化 / 復号（AES-128-GCM・タグ 8 バイト・
     ULEB128 の nonce・世代ラチェット）
-- テスト: `t/49_crypto` ~ `t/53_voice`（ネットワーク不要、126 件）
+- テスト: `t/50_ogg`, `t/51_crypto`, `t/52_dave_crypto`, `t/53_dave_session`, `t/54_voice`, `t/55_player`（ネットワーク不要、147 件）
 - ドキュメント: `docs/voice.md`
 
 ## 0.1.0 - 2026-11-22
