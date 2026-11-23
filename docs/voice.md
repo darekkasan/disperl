@@ -110,13 +110,19 @@ Add / Remove proposal、Welcome、Commit、ratchet_tree 拡張の復号に対応
 
 ## 音源（Ogg / Player）
 
-ffmpeg の libopus 出力を 20ms フレーム単位で流すのに使う 2 枚の部品です。
+ffmpeg（libopus）でエンコードした ogg を 20ms フレーム単位で流すのに使う 2 枚の部品です。
 
 ```perl
-my $player = Disperl::Voice::Player->new(url => 'https://...');
-$player->open;
+my $player = Disperl::Voice::Player->new(url => 'https://example.com/song.mp3');
+$player->start;
 $voice->play($player);     # Player は next_frame / done を実装している
 ```
+
+- Player は http(s) の直リンクとローカルファイルを受け取る。URL の解決
+  （検索語 / プレイリスト等）は呼び出し側の責務
+- ffmpeg は外部ツール（CPAN 依存ではない）。ffmpeg がない環境では
+  すでに 20ms フレームの opus を持つオブジェクト（`next_frame` / `done` を
+  実装）を `play` に直接渡すこともできる
 
 `Disperl::Voice::Ogg` は ogg ページの demuxer だけ（OpusHead / OpusTags はスキップ、
 ページまたぎの lacing 255 パケットにも対応）:
@@ -142,8 +148,8 @@ my @opus_packets = $demux->feed($ogg_bytes);
 | `Disperl::Voice::Dave::Hkdf` | HKDF-SHA256 / ExpandWithLabel / MLS-Exporter |
 | `Disperl::Voice::Dave::TLS` | RFC 9420 の TLS presentation language（可変長 `<V>` 付き） |
 | `Disperl::Voice::Crypto` | XChaCha20-Poly1305（transport 暗号） |
-| `Disperl::Voice::Ogg` | ogg ページ demuxer |
-| `Disperl::Voice::Player` | yt-dlp + ffmpeg（libopus 48kHz 20ms）の音源 |
+| `Disperl::Voice::Ogg` | ogg ページ demuxer（`feed` → Opus パケット列） |
+| `Disperl::Voice::Player` | ffmpeg（libopus 48kHz 20ms）の音源（直リンク / ローカルファイル） |
 
 ## 関連ページ
 
