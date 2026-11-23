@@ -183,7 +183,7 @@ sub connect {
         $self->_send({ op => 15, d => { any => 0 } });
     }
 
-    # Select Protocol を送信（connect 時と Resume 後の再接続時）
+    # Select Protocol を送信（connect 時に1回だけ）
     $self->_send_select_protocol;
 
     $self->{state} = 'ready';
@@ -343,10 +343,7 @@ sub _handle {
         $self->{state}    = 'ready';
         $self->{awaiting_ack} = 0;
         $self->{next_heartbeat} = time + $self->{heartbeat_interval} * 0.5;
-        # Resume 後は再度 Select Protocol を交渉する（v8 では必須）
-        if ($self->{udp} && $self->{secret_key}) {
-            $self->_send_select_protocol;
-        }
+        # Resume 後は Select Protocol を送信しない（セッションは維持される）
     } elsif ($op == 5 || $op == 13) {
         # 他ユーザーの Speaking / ClientDisconnect。受信音声は使わない。
     }
