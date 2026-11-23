@@ -16,8 +16,15 @@ sub new {
         # OpusHead / OpusTags は音声フレームではないので捨てる
         skip_headers => exists $args{skip_headers} ? $args{skip_headers} : 1,
         headers_seen => 0,
+        # capture_head => 1 なら OpusHead をパースして head() で返す
+        capture_head => $args{capture_head} ? 1 : 0,
+        head => undef,
     }, $class;
 }
+
+# パースした OpusHead（capture_head => 1 のとき）。無ければ undef。
+# { version, channels, pre_skip, input_sample_rate, output_gain, mapping_family }
+sub head { $_[0]->{head} }
 
 # バイト列を流し込み、完成した Opus パケットのリストを返す。
 # ページまたぎのパケットは内部で保持して次回に続ける。
@@ -30,10 +37,18 @@ sub feed {
     while (1) {
         my $page = $self->_page or last;
 
+        my $c0 = scalar @packets;
         for my $seg (@{ $page->{segments} }) {
             $self->{packet} .= $seg->{data};
             next if $seg->{continues};
             $self->_push_packet(\@packets, delete $self->{packet});
+        }
+        my $n = scalar(@packets) - $c0;
+        # 1 フレームのサンプル数を推定する（48kHz: 20ms = 960 / 60ms = 2880 /
+        # 120ms = 5760）。最初の音声ページ（granule > 0 でパケットが
+        # 1 個以上完結）で granule / 完結パケット数 = フレーム長。
+        if ($page->{granule} > 0 && $n > 0 && !defined $self->{frame_samples}) {
+            $self->{frame_samples} = int($page->{granule} / $n);
         }
         # ページ末尾で packet が残っていれば次ページへ継続（次の feed で処理）
     }
@@ -43,14 +58,37 @@ sub feed {
 sub _push_packet {
     my ($self, $out, $packet) = @_;
 
-    if ($self->{skip_headers}) {
-        if (substr($packet, 0, 8) eq 'OpusHead' || substr($packet, 0, 8) eq 'OpusTags') {
-            $self->{headers_seen}++;
-            return;
-        }
+    if (substr($packet, 0, 8) eq 'OpusHead') {
+        $self->{head} = $self->_parse_head($packet) if $self->{capture_head} && !defined $self->{head};
+        return;
+    }
+    if ($self->{skip_headers} && substr($packet, 0, 8) eq 'OpusTags') {
+        $self->{headers_seen}++;
+        return;
     }
     push @$out, $packet;
     return 1;
+}
+
+# OpusHead (RFC 7845 §4.1)
+sub _parse_head {
+    my ($self, $packet) = @_;
+
+    return undef if length($packet) < 19;
+    my ($version, $channels, $pre_skip, $sample_rate, $output_gain, $mapping)
+        = unpack('C C v V v C', substr($packet, 8, 11));
+    return undef unless $version == 1 && $mapping == 0;
+    return undef unless $channels == 1 || $channels == 2 || $channels == 8;
+    return undef unless $sample_rate == 0 || $sample_rate == 48000;
+
+    return {
+        version           => $version,
+        channels          => $channels,
+        pre_skip          => $pre_skip,
+        input_sample_rate => $sample_rate,
+        output_gain       => $output_gain,
+        mapping_family    => $mapping,
+    };
 }
 
 # バッファ先頭から 1 ページ取り出す。足りなければ undef。
@@ -100,6 +138,10 @@ sub _page {
 
 # 未処理の残りバイト数（デバッグ用）。
 sub buffered { length $_[0]->{buf} }
+
+# グランูลポジションの差分から推定した 1 フレーム（Opus パケット）の
+# サンプル数（48kHz クロック）。20ms = 960。まだ分かっていなければ undef。
+sub frame_samples { $_[0]->{frame_samples} }
 
 1;
 

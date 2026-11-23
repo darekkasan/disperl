@@ -6,6 +6,7 @@ our $VERSION = '0.1.0';
 
 use Exporter 'import';
 use Disperl::Voice::Dave::Field256 ();
+use Disperl::Voice::Dave::Util qw(random_bytes);
 our @EXPORT_OK = qw(sc_from_hex sc_to_hex sc_add sc_sub sc_mul sc_inv sc_is_zero
                     sc_cmp sc_reduce sc_n_hex sc_random sc_from_bytes sc_to_bytes
                     sc_random_bytes);
@@ -212,18 +213,10 @@ sub sc_inv {
     return from_mont_n($r);
 }
 
-# /dev/urandom から $n バイト読む。3 モジュールで共通に使う。
+# 乱数を $n バイト。3 モジュールで共通に使う。
 sub sc_random_bytes {
     my ($n) = @_;
-    open my $fh, '<:raw', '/dev/urandom' or die "urandom: $!\n";
-    my $bytes = '';
-    while (length($bytes) < $n) {
-        my $got = sysread($fh, my $c, $n - length($bytes));
-        die "urandom: $!\n" unless $got;
-        $bytes .= $c;
-    }
-    close $fh;
-    return $bytes;
+    return random_bytes($n);
 }
 
 sub sc_random {

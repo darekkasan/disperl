@@ -14,8 +14,10 @@
   - `Disperl::Voice::Crypto` — 依存なしの XChaCha20-Poly1305（RFC 8439 /
     draft-irtf-cfrg-xchacha のベクタで検証）
   - `Disperl::Voice::Ogg` — ogg ページの demuxer（ページまたぎ対応）
-  - `Disperl::Voice::Player` — ffmpeg（libopus 48kHz・20ms）の音源
-    （直リンク / ローカルファイル。URL 解決は呼び出し側の責務）
+  - `Disperl::Voice::Player` — 音源。ogg/opus（48kHz・20ms）は
+    `passthrough` バックエンドで ffmpeg 不要のまま再生（OpusHead と
+    フレーム長を検査、音量変更不可）。その他のフォーマットは ffmpeg
+    （libopus）でリエンコード（音量可）。URL 解決は呼び出し側の責務
 - E2EE（DAVE、`Disperl::Voice::Dave`）:
   - MLS 1.0（RFC 9420、ciphersuite 2）: KeyPackage / Proposal / Commit /
     Welcome / GroupInfo / ratchet_tree 拡張。純 Perl で P-256 ECDH / ECDSA

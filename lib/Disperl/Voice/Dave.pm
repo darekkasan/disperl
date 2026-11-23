@@ -5,7 +5,7 @@ use warnings;
 our $VERSION = '0.1.0';
 
 use Disperl::Voice::Dave::TLS qw(tls_u8 tls_u16 tls_u32 tls_opaqueV tls_varint Reader);
-use Disperl::Voice::Dave::Util qw(uleb128_encode uleb128_decode);
+use Disperl::Voice::Dave::Util qw(uleb128_encode uleb128_decode random_bytes);
 use Disperl::Voice::Dave::MLS qw(MLS_VERSION CIPHER_SUITE encode_mls_message
                                  decode_mls_message make_key_package_ref
                                  make_proposal_ref user_id_identity);
@@ -142,10 +142,7 @@ sub _load_keys {
 }
 
 sub _random_scalar {
-    open my $fh, '<:raw', '/dev/urandom' or die "urandom: $!\n";
-    my $b = '';
-    while (length($b) < 32) { sysread($fh, my $c, 32 - length($b)); $b .= $c; }
-    close $fh;
+    my $b = random_bytes(32);
     require Disperl::Voice::Dave::Scalar;
     my $hex = Disperl::Voice::Dave::Scalar::sc_to_hex(
         Disperl::Voice::Dave::Scalar::sc_reduce(

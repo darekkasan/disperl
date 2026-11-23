@@ -110,7 +110,7 @@ Add / Remove proposal、Welcome、Commit、ratchet_tree 拡張の復号に対応
 
 ## 音源（Ogg / Player）
 
-ffmpeg（libopus）でエンコードした ogg を 20ms フレーム単位で流すのに使う 2 枚の部品です。
+20ms フレーム単位で音源を流す 2 枚の部品です。
 
 ```perl
 my $player = Disperl::Voice::Player->new(url => 'https://example.com/song.mp3');
@@ -118,11 +118,20 @@ $player->start;
 $voice->play($player);     # Player は next_frame / done を実装している
 ```
 
-- Player は http(s) の直リンクとローカルファイルを受け取る。URL の解決
-  （検索語 / プレイリスト等）は呼び出し側の責務
-- ffmpeg は外部ツール（CPAN 依存ではない）。ffmpeg がない環境では
-  すでに 20ms フレームの opus を持つオブジェクト（`next_frame` / `done` を
-  実装）を `play` に直接渡すこともできる
+Player は http(s) の直リンクとローカルファイルを受け取り、バックエンドを
+2 つ持つ（`backend` で指定、既定は `auto` = 拡張子で判定）:
+
+| バックエンド | 対象 | ffmpeg | 音量 |
+|---|---|---|---|
+| `passthrough` | ogg/opus（48kHz・20ms・960 サンプル） | 不要 | 不可 |
+| `ffmpeg` | その他のフォーマット | 必要 | 可 |
+
+- `passthrough` は OpusHead とフレーム長を検査し、20ms 以外（60ms など）や
+  ogg でないストリームはエラーになる。音量変更（`volume != 1.0`）も不可
+- ffmpeg は外部ツール（CPAN 依存ではない）。URL の解決（検索語 /
+  プレイリスト等）は呼び出し側の責務
+- ffmpeg がない環境では passthrough の ogg/opus 音源を使うか、
+  `next_frame` / `done` を実装した任意のオブジェクトを `play` に直接渡す
 
 `Disperl::Voice::Ogg` は ogg ページの demuxer だけ（OpusHead / OpusTags はスキップ、
 ページまたぎの lacing 255 パケットにも対応）:
@@ -149,7 +158,7 @@ my @opus_packets = $demux->feed($ogg_bytes);
 | `Disperl::Voice::Dave::TLS` | RFC 9420 の TLS presentation language（可変長 `<V>` 付き） |
 | `Disperl::Voice::Crypto` | XChaCha20-Poly1305（transport 暗号） |
 | `Disperl::Voice::Ogg` | ogg ページ demuxer（`feed` → Opus パケット列） |
-| `Disperl::Voice::Player` | ffmpeg（libopus 48kHz 20ms）の音源（直リンク / ローカルファイル） |
+| `Disperl::Voice::Player` | 音源（ogg/opus パススルー = ffmpeg 不要 / ffmpeg リエンコード） |
 
 ## 関連ページ
 

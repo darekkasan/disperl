@@ -6,6 +6,7 @@ our $VERSION = '0.1.0';
 
 use Exporter 'import';
 use Digest::SHA qw(sha256);
+use Disperl::Voice::Dave::Util qw(random_bytes);
 
 use Disperl::Voice::Dave::Field256 qw(
     fe_from_int fe_to_bytes fe_add fe_sub fe_mul fe_sq fe_inv fe_neg fe_is_zero fe_cmp
@@ -200,14 +201,7 @@ sub p256_valid_public {
 
 # ランダムな秘密鍵（64 桁 16 進）
 sub p256_keygen {
-    open my $fh, '<:raw', '/dev/urandom' or die "urandom: $!\n";
-    my $bytes = '';
-    while (length($bytes) < 32) {
-        sysread($fh, my $c, 32 - length($bytes));
-        $bytes .= $c;
-    }
-    close $fh;
-    my $hex = unpack 'H*', $bytes;
+    my $hex = unpack 'H*', random_bytes(32);
     # 0 と n 以上を避ける
     $hex = '1' . ('0' x 63) if $hex !~ /[1-9a-f]/;
     return $hex;
