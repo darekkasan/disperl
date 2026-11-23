@@ -1,6 +1,11 @@
 package Disperl::Voice::Dave::AesGcm;
 use strict;
 use warnings;
+use Config;
+
+# 整数が 64bit 未満の Perl（32bit ビルド）では GHASH を 32bit 語 4 つで計算する。
+# DISPERL_FORCE_32BIT=1 で強制できる（テスト用）。
+my $WIDE = ($Config{ivsize} >= 8 && !$ENV{DISPERL_FORCE_32BIT}) ? 1 : 0;
 
 our $VERSION = '0.1.0';
 
@@ -278,15 +283,22 @@ sub _pad16 {
     return $mod ? "\x00" x (16 - $mod) : '';
 }
 
+sub _be64 {
+    my ($n) = @_;
+    return pack 'NN', int($n / 4294967296), $n % 4294967296;
+}
+
+sub _ghash_pack { return $WIDE ? pack('Q>2', @_) : pack('N4', @_) }
+
 sub _ghash_input {
     my ($aad, $ct) = @_;
     return $aad . _pad16(length $aad) . $ct . _pad16(length $ct)
-         . pack('Q>', length($aad) * 8) . pack('Q>', length($ct) * 8);
+         . _be64(length($aad) * 8) . _be64(length($ct) * 8);
 }
 
 sub ghash_data {
     my ($tables, $aad, $ct) = @_;
-    return pack 'Q>2', _ghash_blocks($tables->[0], $tables->[1], _ghash_input($aad, $ct));
+    return _ghash_pack(_ghash_blocks($tables->[0], $tables->[1], _ghash_input($aad, $ct)));
 }
 
 sub ghash_data_oneshot {
@@ -297,6 +309,113 @@ sub ghash_data_oneshot {
         $y = _gf_mul($y ^ substr($data, $off, 16), $h);
     }
     return $y;
+}
+
+# ---------------------------------------------------------------- GHASH（32bit 整数用）
+
+# 128bit 値を 32bit 語 4 つ (w0 が上位) で持つ版。テーブルは [[T0,T1],[T2,T3]] の形で返し、
+# 64bit 版と同じ呼び出し形 (_ghash_blocks($tables->[0], $tables->[1], $data)) で使える。
+unless ($WIDE) {
+    no warnings 'redefine';
+    my $POLY32 = 0xe1000000;
+
+    my $shr1 = sub {
+        my ($w0, $w1, $w2, $w3) = @_;
+        my $c = $w3 & 1;
+        $w3 = ($w3 >> 1) | (($w2 & 1) << 31);
+        $w2 = ($w2 >> 1) | (($w1 & 1) << 31);
+        $w1 = ($w1 >> 1) | (($w0 & 1) << 31);
+        $w0 >>= 1;
+        $w0 ^= $POLY32 if $c;
+        return ($w0, $w1, $w2, $w3);
+    };
+
+    # 8 ビット右シフト時の約分（最下位バイト c → w0 に XOR する値）
+    my @R8_32;
+    for my $c (0 .. 255) {
+        my @v = (0, 0, 0, $c);
+        @v = $shr1->(@v) for 1 .. 8;
+        $R8_32[$c] = $v[0];
+    }
+
+    *_gf_mul = sub {
+        my ($x, $y) = @_;
+        my @x = unpack 'N4', $x;
+        my @v = unpack 'N4', $y;
+        my @z = (0, 0, 0, 0);
+        for my $i (0 .. 127) {
+            if (($x[$i >> 5] >> (31 - ($i & 31))) & 1) {
+                $z[$_] ^= $v[$_] for 0 .. 3;
+            }
+            @v = $shr1->(@v);
+        }
+        return pack 'N4', @z;
+    };
+
+    *ghash_tables = sub {
+        my ($hstr) = @_;
+        my @v = unpack 'N4', $hstr;
+
+        my @base;    # H·x^i (i = 0..7)
+        for my $i (0 .. 7) {
+            push @base, [@v];
+            @v = $shr1->(@v);
+        }
+
+        my @t = ([], [], [], []);    # $t[$word][$j*256 + $b]
+        $t[$_][0] = 0 for 0 .. 3;
+        for my $b (1 .. 255) {
+            my $low = $b & -$b;
+            my $bs  = $base[ $LOWBIT_IDX{$low} ];
+            $t[$_][$b] = $t[$_][$b ^ $low] ^ $bs->[$_] for 0 .. 3;
+        }
+        for my $j (1 .. 15) {
+            my ($o, $p) = ($j * 256, ($j - 1) * 256);
+            for my $b (0 .. 255) {
+                my ($w0, $w1, $w2, $w3) = ($t[0][$p + $b], $t[1][$p + $b], $t[2][$p + $b], $t[3][$p + $b]);
+                $t[3][$o + $b] = ($w3 >> 8) | (($w2 & 255) << 24);
+                $t[2][$o + $b] = ($w2 >> 8) | (($w1 & 255) << 24);
+                $t[1][$o + $b] = ($w1 >> 8) | (($w0 & 255) << 24);
+                $t[0][$o + $b] = ($w0 >> 8) ^ $R8_32[$w3 & 255];
+            }
+        }
+        my @out = map {
+            my $tk = $_;
+            [ map { [ @{$tk}[$_ * 256 .. $_ * 256 + 255] ] } 0 .. 15 ];
+        } @t;
+        return [ [ @out[0, 1] ], [ @out[2, 3] ] ];
+    };
+
+    my (@idx, @out);
+    for my $j (0 .. 15) {
+        my $w  = $j >> 2;
+        my $sh = 24 - 8 * ($j % 4);
+        my $ix = $sh == 0 ? "(\$w$w & 255)" : $sh == 24 ? "(\$w$w >> 24)" : "((\$w$w >> $sh) & 255)";
+        push @idx, "my \$i$j = $ix;";
+    }
+    for my $k (0 .. 3) {
+        push @out, "\$y$k = " . join(' ^ ', map { "\$p${k}_$_\->[\$i$_]" } 0 .. 15) . ';';
+    }
+    my $code = 'sub {
+        my ($ta, $tb, $data) = @_;
+        my ($T0, $T1) = @$ta;
+        my ($T2, $T3) = @$tb;
+        ' . join("\n        ", map { my $k = $_;
+            'my (' . join(',', map { "\$p${k}_$_" } 0 .. 15) . ") = \@\$T$k;" } 0 .. 3) . '
+        my @q = unpack("N*", $data);
+        my $n = @q;
+        my ($y0, $y1, $y2, $y3) = (0, 0, 0, 0);
+        for (my $i = 0; $i < $n; $i += 4) {
+            my $w0 = $y0 ^ $q[$i];
+            my $w1 = $y1 ^ $q[$i + 1];
+            my $w2 = $y2 ^ $q[$i + 2];
+            my $w3 = $y3 ^ $q[$i + 3];
+            ' . join("\n            ", @idx) . '
+            ' . join("\n            ", @out) . '
+        }
+        return ($y0, $y1, $y2, $y3);
+    }';
+    *_ghash_blocks = eval $code or die "ghash32: $@";
 }
 
 # ---------------------------------------------------------------- GCM seal / open
@@ -324,7 +443,7 @@ sub _ctx_for {
 
 sub _tag {
     my ($ctx, $j0, $aad, $ct) = @_;
-    my $s = pack 'Q>2', _ghash_blocks($ctx->[1], $ctx->[2], _ghash_input($aad, $ct));
+    my $s = _ghash_pack(_ghash_blocks($ctx->[1], $ctx->[2], _ghash_input($aad, $ct)));
     return aes128_encrypt_block($ctx->[0], $j0) ^ $s;
 }
 

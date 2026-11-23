@@ -7,7 +7,8 @@ our $VERSION = '0.1.0';
 use Exporter 'import';
 use Disperl::Voice::Dave::Field256 ();
 our @EXPORT_OK = qw(sc_from_hex sc_to_hex sc_add sc_sub sc_mul sc_inv sc_is_zero
-                    sc_cmp sc_reduce sc_n_hex sc_random sc_from_bytes sc_to_bytes);
+                    sc_cmp sc_reduce sc_n_hex sc_random sc_from_bytes sc_to_bytes
+                    sc_random_bytes);
 
 # P-256 の群の位数 n を法とする演算（Pure Perl、BigInt 不使用）。
 # Field256 と同じ 26bit リム + モンゴメリ乗算（CIOS）だが、法が n 用。
@@ -109,48 +110,18 @@ sub sc_reduce {
     return \@v;
 }
 
-sub mont_mul_n {
-    my ($a, $b) = @_;
-    my @t = (0) x ($S + 2);
-    for my $i (0 .. $S - 1) {
-        my $bi = $b->[$i];
-        my $c = 0;
-        for my $j (0 .. $S - 1) {
-            my $x = $t[$j] + $a->[$j] * $bi + $c;
-            $t[$j] = $x & $MASK;
-            $c = $x >> $BITS;
-        }
-        my $x = $t[$S] + $c;
-        $t[$S] = $x & $MASK;
-        $t[$S + 1] = $x >> $BITS;
+# Field256 と同じ生成器で n 用の展開コードを作る。
+my ($MUL_N, $SQR_N) = Disperl::Voice::Dave::Field256::make_mont(\@N, $N0, \@C256, \&_sub_n, \&_carry);
 
-        my $m = ($t[0] * $N0) & $MASK;
-        $x = $t[0] + $m * $N[0];
-        $c = $x >> $BITS;
-        for my $j (1 .. $S - 1) {
-            $x = $t[$j] + $m * $N[$j] + $c;
-            $t[$j - 1] = $x & $MASK;
-            $c = $x >> $BITS;
-        }
-        $x = $t[$S] + $c;
-        $t[$S - 1] = $x & $MASK;
-        $t[$S] = $t[$S + 1] + ($x >> $BITS);
-    }
-    my @r = @t[0 .. $S - 1];
-    if ($t[$S]) {
-        $r[$_] += $t[$S] * $C256[$_] for 0 .. $S - 1;
-        _carry(\@r);
-    }
-    _sub_n(\@r);
-    return \@r;
-}
+sub mont_mul_n { return $MUL_N->($_[0], $_[1]) }
 
 sub to_mont_n   { return mont_mul_n($_[0], \@R2) }
 sub from_mont_n { return mont_mul_n($_[0], \@ONE) }
 
+# mont_mul_n(a, bR) = a*b なので、片側だけ変換すれば足りる（乗算 2 回）。
 sub sc_mul {
     my ($a, $b) = @_;
-    return from_mont_n(mont_mul_n(to_mont_n($a), to_mont_n($b)));
+    return mont_mul_n($a, to_mont_n($b));
 }
 
 sub sc_add {
@@ -214,42 +185,50 @@ sub sc_cmp {
     return 0;
 }
 
-sub _n_minus_2_bits {
-    my @q = @N;
-    my $borrow = 2;
-    for my $i (0 .. $S - 1) {
-        my $x = $q[$i] - $borrow;
-        if ($x < 0) { $x += 1 << $BITS; $borrow = 1 } else { $borrow = 0 }
-        $q[$i] = $x;
-        last if $borrow == 0;
-    }
-    my @bits;
-    for (my $i = $S - 1; $i >= 0; $i--) {
-        my $v = $q[$i];
-        for (my $b = $BITS - 1; $b >= 0; $b--) { push @bits, ($v >> $b) & 1 }
-    }
-    shift @bits while @bits && !$bits[0];
-    return \@bits;
-}
+# n-2 を 4bit ごとの桁（上位から）に分解。定数なので一度だけ計算する。
+my @N_MINUS_2_DIGITS = do {
+    my $hex = sc_n_hex();
+    my $v = hex(substr($hex, -2)) - 2;    # 下位 1 バイトは 0x51 なので借りは出ない
+    $hex = substr($hex, 0, -2) . sprintf('%02x', $v);
+    map { hex } split //, $hex;
+};
 
+# モンゴメリ形式のまま 4bit 窓でべき乗する（乗算は約 340 回、各 1 回の mont_mul_n）。
 sub sc_inv {
     my ($a) = @_;
-    my $r = sc_from_hex('1');
-    my $base = sc_reduce($a);
-    for my $bit (@{ _n_minus_2_bits() }) {
-        $r = sc_mul($r, $r);
-        $r = sc_mul($r, $base) if $bit;
+    my $base = to_mont_n(sc_reduce($a));
+    my @tbl = (undef, $base);
+    $tbl[$_] = mont_mul_n($tbl[$_ - 1], $base) for 2 .. 15;
+
+    my $r;
+    for my $d (@N_MINUS_2_DIGITS) {
+        if (defined $r) {
+            $r = $SQR_N->($r) for 1 .. 4;
+            $r = mont_mul_n($r, $tbl[$d]) if $d;
+        } elsif ($d) {
+            $r = $tbl[$d];
+        }
     }
-    return $r;
+    return from_mont_n($r);
+}
+
+# /dev/urandom から $n バイト読む。3 モジュールで共通に使う。
+sub sc_random_bytes {
+    my ($n) = @_;
+    open my $fh, '<:raw', '/dev/urandom' or die "urandom: $!\n";
+    my $bytes = '';
+    while (length($bytes) < $n) {
+        my $got = sysread($fh, my $c, $n - length($bytes));
+        die "urandom: $!\n" unless $got;
+        $bytes .= $c;
+    }
+    close $fh;
+    return $bytes;
 }
 
 sub sc_random {
-    open my $fh, '<:raw', '/dev/urandom' or die "urandom: $!\n";
-    my $bytes = '';
-    while (length($bytes) < 32) { sysread($fh, my $c, 32 - length($bytes)); $bytes .= $c }
-    close $fh;
-    my $r = sc_from_bytes($bytes);
-    _sub_n(\@$r);
+    my $r = sc_from_bytes(sc_random_bytes(32));
+    _sub_n($r);
     return $r;
 }
 
