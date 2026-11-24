@@ -321,7 +321,13 @@ sub pump {
         $self->_handle($msg) if ref $msg eq 'HASH';
     }
 
-    $self->_flush_dave;
+    my $flush_err = eval { $self->_flush_dave; 1 };
+    unless ($flush_err) {
+        my $err = $@ || 'flush dave failed';
+        $err =~ s/\s+\z//;
+        $self->_reconnect("voice ws error: $err");
+        return;
+    }
 
     # ゾンビ検知: discord.py 準拠。heartbeat_timeout=60秒で ACK 未受信なら切断
     if ($self->{awaiting_ack} && $now - $self->{last_heartbeat_at} > 60) {
@@ -340,7 +346,13 @@ sub pump {
         $self->{next_heartbeat}  = $now + $self->{heartbeat_interval};
     }
 
-    $self->_send_frames($now) if $self->{state} eq 'ready';
+    my $send_err = eval { $self->_send_frames($now) if $self->{state} eq 'ready'; 1 };
+    unless ($send_err) {
+        my $err = $@ || 'send frames failed';
+        $err =~ s/\s+\z//;
+        $self->_reconnect("voice ws error: $err");
+        return;
+    }
     return 1;
 }
 
@@ -525,8 +537,17 @@ sub _set_speaking {
 
 sub _send {
     my ($self, $payload) = @_;
-    die "voice ws is closed\n" unless $self->{ws} && !$self->{ws}->closed;
-    $self->{ws}->send_text($JSON->encode($payload));
+
+    return 0 unless $self->{ws} && !$self->{ws}->closed;
+
+    my $ok = eval { $self->{ws}->send_text($JSON->encode($payload)); 1 };
+    unless ($ok) {
+        my $err = $@ || 'send failed';
+        $err =~ s/\s+\z//;
+        $self->_report("WebSocket write error: $err");
+        $self->_reconnect("voice ws write error: $err");
+        return 0;
+    }
     return 1;
 }
 
