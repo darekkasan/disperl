@@ -161,6 +161,9 @@ sub _new_session {
         hpke_priv     => $self->{hpke_priv},
         hpke_pub      => $self->{hpke_pub},
     );
+    # 先に届いた external_sender を新しいセッションに渡す
+    $self->{session}->set_external_sender($self->{external_sender})
+        if defined $self->{external_sender};
     return $self->{session};
 }
 
@@ -192,6 +195,8 @@ sub handle_binary {
     die "binary message too short\n" if length($bytes) < 3;
     my ($seq, $op) = unpack 'nC', $bytes;
     my $payload = substr($bytes, 3);
+
+    warn sprintf("[dave] bin op=%d len=%d\n", $op, length $payload);
 
     # opcode 26 は投機的に seq 無しの可能性を許す
     if ($op < 20 || $op > 31) {
@@ -393,9 +398,8 @@ sub send_key_package {
     my ($self) = @_;
     my $sess = $self->{session} or return 0;
 
-    my $kp = $sess->create_key_package;
-    my $msg = encode_mls_message(5, $kp);    # wire_format = key_package
-    $self->_enqueue(OP_KEY_PACKAGE, $msg);
+    my $kp = $sess->create_key_package;    # 生バイト列
+    $self->_enqueue(OP_KEY_PACKAGE, $kp);  # encode_mls_message は不要（op 26 は生の KeyPackage）
     return 1;
 }
 

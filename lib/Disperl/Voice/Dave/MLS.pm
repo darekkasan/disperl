@@ -684,16 +684,16 @@ sub decode_public_message {
 # MLSMessage = version || wire_format || body
 sub encode_mls_message {
     my ($wire_format, $body) = @_;
-    return tls_u16(MLS_VERSION) . tls_u8($wire_format) . $body;
+    return tls_u16(MLS_VERSION) . tls_u16($wire_format) . $body;
 }
 
 sub decode_mls_message {
     my ($bytes) = @_;
-    my ($version, $wire) = unpack 'nC', substr($bytes, 0, 3);
+    my ($version, $wire) = unpack 'nn', substr($bytes, 0, 4);
     return {
         version => $version,
         wire_format => $wire,
-        body => substr($bytes, 3),
+        body => substr($bytes, 4),
     };
 }
 

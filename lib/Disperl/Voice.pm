@@ -185,9 +185,6 @@ sub connect {
         $self->_send({ op => 15, d => { any => 0 } });
     }
 
-    # Select Protocol を送信（connect 時に1回だけ）
-    $self->_send_select_protocol;
-
     # Hello受信後に即座にハートビートを送信（discord.py 準拠）
     $self->_send({ op => 3, d => {
         t       => int(time() * 1000),
@@ -562,11 +559,24 @@ sub _expect {
             if $frame && $frame->{opcode} == 8;
         die "Timed out waiting for voice op $want\n" unless $frame;
 
+        if ($frame->{opcode} == 2) {
+            $self->_handle_binary($frame->{payload});
+            next;
+        }
+
         my $msg = eval { $JSON->decode($frame->{payload}) };
         next unless ref $msg eq 'HASH';
 
         my $op = $msg->{op} // -1;
         $self->{seq_seen} = $msg->{seq} if defined $msg->{seq};
+
+        # DAVE の JSON メッセージ（21/22/24）を処理
+        if ($op >= 21 && $op <= 24 && $self->{dave}) {
+            $self->{dave}->handle_json($msg);
+            $self->_flush_dave;
+            next;
+        }
+
         return $msg if $op == $want;
         # 待っている間に来た他のメッセージは無視（Speaking など）
     }
