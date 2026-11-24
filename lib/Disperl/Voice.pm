@@ -299,6 +299,11 @@ sub pump {
         last unless $frame;
         if ($frame->{opcode} == 8) {
             warn "[voice] WS close frame: code=" . ($frame->{code} // '?') . "\n";
+            # 4006 = セッション無効 → Resume は試さず、セッションを破棄して切断扱いにする
+            if (defined $frame->{code} && $frame->{code} == 4006) {
+                $self->{session_id} = undef;
+                $self->{seq_seen}   = undef;
+            }
             $self->_reconnect('voice ws closed (code ' . ($frame->{code} // '?') . ')');
             return;
         }
@@ -602,6 +607,14 @@ sub _reconnect {
     $self->{ws} = undef;
     eval { $ws->close(1000) } if $ws;
 
+    # セッションが無効（4006 などで破棄済み）なら Resume は試さない
+    unless (defined $self->{session_id}) {
+        $self->{state} = 'disconnected';
+        my $cb = $self->{on_state};
+        if ($cb) { my $ok = eval { $cb->('disconnected', $reason); 1 }; $self->_report($@) unless $ok; }
+        return 0;
+    }
+
     if ($self->_resume) {
         $self->_report("voice: reconnected ($reason)");
         return 1;
@@ -644,6 +657,11 @@ sub _resume {
     unless ($ok) {
         my $err = $@ || 'resume failed';
         $err =~ s/\s+\z//;
+        # 4006 = セッション無効 → session_id を破棄して MusicBot 側で新しいセッションを開始させる
+        if ($err =~ /4006/) {
+            $self->{session_id} = undef;
+            $self->{seq_seen}   = undef;
+        }
         $self->_report("voice resume failed: $err");
         $self->{ws} = undef;
     }
