@@ -312,10 +312,10 @@ sub pump {
             $self->_reconnect('heartbeat ACK not received');
             return;
         }
-        my $seq_ack = defined($self->{last_seq_ack}) ? $self->{last_seq_ack} : undef;
+        my $seq_ack = defined($self->{last_seq_ack}) ? $self->{last_seq_ack} : 0;
         $self->_send({ op => 3, d => {
             t       => int($now * 1000),
-            seq_ack => $seq_ack,
+            d       => $seq_ack,
         }});
         $self->{awaiting_ack}   = 1;
         $self->{next_heartbeat} = $now + $self->{heartbeat_interval};
