@@ -227,6 +227,8 @@ sub handle_json {
         $self->{transition_id} = $tid;
         $self->{protocol_version} = $data->{d}{protocol_version}
             if defined $data->{d}{protocol_version};
+        # 全ユーザーのキーラチェットをセットアップ（libdave 準拠）
+        $self->_setup_key_ratchets;
         # 0 は初期化なので即座に実行してよい
         $self->_ready_for_transition($tid) if $tid == 0;
         return 1;
@@ -237,6 +239,7 @@ sub handle_json {
         $self->{transition_id} = $tid;
         $self->{state} = 'ready';
         $self->_reset_ratchets;
+        $self->_setup_key_ratchets;
         return 1;
     }
 
@@ -254,6 +257,20 @@ sub handle_json {
         return 1;
     }
 
+    return 1;
+}
+
+# 全ユーザーのキーラチェットを初期化（libdave 準拠）
+sub _setup_key_ratchets {
+    my ($self) = @_;
+    my $sess = $self->{session} or return 1;
+    for my $uid (keys %{ $sess->{members} // {} }) {
+        my $base = $self->_base_secret_for($uid) or next;
+        $self->_ratchet_key($uid, $base, 0);
+    }
+    # 自分自身も（メンバーに含まれていない場合）
+    my $base = $self->_self_base_secret or return 1;
+    $self->_ratchet_key($self->{user_id}, $base, 0);
     return 1;
 }
 
