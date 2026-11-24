@@ -123,7 +123,9 @@ sub connect {
 
     my $hello = $self->_expect(8);
     $self->{v} = $hello->{d}{v} // 8;
-    $self->{heartbeat_interval} = ($hello->{d}{heartbeat_interval} // 41250) / 1000;
+    my $raw_interval = ($hello->{d}{heartbeat_interval} // 41250) / 1000;
+    # discord.py 準拠：ハートビート間隔は最大 5 秒に制限する
+    $self->{heartbeat_interval} = $raw_interval < 5.0 ? $raw_interval : 5.0;
 
     $self->_send({ op => 0, d => {
         server_id  => "$self->{server_id}",
@@ -191,7 +193,10 @@ sub connect {
         t       => int(time() * 1000),
         seq_ack => $self->{last_seq_ack},
     }});
-    $self->{awaiting_ack}   = 1;
+    my $now = time;
+    $self->{awaiting_ack}    = 1;
+    $self->{last_heartbeat_at} = $now;
+    $self->{next_heartbeat}  = $now + $self->{heartbeat_interval};
 
     $self->{state} = 'ready';
     my $cb = $self->{on_state};
@@ -318,19 +323,21 @@ sub pump {
 
     $self->_flush_dave;
 
-    # ゾンビ検知: 前回の heartbeat ACK が無いまま次の heartbeat 時刻を過ぎたら Resume
+    # ゾンビ検知: discord.py 準拠。heartbeat_timeout=60秒で ACK 未受信なら切断
+    if ($self->{awaiting_ack} && $now - $self->{last_heartbeat_at} > 60) {
+        $self->_reconnect('heartbeat ACK not received');
+        return;
+    }
+
     if ($now >= $self->{next_heartbeat}) {
-        if ($self->{awaiting_ack}) {
-            $self->_reconnect('heartbeat ACK not received');
-            return;
-        }
         my $seq_ack = defined($self->{last_seq_ack}) ? $self->{last_seq_ack} : -1;
         $self->_send({ op => 3, d => {
             t       => int($now * 1000),
             seq_ack => $seq_ack,
         }});
-        $self->{awaiting_ack}   = 1;
-        $self->{next_heartbeat} = $now + $self->{heartbeat_interval};
+        $self->{awaiting_ack}    = 1;
+        $self->{last_heartbeat_at} = $now;
+        $self->{next_heartbeat}  = $now + $self->{heartbeat_interval};
     }
 
     $self->_send_frames($now) if $self->{state} eq 'ready';
@@ -652,6 +659,10 @@ sub _resume {
         }});
         $self->_expect(9);
         $self->{resuming} = 1;
+        my $now = time;
+        $self->{awaiting_ack}    = 0;
+        $self->{last_heartbeat_at} = $now;
+        $self->{next_heartbeat}  = $now + $self->{heartbeat_interval};
         1;
     };
     unless ($ok) {
