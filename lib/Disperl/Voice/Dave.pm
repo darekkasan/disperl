@@ -403,7 +403,7 @@ sub encrypt_frame {
     my $key = $self->_ratchet_key($self->{user_id}, $base, $generation);
     return $opus unless defined $key;
 
-    my $full_nonce = ("\x00" x 8) . pack('N', $nonce);
+    my $full_nonce = ("\x00" x 8) . pack('V', $nonce);
     my ($ct, $tag) = aes128_gcm_encrypt_oneshot($key, $full_nonce, $opus, '', TAG_BYTES);
 
     my $uleb = uleb128_encode($nonce);
@@ -459,11 +459,15 @@ sub decrypt_frame {
     return $frame unless defined $base;
 
     my $generation = $nonce >> 24;
-    my $key = $self->_ratchet_key($sender_user_id, $base, $generation);
-    return $frame unless defined $key;
-
-    my $full_nonce = ("\x00" x 8) . pack('N', $nonce);
-    my $pt = eval { aes128_gcm_decrypt_oneshot($key, $full_nonce, $ct, $aad, $tag) };
+    # 複数のジェネレーションキーを試す（libdave 準拠）
+    my $pt;
+    for my $g ($generation, ($generation + 1) % 256, ($generation + 255) % 256) {
+        my $key = $self->_ratchet_key($sender_user_id, $base, $g);
+        next unless defined $key;
+        my $full_nonce = ("\x00" x 8) . pack('V', $nonce);
+        $pt = eval { aes128_gcm_decrypt_oneshot($key, $full_nonce, $ct, $aad, $tag) };
+        last if defined $pt;
+    }
     return $frame unless defined $pt;    # 復号できなければそのまま返す
 
     # 平文を範囲に戻す
