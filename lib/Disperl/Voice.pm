@@ -66,7 +66,7 @@ sub new {
         awaiting_ack     => 0,
         seq_seen         => -1,          # v8 の buffered resume 用（受信メッセージの seq）
         resuming         => 0,
-        last_seq_ack     => undef,       # heartbeat の seq_ack（初期は null）
+        last_seq_ack     => -1,          # heartbeat の seq_ack（初期は -1 / null）
 
         source           => undef,
         paused           => 0,
@@ -174,7 +174,7 @@ sub connect {
     $self->{speaking}      = 0;
     $self->{next_frame_at} = 0;
     $self->{awaiting_ack}  = 0;
-    $self->{last_seq_ack}  = undef;
+    $self->{last_seq_ack}  = -1;
 
     # audio を送る前に最低 1 回 Speaking を送る（初期値は無音）
     $self->_send({ op => 5, d => { speaking => 0, delay => 0, ssrc => $self->{ssrc} } });
@@ -185,6 +185,13 @@ sub connect {
 
     # Select Protocol を送信（connect 時に1回だけ）
     $self->_send_select_protocol;
+
+    # Hello受信後に即座にハートビートを送信（discord.py 準拠）
+    $self->_send({ op => 3, d => {
+        t       => int(time() * 1000),
+        seq_ack => $self->{last_seq_ack},
+    }});
+    $self->{awaiting_ack}   = 1;
 
     $self->{state} = 'ready';
     my $cb = $self->{on_state};
@@ -312,10 +319,10 @@ sub pump {
             $self->_reconnect('heartbeat ACK not received');
             return;
         }
-        my $seq_ack = defined($self->{last_seq_ack}) ? $self->{last_seq_ack} : 0;
+        my $seq_ack = defined($self->{last_seq_ack}) ? $self->{last_seq_ack} : -1;
         $self->_send({ op => 3, d => {
             t       => int($now * 1000),
-            d       => $seq_ack,
+            seq_ack => $seq_ack,
         }});
         $self->{awaiting_ack}   = 1;
         $self->{next_heartbeat} = $now + $self->{heartbeat_interval};
