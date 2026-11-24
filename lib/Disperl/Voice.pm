@@ -291,6 +291,7 @@ sub pump {
         }
         last unless $frame;
         if ($frame->{opcode} == 8) {
+            warn "[voice] WS close frame: code=" . ($frame->{code} // '?') . "\n";
             $self->_reconnect('voice ws closed (code ' . ($frame->{code} // '?') . ')');
             return;
         }
@@ -299,6 +300,7 @@ sub pump {
             next;
         }
         my $msg = eval { $JSON->decode($frame->{payload}) };
+        warn "[voice] WS recv: op=" . ($msg->{op}//'?') . " seq=" . ($msg->{seq}//'-') . "\n" if ref $msg eq 'HASH';
         $self->_handle($msg) if ref $msg eq 'HASH';
     }
 
