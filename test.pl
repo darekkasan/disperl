@@ -33,6 +33,7 @@ use Disperl::RoleConnection qw(role_connection_type_name);
 use Disperl::Integration qw(integration_type_name);
 use Disperl::HttpInteractions;
 use Disperl::EventWebhooks;
+use Disperl::Fun qw(omikuji eight_ball love);
 use Disperl::Router;
 use Disperl::OAuth2;
 
@@ -228,6 +229,7 @@ my @HELP_CATEGORIES = (
     [ voice       => qr/^(voice-status|voice-state|stage|follow|me(-edit)?$|my-guilds|my-member|leave-guild|activity-instance)/, 'ボイス・ステージ・プロフィール' ],
     [ oauth       => qr/^(oauth-|oauth2-|connections|group-dm-)/, 'OAuth2・グループ DM' ],
     [ http        => qr/^(http-|event-webhooks)/, 'HTTP インタラクション・イベント受信' ],
+    [ fun         => qr/^fun-/, '小ネタ' ],
     [ invite      => qr/^target-/, '招待のターゲットユーザー' ],
     [ watch       => qr/^watch$/, 'Gateway 受信（watch）' ],
     [ misc        => qr/.*/, 'その他' ],
@@ -442,6 +444,9 @@ disperl 動作確認 CLI
   perl test.pl event-webhooks <公開鍵> [--port 8080] [--host 127.0.0.1]
                                        Webhook Events のサーバーを立てる
                                        （署名検証と PING 応答。受信イベントをログに表示）
+  perl test.pl fun-omikuji [--seed S]  おみくじを引く（--seed で決定的に）
+  perl test.pl fun-8ball [質問]        8ball（質問を付けると決定的になる）
+  perl test.pl fun-love <名前1> <名前2> 好感度を診断する（名前の順序は結果に影響しない）
   perl test.pl connections --bearer <トークン>  連携アカウント一覧
   perl test.pl group-dm-add <チャンネルID> <ユーザーID> <アクセストークン> [--nick 名前]
                                        グループ DM に追加する
@@ -3416,6 +3421,39 @@ sub cmd_event_webhooks {
     return 0;
 }
 
+# ---------------------------------------------------------------- 小ネタ
+
+sub cmd_fun_omikuji {
+    my @args = map { _decode_arg($_) } @_;
+    my ($opt) = _parse_options(\@args, [qw(seed)]);
+
+    my $fortune = defined $opt->{seed} ? omikuji($opt->{seed}) : omikuji();
+    out "運勢: $fortune\n";
+    out "（種: $opt->{seed} — 同じ種なら常に同じ運勢）\n" if defined $opt->{seed};
+    return 0;
+}
+
+sub cmd_fun_8ball {
+    my @args = map { _decode_arg($_) } @_;
+    my $question = join ' ', grep { defined && length } @args;
+
+    my $answer = length $question ? eight_ball($question) : eight_ball();
+    out (($question ? "質問: $question\n" : '') . "答え: $answer\n");
+    out "（同じ質問なら常に同じ答え）\n" if length $question;
+    return 0;
+}
+
+sub cmd_fun_love {
+    my @args = map { _decode_arg($_) } @_;
+    _fatal('使い方: perl test.pl fun-love <名前1> <名前2>')
+        unless @args >= 2 && length $args[0] && length $args[1];
+
+    my $percent = love($args[0], $args[1]);
+    out sprintf "%s × %s の好感度: %d%%\n", $args[0], $args[1], $percent;
+    out "（名前の順序を変えても結果は変わりません）\n";
+    return 0;
+}
+
 sub cmd_connections {
     my @args = map { _decode_arg($_) } @_;
     my ($opt) = _parse_options(\@args, [qw(bearer)]);
@@ -6158,6 +6196,9 @@ my %COMMANDS = (
     'oauth2-revoke'  => \&cmd_oauth2_revoke,
     'http-interactions' => \&cmd_http_interactions,
     'event-webhooks'    => \&cmd_event_webhooks,
+    'fun-omikuji' => \&cmd_fun_omikuji,
+    'fun-8ball'   => \&cmd_fun_8ball,
+    'fun-love'    => \&cmd_fun_love,
     connections    => \&cmd_connections,
     'group-dm-add'    => \&cmd_group_dm_add,
     'group-dm-remove' => \&cmd_group_dm_remove,

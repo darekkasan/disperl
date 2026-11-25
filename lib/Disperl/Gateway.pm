@@ -261,6 +261,8 @@ sub new {
         presence_next_at  => 0,
         # Discord はプレゼンス更新を 20 秒に 5 回までに制限している
         presence_interval => $args{presence_interval} // 4,
+        # プレゼンス文ローテーター（rotate_presence で設定）
+        presence_rotation => undef,
 
         seq             => undef,
         session_id      => undef,
@@ -421,6 +423,83 @@ sub set_presence {
     $self->{presence_pending} = 1;
     $self->_flush_presence;
     return 1;
+}
+
+# プレゼンス文を一定間隔で切り替え続ける（ちぇんbot のステータスローテーション再現）。
+#   $gw->rotate_presence(messages => ['ﾆｬｰ', '時給5円'], interval => 30);
+#   $gw->rotate_presence(
+#       messages => ['作業中...'], interval => 60, status => 'idle',
+#       type => 'playing',
+#   );
+# 停止するときは stop_rotate_presence を呼ぶ。
+sub rotate_presence {
+    my ($self, %opts) = @_;
+
+    my $messages = $opts{messages};
+    die "messages must be a non-empty array reference of strings\n"
+        unless ref $messages eq 'ARRAY' && @$messages;
+    for my $text (@$messages) {
+        die "messages must be non-empty strings\n"
+            unless defined $text && length $text;
+    }
+
+    my $interval = $opts{interval} // 30;
+    die "interval must be an integer of 5 seconds or more\n"
+        unless !ref $interval && $interval =~ /^\d+\z/ && $interval >= 5;
+
+    my $type = $opts{type} // 'watching';
+    my %TYPES = map { $_ => 1 } qw(playing streaming listening watching competing);
+    die "type must be one of playing / streaming / listening / watching / competing\n"
+        unless $TYPES{$type};
+
+    my $status = $opts{status};
+    if (defined $status) {
+        my %STATUSES = map { $_ => 1 } qw(online idle dnd invisible);
+        die "status must be one of online / idle / dnd / invisible\n"
+            unless $STATUSES{$status};
+    }
+
+    $self->{presence_rotation} = {
+        messages => [ map { "$_" } @$messages ],
+        interval => $interval + 0,
+        type     => $type,
+        status   => $status,
+        index    => 0,
+        next_at  => 0,    # 次のループで即座に 1 回目を適用する
+    };
+
+    return 1;
+}
+
+# プレゼンス文のローテーションを停止する。動いていなければ 0 を返す。
+sub stop_rotate_presence {
+    my ($self) = @_;
+
+    return 0 unless $self->{presence_rotation};
+    $self->{presence_rotation} = undef;
+    return 1;
+}
+
+# rotate_presence の駆動部。run のループから一定間隔で呼ばれる。
+sub _tick_presence_rotation {
+    my ($self) = @_;
+
+    my $rotation = $self->{presence_rotation} or return 0;
+    return 0 unless ref $rotation eq 'HASH'
+        && ref $rotation->{messages} eq 'ARRAY'
+        && @{ $rotation->{messages} };
+    return 0 unless $self->{ready} && $self->{ws};
+    return 0 if time < $rotation->{next_at};
+
+    my $messages = $rotation->{messages};
+    my $text     = $messages->[ $rotation->{index} % @$messages ];
+    $rotation->{index}++;
+    $rotation->{next_at} = time + $rotation->{interval};
+
+    my %args = ( activity => { type => $rotation->{type}, name => $text } );
+    $args{status} = $rotation->{status} if defined $rotation->{status};
+
+    return $self->set_presence(%args);
 }
 
 # 名前のリストから intents のビットマスクを作る。
@@ -705,6 +784,7 @@ sub _run_once {
 
         # 予約されたプレゼンス更新（レート制限の間隔待ち）を送る
         $self->_flush_presence;
+        $self->_tick_presence_rotation;
 
         if ($now >= $next_heartbeat) {
             if ($self->{awaiting_ack}) {

@@ -81,6 +81,7 @@ Perl 製の Discord Bot 向けライブラリです。REST API と Gateway（Web
 - HTTP インタラクション（`Disperl::HttpInteractions`）で Ed25519 署名検証・PING 応答。Gateway なしで受信
   （検証エンジンは `Crypt::PK::Ed25519`。HTTP サーバー部分は core のみ）
 - Webhook Events（`Disperl::EventWebhooks`）でインストール・Entitlement などの通知を HTTP で受信
+- 小ネタ（`Disperl::Fun`）: おみくじ・8ball・好感度診断。プレゼンス文のローテーターも同梱
 - コマンド定義ビルダー（`command` / `option`）と差分同期（`sync_commands`）
 - OAuth2 認可コードフロー（PKCE 対応。`Disperl::OAuth2`）でトークン取得・更新・失効
 
@@ -172,6 +173,7 @@ if ($message) {
 | `Disperl::AuditLog` | 監査ログのイベント種別（名前と数値の変換） |
 | `Disperl::AutoMod` | AutoMod のトリガー / アクション / プリセット種別 |
 | `Disperl::Forum` | フォーラム / メディアのレイアウト・並び順・タグの検証 |
+| `Disperl::Fun` | おみくじ・8ball・好感度診断などの小ネタ関数 |
 | `Disperl::Sticker` | ステッカーの種別・画像形式 |
 | `Disperl::Stage` | ステージインスタンスの公開範囲 |
 | `Disperl::Commands` | コマンド / オプション定義のビルダー・検証・差分計算・コマンド権限の対象種別 |
@@ -219,6 +221,7 @@ if ($message) {
 | [インタラクションルーター](docs/router.md) | コマンド・ボタン・モーダル・オートコンプリートの振り分け |
 | [HTTP インタラクション](docs/http-interactions.md) | Interactions Endpoint URL での受信（Ed25519 署名・PING 応答） |
 | [Webhook Events](docs/event-webhooks.md) | イベントの HTTP 受信（インストール・Entitlement・Social SDK 系） |
+| [小ネタ](docs/fun.md) | おみくじ・8ball・好感度診断（`Disperl::Fun`） |
 | [Gateway](docs/gateway.md) | 接続・イベント・Intent・プレゼンス・再接続 |
 | [コンポーネント](docs/components.md) | ボタン・セレクト・モーダルの組み立て |
 | [設定](docs/config.md) | `.env` の書式と優先順位 |

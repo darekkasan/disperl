@@ -17,6 +17,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | `Disperl::AuditLog` | 監査ログのイベント種別（名前と数値の変換） | core のみ |
 | `Disperl::AutoMod` | AutoMod のトリガー / アクション / プリセット種別 | core のみ |
 | `Disperl::Forum` | フォーラム / メディアのレイアウト・並び順・タグの検証 | core のみ |
+| `Disperl::Fun` | おみくじ・8ball・好感度診断などの小ネタ関数 | core のみ |
 | `Disperl::Sticker` | ステッカーの種別・画像形式 | core のみ |
 | `Disperl::Stage` | ステージインスタンスの公開範囲 | core のみ |
 | `Disperl::Commands` | コマンド / オプション定義のビルダー・検証・差分計算・コマンド権限の対象種別 | core のみ |
@@ -63,6 +64,7 @@ REST API（`Disperl::Client`）と Gateway / WebSocket（`Disperl::Gateway`）�
 | [インタラクションルーター](router.md) | コマンド・ボタン・モーダル・オートコンプリートの振り分け |
 | [HTTP インタラクション](http-interactions.md) | Interactions Endpoint URL での受信（Ed25519 署名・PING 応答） |
 | [Webhook Events](event-webhooks.md) | イベントの HTTP 受信（インストール・Entitlement・Social SDK 系） |
+| [小ネタ](fun.md) | おみくじ・8ball・好感度診断（`Disperl::Fun`） |
 | [Gateway](gateway.md) | 接続・イベント・Intent・プレゼンス・再接続 |
 | [コンポーネント](components.md) | ボタン・セレクト・モーダルの組み立て |
 | [設定](config.md) | `.env` の読み込みルール |
